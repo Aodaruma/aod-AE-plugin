@@ -1,0 +1,9 @@
+[package]
+name = "ae_aod_dev_utils"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+after-effects = "0.2.1"
