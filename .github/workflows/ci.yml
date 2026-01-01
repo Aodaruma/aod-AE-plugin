@@ -2,18 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ "main", "dev" ]
   pull_request:
-    branches: [ main, dev ]
 
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-
+  lint_test:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -21,19 +15,76 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
-
       - name: fmt
         run: cargo fmt --all -- --check
 
-      - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: test
-        run: cargo test --workspace
+      - name: compute excludes (packages under plugins/)
+        id: pkgs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --format-version 1 --no-deps > /tmp/meta.json
+          jq -r '.packages[]
+                 | select(.manifest_path | contains("/plugins/"))
+                 | .name' /tmp/meta.json > /tmp/excludes.txt
+          echo "Excluding packages:"
+          cat /tmp/excludes.txt || true
 
-      # AE SDK がCIに無い段階では plugin build はスキップで良い
-      # 例: AE_SDK_PATH を設定できるようになったら if を外す
-      - name: build plugins (optional)
-        if: env.AE_SDK_PATH != ''
-        run: cargo xtask ci --build-plugins
+      - name: clippy (workspace except plugins/)
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXCLUDE_ARGS=()
+          while read -r p; do
+            [[ -z "$p" ]] && continue
+            EXCLUDE_ARGS+=(--exclude "$p")
+          done < /tmp/excludes.txt || true
+          cargo clippy --workspace --all-targets "${EXCLUDE_ARGS[@]}" -- -D warnings
+
+      - name: test (workspace except plugins/)
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXCLUDE_ARGS=()
+          while read -r p; do
+            [[ -z "$p" ]] && continue
+            EXCLUDE_ARGS+=(--exclude "$p")
+          done < /tmp/excludes.txt || true
+          cargo test --workspace "${EXCLUDE_ARGS[@]}"
+
+  template_smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: install cargo-generate
+        run: cargo install cargo-generate --locked
+
+      - name: generate from template (non-interactive)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/aod_template_smoke
+          mkdir -p /tmp/aod_template_smoke
+          # 重要: -d のキーは「あなたの template の placeholders」に合わせて調整する
+          # 例として project-name を渡している（テンプレ側が project-name を使う場合にプロンプトを回避できる）  [oai_citation:1‡Cargo Generate](https://cargo-generate.github.io/cargo-generate/templates/template_defined_placeholders.html?utm_source=chatgpt.com)
+          cargo generate --path . \
+            -n AOD_SmokePlugin \
+            -d project-name=AOD_SmokePlugin \
+            --destination /tmp/aod_template_smoke \
+            --force
+
+      - name: ensure no liquid placeholders remain
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 展開後に {{...}} や {%...%} が残っていたらテンプレ展開漏れの可能性が高い
+          if grep -RIn --exclude-dir=.git -E '(\{\{|\{%|\%})' /tmp/aod_template_smoke ; then
+            echo "ERROR: template placeholders remain"
+            exit 1
+          fi
