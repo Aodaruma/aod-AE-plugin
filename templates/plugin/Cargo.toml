@@ -1,0 +1,23 @@
+[package]
+name = "{{CRATE_NAME}}"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# xtask new-plugin のフラグで default に追加される
+default = []
+opencv = ["algo/opencv"]
+fft = ["algo/fft"]
+gpu = ["algo/gpu"]
+
+[dependencies]
+anyhow = "1"
+after-effects = "*"
+
+# algo = { path = "../../crates/algo", default-features = false }
+# core = { path = "../../crates/core", default-features = false }
