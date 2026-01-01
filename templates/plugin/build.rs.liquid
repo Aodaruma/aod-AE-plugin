@@ -54,27 +54,27 @@ fn main() {
             0
             | OutFlags::PixIndependent
             | OutFlags::UseOutputExtent
-            {% if with_deepcolor %}
+            {%- if with_deepcolor -%}
             | OutFlags::DeepColorAware
-            {% endif %}
-            {% if with_smartrender %}
+            {%- endif -%}
+            {%- if with_smartrender -%}
             | OutFlags::WideTimeInput
-            {% endif %}
+            {%- endif -%}
             ,
         ),
         Property::AE_Effect_Global_OutFlags_2( 
             // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags2.html
             0
-            {% if with_thrededrender %}
+            {%- if with_thrededrender -%}
             | OutFlags2::SupportsThreadedRendering
-            {% endif %}
-            {% if with_floatColor or with_smartrender %}
+            {%- endif -%}
+            {%- if with_floatColor or with_smartrender -%}
             | OutFlags2::FloatColorAware
-            {% endif %}
-            {% if with_smartrender %}
+            {%- endif -%}
+            {%- if with_smartrender -%}
             | OutFlags2::AutomaticWideTimeInput
             | OutFlags2::SupportsSmartRender
-            {% endif %}
+            {%- endif -%}
             // | OutFlags2::SupportsGPURenderF32
             ,
         ),

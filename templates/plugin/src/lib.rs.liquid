@@ -13,26 +13,6 @@ ae::define_effect!(Plugin, (), Params);
 
 const PLUGIN_DESCRIPTION: &str = "{{ description }}";
 
-impl Plugin {
-    fn do_render(
-        &self,
-        in_data: InData,
-        in_layer: Layer,
-        _out_data: OutData,
-        mut out_layer: Layer,
-        params: &mut Parameters<ParamID>,
-    ) -> Result<(), Error> {
-        let progress_final = out_layer.height() as _;
-        let width = in_layer.width() as usize;
-        let height = in_layer.height() as usize;
-        let frame_num = in_data.current_frame() as usize;
-
-        // Process here
-        
-        Ok(())
-    }
-}
-
 
 impl AdobePluginGlobal for Plugin {
     fn can_load(_host_name: &str, _host_version: &str) -> bool {
@@ -60,7 +40,7 @@ impl AdobePluginGlobal for Plugin {
         match cmd {
             ae::Command::About => {
                 out_data.set_return_msg(format!(
-                    "{{ crate_name | pascal_case }} - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) {{ create_year }}-{build_year} Aodaruma",
+                    "AOD_{{ crate_name | pascal_case }} - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) {{ create_year }}-{build_year} Aodaruma",
                     version=env!("CARGO_PKG_VERSION"),
                     build_year=env!("BUILD_YEAR")
                 ));
@@ -116,10 +96,30 @@ impl AdobePluginGlobal for Plugin {
 
                 cb.checkin_layer_pixels(0)?;
             }
-            {% endif %}
+            {%- endif -%}
 
             _ => {}
         }
+        Ok(())
+    }
+}
+
+impl Plugin {
+    fn do_render(
+        &self,
+        in_data: InData,
+        in_layer: Layer,
+        _out_data: OutData,
+        mut out_layer: Layer,
+        params: &mut Parameters<ParamID>,
+    ) -> Result<(), Error> {
+        let progress_final = out_layer.height() as _;
+        let width = in_layer.width() as usize;
+        let height = in_layer.height() as usize;
+        let frame_num = in_data.current_frame() as usize;
+
+        // Process here
+        
         Ok(())
     }
 }
