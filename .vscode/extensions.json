@@ -1,0 +1,8 @@
+{
+    "recommendations": [
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "cordx56.rustowl-vscode",
+        "fill-labs.dependi"
+    ]
+}
