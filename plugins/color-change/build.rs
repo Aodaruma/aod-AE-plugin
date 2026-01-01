@@ -1,0 +1,75 @@
+use chrono::Datelike;
+use pipl::*;
+
+const PF_PLUG_IN_VERSION: u16 = 13;
+const PF_PLUG_IN_SUBVERS: u16 = 28;
+
+#[rustfmt::skip]
+fn main() {
+    let current_year = chrono::Local::now().year();
+    println!("cargo:rustc-env=BUILD_YEAR={}", current_year);
+
+    let pkg_version = env!("CARGO_PKG_VERSION");
+    let mut version_parts: Vec<&str> = pkg_version.split('.').collect();
+    if version_parts.len() != 3 {
+        panic!("CARGO_PKG_VERSION must be in the format 'major.minor.patch'");
+    }
+    version_parts = version_parts.iter().map(|s| *s).collect();
+    let major: u32 = version_parts[0].parse().expect("Invalid major version");
+    let minor: u32 = version_parts[1].parse().expect("Invalid minor version");
+    let patch: u32 = version_parts[2].parse().expect("Invalid patch version");
+
+    // Determine the stage based on building whether debug or release
+    let stage = if cfg!(debug_assertions) {
+        AE_Effect_Version_Stage::Development
+    } else {
+        AE_Effect_Version_Stage::Release
+    };
+
+    // --------------------------------------------------
+    // Build the plugin with PiPL
+    pipl::plugin_build(vec![
+        Property::Kind(PIPLType::AEEffect),
+        Property::Name("AOD_ColorChange"),
+        Property::Category("Aodaruma"),
+
+        #[cfg(target_os = "windows")]
+        Property::CodeWin64X86("EffectMain"),
+        #[cfg(target_os = "macos")]
+        Property::CodeMacIntel64("EffectMain"),
+        #[cfg(target_os = "macos")]
+        Property::CodeMacARM64("EffectMain"),
+
+        Property::AE_PiPL_Version { major: 2, minor: 0 },
+        Property::AE_Effect_Spec_Version { major: PF_PLUG_IN_VERSION, minor: PF_PLUG_IN_SUBVERS },
+        Property::AE_Effect_Version {
+            version: major,
+            subversion: minor,
+            bugversion: patch,
+            stage: stage,
+            build: 1,
+        },
+        Property::AE_Effect_Info_Flags(0),
+        Property::AE_Effect_Global_OutFlags(
+            0
+            | OutFlags::PixIndependent
+            | OutFlags::UseOutputExtent
+            | OutFlags::DeepColorAware
+            | OutFlags::WideTimeInput
+            ,
+        ),
+        Property::AE_Effect_Global_OutFlags_2( 
+            // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags2.html
+            0
+            | OutFlags2::SupportsThreadedRendering
+            | OutFlags2::FloatColorAware
+            | OutFlags2::AutomaticWideTimeInput
+            | OutFlags2::SupportsSmartRender
+            // | OutFlags2::SupportsGPURenderF32
+            ,
+        ),
+        Property::AE_Effect_Match_Name("ColorChange"),
+        Property::AE_Reserved_Info(8),
+        Property::AE_Effect_Support_URL("https://github.com/Aodaruma/aodaruma-ae-plugin"),
+    ])
+}

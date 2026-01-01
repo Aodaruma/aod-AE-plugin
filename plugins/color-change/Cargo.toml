@@ -1,0 +1,25 @@
+[package]
+name = "color_change"
+description = "A plugin to change some colors in a footage"
+version = "0.1.0"
+
+[lib]
+name = "aod_ColorChange"
+crate-type = ["cdylib"]
+
+[features]
+default = []
+
+[dependencies]
+after-effects = { workspace = true }
+utils = { path = "../../crates/utils" }
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,5 @@
+PluginName       := "AOD_ColorChange"
+BundleIdentifier := "com.aodaruma." + PluginName
+BinaryName       := lowercase(PluginName)
+
+import "../../AdobePlugin.just"
