@@ -1,4 +1,3 @@
-use ae::aegp::WorldType;
 use after_effects as ae;
 use std::env;
 
@@ -6,13 +5,13 @@ use utils::ToPixel;
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 enum Params {}
+
 #[derive(Default)]
 struct Plugin {}
 
 ae::define_effect!(Plugin, (), Params);
 
 const PLUGIN_DESCRIPTION: &str = "{{ description }}";
-
 
 impl AdobePluginGlobal for Plugin {
     fn can_load(_host_name: &str, _host_version: &str) -> bool {
@@ -113,7 +112,7 @@ impl Plugin {
         mut out_layer: Layer,
         params: &mut Parameters<ParamID>,
     ) -> Result<(), Error> {
-        let progress_final = out_layer.height() as _;
+        let progress_final = out_layer.height() as i32;
         let width = in_layer.width() as usize;
         let height = in_layer.height() as usize;
         let frame_num = in_data.current_frame() as usize;

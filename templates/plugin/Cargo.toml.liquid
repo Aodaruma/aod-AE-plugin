@@ -2,6 +2,7 @@
 name = "{{ crate_name }}"
 description = "{{ description }}"
 version = "0.1.0"
+edition = "2024"
 
 [lib]
 name = "aod_{{ crate_name | pascal_case }}"
@@ -9,6 +10,7 @@ crate-type = ["cdylib"]
 
 [features]
 default = []
+catch-panics = []
 
 [dependencies]
 after-effects = { workspace = true }
