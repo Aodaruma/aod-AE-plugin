@@ -6,6 +6,9 @@ const PF_PLUG_IN_SUBVERS: u16 = 28;
 
 #[rustfmt::skip]
 fn main() {
+    println!("cargo::rustc-check-cfg=cfg(does_dialog)");
+    println!("cargo::rustc-check-cfg=cfg(threaded_rendering)");
+    
     let current_year = chrono::Local::now().year();
     println!("cargo:rustc-env=BUILD_YEAR={}", current_year);
 
@@ -21,9 +24,9 @@ fn main() {
 
     // Determine the stage based on building whether debug or release
     let stage = if cfg!(debug_assertions) {
-        AE_Effect_Version_Stage::Development
+        Stage::Develop
     } else {
-        AE_Effect_Version_Stage::Release
+        Stage::Release
     };
 
     // --------------------------------------------------
@@ -51,8 +54,7 @@ fn main() {
         },
         Property::AE_Effect_Info_Flags(0),
         Property::AE_Effect_Global_OutFlags(
-            0
-            | OutFlags::PixIndependent
+            OutFlags::PixIndependent
             | OutFlags::UseOutputExtent
             | OutFlags::DeepColorAware
             | OutFlags::WideTimeInput
@@ -60,9 +62,8 @@ fn main() {
         ),
         Property::AE_Effect_Global_OutFlags_2( 
             // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags2.html
-            0
+            OutFlags2::FloatColorAware
             | OutFlags2::SupportsThreadedRendering
-            | OutFlags2::FloatColorAware
             | OutFlags2::AutomaticWideTimeInput
             | OutFlags2::SupportsSmartRender
             // | OutFlags2::SupportsGPURenderF32
