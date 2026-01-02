@@ -1,6 +1,7 @@
 [package]
 name = "color_change"
 description = "A plugin to change some colors in a footage"
+edition = "2024"
 version = "0.1.0"
 
 [lib]
@@ -9,9 +10,11 @@ crate-type = ["cdylib"]
 
 [features]
 default = []
+catch-panics = []
 
 [dependencies]
 after-effects = { workspace = true }
+seq-macro = "0.3.6"
 utils = { path = "../../crates/utils" }
 
 [dev-dependencies]
