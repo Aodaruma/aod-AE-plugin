@@ -1,18 +1,29 @@
-use ae::aegp::WorldType;
 use after_effects as ae;
+use seq_macro::seq;
 use std::env;
 
 use utils::ToPixel;
 
+const MAX_PAIRS: usize = 32;
+seq!(N in 1..=32 {
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
-enum Params {}
+enum Params {
+    Tolerrance,
+    AddPairButton,
+    RemovePairButton,
+    #(
+        ColorFrom~N,
+        ColorTo~N,
+    )*
+}
+});
+
 #[derive(Default)]
 struct Plugin {}
 
 ae::define_effect!(Plugin, (), Params);
 
 const PLUGIN_DESCRIPTION: &str = "A plugin to change some colors in a footage";
-
 
 impl AdobePluginGlobal for Plugin {
     fn can_load(_host_name: &str, _host_version: &str) -> bool {
@@ -26,6 +37,19 @@ impl AdobePluginGlobal for Plugin {
         _: OutData,
     ) -> Result<(), Error> {
         // param definitions here
+
+        params.add(
+            Params::Tolerrance,
+            "Tolerance",
+            ae::pf::FloatSliderDef::setup(|d| {
+                d.set_default(0.001);
+                d.set_valid_min(0.0);
+                d.set_valid_max(1.0);
+                d.set_slider_min(0.0);
+                d.set_slider_max(1.0);
+                d.set_precision(4);
+            }),
+        )?;
 
         Ok(())
     }
@@ -43,7 +67,7 @@ impl AdobePluginGlobal for Plugin {
                     "AOD_ColorChange - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) 2026-{build_year} Aodaruma",
                     version=env!("CARGO_PKG_VERSION"),
                     build_year=env!("BUILD_YEAR")
-                ));
+                ).as_str());
             }
             ae::Command::GlobalSetup => {
                 // Declare that we do or do not support smart rendering
@@ -51,18 +75,11 @@ impl AdobePluginGlobal for Plugin {
             }
             ae::Command::Render {
                 in_layer,
-                mut out_layer,
+                out_layer,
             } => {
-                self.do_render(
-                    in_data,
-                    in_layer,
-                    out_data,
-                    out_layer,
-                    params,
-                )?;
+                self.do_render(in_data, in_layer, out_data, out_layer, params)?;
             }
 
-            
             ae::Command::SmartPreRender { mut extra } => {
                 let req = extra.output_request();
 
@@ -84,18 +101,13 @@ impl AdobePluginGlobal for Plugin {
             ae::Command::SmartRender { extra } => {
                 let cb = extra.callbacks();
                 let in_layer = cb.checkout_layer_pixels(0)?;
-                let mut out_layer: Layer = cb.checkout_output()?;
+                let out_layer: Layer = cb.checkout_output()?;
 
-                self.do_render(
-                    in_data,
-                    in_layer,
-                    out_data,
-                    out_layer,
-                    params,
-                )?;
+                self.do_render(in_data, in_layer, out_data, out_layer, params)?;
 
                 cb.checkin_layer_pixels(0)?;
-            }_ => {}
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -108,15 +120,15 @@ impl Plugin {
         in_layer: Layer,
         _out_data: OutData,
         mut out_layer: Layer,
-        params: &mut Parameters<ParamID>,
+        params: &mut Parameters<Params>,
     ) -> Result<(), Error> {
-        let progress_final = out_layer.height() as _;
+        let progress_final = out_layer.height() as i32;
         let width = in_layer.width() as usize;
         let height = in_layer.height() as usize;
         let frame_num = in_data.current_frame() as usize;
 
         // Process here
-        
+
         Ok(())
     }
 }
