@@ -66,6 +66,7 @@ fn main() {
             | OutFlags2::SupportsThreadedRendering
             | OutFlags2::AutomaticWideTimeInput
             | OutFlags2::SupportsSmartRender
+            | OutFlags2::SupportsGetFlattenedSequenceData
             // | OutFlags2::SupportsGPURenderF32
             ,
         ),
