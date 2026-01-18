@@ -31,10 +31,6 @@ ae::define_effect!(Plugin, (), Params);
 const PLUGIN_DESCRIPTION: &str = "A plugin to change some colors in a footage";
 
 impl AdobePluginGlobal for Plugin {
-    fn can_load(_host_name: &str, _host_version: &str) -> bool {
-        true
-    }
-
     fn params_setup(
         &self,
         params: &mut ae::Parameters<Params>,
@@ -152,11 +148,18 @@ impl AdobePluginGlobal for Plugin {
 
             ae::Command::SmartRender { extra } => {
                 let cb = extra.callbacks();
-                let in_layer = cb.checkout_layer_pixels(0)?;
-                let out_layer: Layer = cb.checkout_output()?;
+                let in_layer_opt = cb.checkout_layer_pixels(0)?;
+                let out_layer_opt = cb.checkout_output()?;
 
-                self.do_render(in_data, in_layer, out_data, out_layer, params)?;
-
+                if in_layer_opt.is_some() && out_layer_opt.is_some() {
+                    self.do_render(
+                        in_data,
+                        in_layer_opt.unwrap(),
+                        out_data,
+                        out_layer_opt.unwrap(),
+                        params,
+                    )?;
+                }
                 cb.checkin_layer_pixels(0)?;
             }
 
