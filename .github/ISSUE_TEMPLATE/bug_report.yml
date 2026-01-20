@@ -1,0 +1,82 @@
+name: "バグ報告 / Bug Report"
+description: "不具合の報告はこちら / Report a problem"
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ご報告ありがとうございます。再現手順があると調査が進みます。
+        Thanks for the report. Reproduction steps help a lot.
+  - type: input
+    id: plugin
+    attributes:
+      label: "対象プラグイン / Plugin"
+      description: "例: AOD_ColorAjust"
+      placeholder: "AOD_ColorAjust"
+    validations:
+      required: true
+  - type: input
+    id: plugin_version
+    attributes:
+      label: "プラグインのバージョン / Plugin version"
+      placeholder: "0.1.0"
+    validations:
+      required: false
+  - type: input
+    id: ae_version
+    attributes:
+      label: "After Effects バージョン / AE version"
+      placeholder: "25.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: "OS"
+      options:
+        - "Windows"
+        - "macOS (Apple Silicon)"
+        - "macOS (Intel)"
+        - "Other"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "再現手順 / Steps to reproduce"
+      description: "できるだけ具体的に"
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "期待する動作 / Expected behavior"
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: "実際の動作 / Actual behavior"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "ログ・スクリーンショット / Logs or screenshots"
+      description: "あれば添付してください"
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "確認事項 / Checklist"
+      options:
+        - label: "同様のIssueがないか確認しました / I checked for existing issues"
+          required: true
+        - label: "最新リリースで再現しました / Reproduced on latest release"
+          required: false

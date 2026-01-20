@@ -1,0 +1,46 @@
+name: "機能追加リクエスト / Feature Request"
+description: "新機能の提案はこちら / Suggest a new feature"
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提案ありがとうございます。用途や背景があると検討しやすくなります。
+        Thanks for the suggestion. Use cases help a lot.
+  - type: input
+    id: plugin
+    attributes:
+      label: "対象プラグイン / Plugin"
+      description: "例: AOD_ColorChange"
+      placeholder: "AOD_ColorChange"
+    validations:
+      required: false
+  - type: textarea
+    id: problem
+    attributes:
+      label: "背景・課題 / Problem to solve"
+      description: "どんな課題を解決したいか"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "提案内容 / Proposed solution"
+      description: "欲しい機能や振る舞い"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "代替案 / Alternatives"
+      description: "他に考えた案があれば"
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: "追加情報 / Additional context"
+      description: "スクリーンショットや参考資料など"
+    validations:
+      required: false
