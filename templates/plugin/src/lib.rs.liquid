@@ -14,9 +14,6 @@ ae::define_effect!(Plugin, (), Params);
 const PLUGIN_DESCRIPTION: &str = "{{ description }}";
 
 impl AdobePluginGlobal for Plugin {
-    fn can_load(_host_name: &str, _host_version: &str) -> bool {
-        true
-    }
 
     fn params_setup(
         &self,
@@ -42,7 +39,7 @@ impl AdobePluginGlobal for Plugin {
                     "AOD_{{ crate_name | pascal_case }} - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) {{ create_year }}-{build_year} Aodaruma",
                     version=env!("CARGO_PKG_VERSION"),
                     build_year=env!("BUILD_YEAR")
-                ));
+                ).as_str());
             }
             ae::Command::GlobalSetup => {
                 // Declare that we do or do not support smart rendering
@@ -82,16 +79,18 @@ impl AdobePluginGlobal for Plugin {
 
             ae::Command::SmartRender { extra } => {
                 let cb = extra.callbacks();
-                let in_layer = cb.checkout_layer_pixels(0)?;
-                let mut out_layer: Layer = cb.checkout_output()?;
+                let in_layer_opt = cb.checkout_layer_pixels(0)?;
+                let out_layer_opt = cb.checkout_output()?;
 
-                self.do_render(
-                    in_data,
-                    in_layer,
-                    out_data,
-                    out_layer,
-                    params,
-                )?;
+                if in_layer_opt.is_some() && out_layer_opt.is_some() {
+                    self.do_render(
+                        in_data,
+                        in_layer_opt.unwrap(),
+                        out_data,
+                        out_layer_opt.unwrap(),
+                        params,
+                    )?;
+                }
 
                 cb.checkin_layer_pixels(0)?;
             }
@@ -110,7 +109,7 @@ impl Plugin {
         in_layer: Layer,
         _out_data: OutData,
         mut out_layer: Layer,
-        params: &mut Parameters<ParamID>,
+        params: &mut Parameters<Params>,
     ) -> Result<(), Error> {
         let progress_final = out_layer.height() as i32;
         let width = in_layer.width() as usize;
