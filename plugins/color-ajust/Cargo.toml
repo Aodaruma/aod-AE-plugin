@@ -1,0 +1,29 @@
+[package]
+name = "color_ajust"
+description = "A plugin to modify the chroma and lightness of an image using various color space"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "aod_ColorAjust"
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+palette = "0.7.6"
+utils = { path = "../../crates/utils" }
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true
