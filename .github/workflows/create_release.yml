@@ -143,9 +143,6 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
-    # main の CI 成功後のみ draft prerelease を作る
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
-
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -153,21 +150,21 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      # 既存 draft（=同一タグの release）があれば削除して上書き
       - name: Delete existing draft prerelease (ignore if missing)
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set +e
           gh release delete main-prerelease -y --cleanup-tag
-          # 念のため ref が残っているケースへのフォールバック（存在しなければ失敗してよいので握りつぶす）
-          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/main-prerelease" >/dev/null 2>&1
+          gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/main-prerelease" >/dev/null 2>&1
           exit 0
 
       - name: Create draft prerelease and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
         shell: bash
         run: |
@@ -178,3 +175,4 @@ jobs:
             --draft \
             --prerelease \
             --generate-notes
+
