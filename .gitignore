@@ -20,3 +20,5 @@ target/
 
 /target
 /tester
+
+/*.rcgu.o
