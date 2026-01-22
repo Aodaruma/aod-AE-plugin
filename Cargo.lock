@@ -459,6 +459,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "normal_generate"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
+]
+
+[[package]]
 name = "num-conv"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
