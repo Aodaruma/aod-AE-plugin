@@ -30,10 +30,10 @@ impl ToPixel for PF_Pixel {
 
     fn to_pixel8(&self) -> Pixel8 {
         Pixel8 {
-            red: self.red as u8,
-            green: self.green as u8,
-            blue: self.blue as u8,
-            alpha: self.alpha as u8,
+            red: self.red,
+            green: self.green,
+            blue: self.blue,
+            alpha: self.alpha,
         }
     }
 }
