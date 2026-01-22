@@ -164,7 +164,8 @@ jobs:
 
           primary_draft=$(gh release view "$PRIMARY_TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)
           if [ "$primary_draft" = "true" ]; then
-            gh release delete "$PRIMARY_TAG" -y --cleanup-tag
+            # --cleanup-tag はタグが既に消えていると 422 で失敗するため、削除は分離して行う
+            gh release delete "$PRIMARY_TAG" -y
             gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/${PRIMARY_TAG}" >/dev/null 2>&1 || true
           elif [ "$primary_draft" = "false" ]; then
             # Keep published prerelease; use a separate tag for new drafts.
@@ -174,7 +175,8 @@ jobs:
           if [ "$DRAFT_TAG" != "$PRIMARY_TAG" ]; then
             alt_draft=$(gh release view "$DRAFT_TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)
             if [ "$alt_draft" = "true" ]; then
-              gh release delete "$DRAFT_TAG" -y --cleanup-tag
+              # --cleanup-tag はタグが既に消えていると 422 で失敗するため、削除は分離して行う
+              gh release delete "$DRAFT_TAG" -y
               gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/${DRAFT_TAG}" >/dev/null 2>&1 || true
             fi
           fi
@@ -196,4 +198,3 @@ jobs:
             --draft \
             --prerelease \
             --generate-notes
-
