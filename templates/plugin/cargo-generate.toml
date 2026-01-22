@@ -8,7 +8,7 @@ features = { prompt = "Select features", type = "array", choices = [
 ] }
 with_deepcolor = { prompt = "Enable 16bpc(deepcolor) support?", type = "bool", default = true }
 with_thrededrender = { prompt = "Enable ThreadedRender support?", type = "bool", default = true }
-with_smartrender = { prompt = "Enable SmartRender support?", type = "bool", default = false }
+with_smartrender = { prompt = "Enable SmartRender support?", type = "bool", default = true }
 # with_gpuRenderF32 = { prompt = "Enable GpuRenderF32 support?", type = "bool", default = false }
 [conditional.'with_smartrender == false'.placeholders]
 with_floatColor = { prompt = "Enable FloatColorAware?", type = "bool", default = true }
