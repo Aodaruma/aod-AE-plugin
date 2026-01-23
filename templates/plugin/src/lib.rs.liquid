@@ -47,7 +47,7 @@ impl AdobePluginGlobal for Plugin {
             }
             ae::Command::Render {
                 in_layer,
-                mut out_layer,
+                out_layer,
             } => {
                 self.do_render(
                     in_data,
