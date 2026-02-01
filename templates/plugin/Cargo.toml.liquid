@@ -14,8 +14,8 @@ catch-panics = []
 [dependencies]
 after-effects = { workspace = true }
 utils = { path = "../../crates/utils" }
-{% if features contains "opencv" -%}
-opencv = { workspace = true }
+{% if features contains "imageproc" -%}
+imageproc = { workspace = true }
 {%- endif %}
 {%- if features contains "rustfft" -%}
 rustfft = { workspace = true }

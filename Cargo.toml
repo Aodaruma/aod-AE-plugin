@@ -15,9 +15,9 @@ after-effects = { git = "https://github.com/virtualritz/after-effects", branch =
 pipl = { git = "https://github.com/virtualritz/after-effects", branch = "master" }
 rand = "0.9.2"
 nalgebra = "0.34.1"
-opencv = { version = "0.98.0", features = ["buildtime-bindgen"] }
 rustfft = "6.0"
 num-complex = "0.4"
 chrono = "0.4.42"
+imageproc = "0.26.0"
 
 [workspace.lints]
