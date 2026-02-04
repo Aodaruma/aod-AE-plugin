@@ -381,10 +381,7 @@ impl Plugin {
             .value() as f32;
         let invert = params.get(Params::Invert)?.as_checkbox()?.value();
         let flip_y = params.get(Params::FlipY)?.as_checkbox()?.value();
-        let use_original_alpha = params
-            .get(Params::UseOriginalAlpha)?
-            .as_checkbox()?
-            .value();
+        let use_original_alpha = params.get(Params::UseOriginalAlpha)?.as_checkbox()?.value();
 
         let alpha_thr = params
             .get(Params::AlphaThreshold)?

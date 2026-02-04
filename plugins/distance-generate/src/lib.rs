@@ -257,10 +257,7 @@ impl Plugin {
         let width = width.max(1.0e-6);
         let offset = params.get(Params::Offset)?.as_float_slider()?.value() as f32;
         let clamp_32 = params.get(Params::Clamp32)?.as_checkbox()?.value();
-        let use_original_alpha = params
-            .get(Params::UseOriginalAlpha)?
-            .as_checkbox()?
-            .value();
+        let use_original_alpha = params.get(Params::UseOriginalAlpha)?.as_checkbox()?.value();
 
         let alpha_thr = params
             .get(Params::AlphaThreshold)?
