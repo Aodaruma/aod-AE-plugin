@@ -137,7 +137,7 @@ impl AdobePluginGlobal for Plugin {
         match cmd {
             ae::Command::About => {
                 out_data.set_return_msg(format!(
-                    "AOD_contourGenerate - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) 2026-{build_year} Aodaruma",
+                    "AOD_ContourGenerate - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) 2026-{build_year} Aodaruma",
                     version=env!("CARGO_PKG_VERSION"),
                     build_year=env!("BUILD_YEAR")
                 ).as_str());

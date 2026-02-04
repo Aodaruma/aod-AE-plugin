@@ -25,7 +25,7 @@ template.
   - 指定色を別の色に置換します / Changes a specific color to another color with tolerance
 - AOD_ColorConvert
   - RGBと各色空間を相互変換します / Converts between RGB and multiple color spaces
-- AOD_contourGenerate
+- AOD_ContourGenerate
   - Canny法でレイヤーから輪郭線を抽出します / Extracts contour lines from a layer using the Canny method
 - AOD_DistanceGenerate
   - 色領域の輪郭から距離画像を生成します / Generates distance images from the contours of colored regions

@@ -36,7 +36,7 @@ fn main() {
     // Build the plugin with PiPL
     pipl::plugin_build(vec![
         Property::Kind(PIPLType::AEEffect),
-        Property::Name("AOD_contourGenerate"),
+        Property::Name("AOD_ContourGenerate"),
         Property::Category("Aodaruma"),
 
         #[cfg(target_os = "windows")]
@@ -74,7 +74,7 @@ fn main() {
             // | OutFlags2::SupportsGpuRenderF32
             ,
         ),
-        Property::AE_Effect_Match_Name("contourGenerate"),
+        Property::AE_Effect_Match_Name("ContourGenerate"),
         Property::AE_Reserved_Info(8),
         Property::AE_Effect_Support_URL("https://github.com/Aodaruma/aodaruma-ae-plugin"),
     ])

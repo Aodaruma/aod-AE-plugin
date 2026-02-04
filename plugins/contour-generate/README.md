@@ -1,8 +1,8 @@
-# contour-generate ( AOD_contourGenerate )
+# contour-generate ( AOD_ContourGenerate )
 
 A plugin for extracting contour lines from a layer using the Canny method.
 
-This is the After Effects plugin **AOD_contourGenerate**, which provides the **contourGenerate.aex** plugin file for Adobe After Effects.
+This is the After Effects plugin **AOD_ContourGenerate**, which provides the **ContourGenerate.aex** plugin file for Adobe After Effects.
 
 ## Building the Plugin
 

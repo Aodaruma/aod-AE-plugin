@@ -5,7 +5,7 @@ CrateName := if os() == "windows" {
     `awk -F'"' 'BEGIN{in_pkg=0} /^[[:space:]]*\[package\][[:space:]]*$/{in_pkg=1;next} /^[[:space:]]*\[/{if(in_pkg)exit} in_pkg && /^[[:space:]]*name[[:space:]]*=/ {print $2; exit}' Cargo.toml`
 }
 
-PluginName       := "AOD_contourGenerate"
+PluginName       := "AOD_ContourGenerate"
 BundleIdentifier := "com.aodaruma." + PluginName
 BinaryName       := snakecase(CrateName)
 
