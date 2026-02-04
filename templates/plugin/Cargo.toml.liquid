@@ -8,8 +8,15 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [features]
+{%- if features contains "wgpu" %}
+default = ["gpu_wgpu"]
+{%- else %}
 default = []
+{%- endif %}
 catch-panics = []
+{%- if features contains "wgpu" %}
+gpu_wgpu = ["dep:wgpu", "dep:pollster", "dep:futures-intrusive", "dep:bytemuck"]
+{%- endif %}
 
 [dependencies]
 after-effects = { workspace = true }
@@ -26,6 +33,12 @@ nalgebra = { workspace = true }
 {%- endif %}
 {%- if features contains "rand" %}
 rand = { workspace = true }
+{%- endif %}
+{%- if features contains "wgpu" %}
+wgpu = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+futures-intrusive = { workspace = true, optional = true }
 {%- endif %}
 
 [dev-dependencies]

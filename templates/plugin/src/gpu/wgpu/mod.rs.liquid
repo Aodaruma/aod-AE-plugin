@@ -1,0 +1,54 @@
+use after_effects as ae;
+use wgpu::*;
+
+pub struct WgpuContext {
+    pub device: Device,
+    pub queue: Queue,
+}
+
+impl WgpuContext {
+    pub fn new() -> Result<Self, ae::Error> {
+        let power_preference =
+            wgpu::PowerPreference::from_env().unwrap_or(PowerPreference::HighPerformance);
+        let mut instance_desc = InstanceDescriptor::default();
+        if instance_desc.backends.contains(Backends::DX12)
+            && instance_desc.flags.contains(InstanceFlags::VALIDATION)
+        {
+            instance_desc.backends.remove(Backends::DX12);
+        }
+
+        let instance = Instance::new(&instance_desc);
+        let adapter = pollster::block_on(instance.request_adapter(&RequestAdapterOptions {
+            power_preference,
+            ..Default::default()
+        }))
+        .ok_or(ae::Error::BadCallbackParameter)?;
+
+        let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
+            label: None,
+            required_features: adapter.features(),
+            required_limits: adapter.limits(),
+            experimental_features: ExperimentalFeatures::disabled(),
+            memory_hints: MemoryHints::Performance,
+            trace: Trace::Off,
+        }))
+        .map_err(|_| ae::Error::BadCallbackParameter)?;
+
+        Ok(Self { device, queue })
+    }
+}
+
+fn dispatch_dim(size: u32) -> u32 {
+    size.div_ceil(16)
+}
+
+fn calc_out_bytes(out_w: u32, out_h: u32) -> Result<u64, ae::Error> {
+    let pixels = (out_w as u64)
+        .checked_mul(out_h as u64)
+        .ok_or(ae::Error::BadCallbackParameter)?;
+    let bytes = pixels
+        .checked_mul(4)
+        .and_then(|v| v.checked_mul(std::mem::size_of::<f32>() as u64))
+        .ok_or(ae::Error::BadCallbackParameter)?;
+    Ok(bytes)
+}

@@ -5,6 +5,7 @@ features = { prompt = "Select features", type = "array", choices = [
     "rustfft",
     "nalgebra",
     "rand",
+    "wgpu",
 ] }
 with_deepcolor = { prompt = "Enable 16bpc(deepcolor) support?", type = "bool", default = true }
 with_thrededrender = { prompt = "Enable ThreadedRender support?", type = "bool", default = true }
@@ -15,3 +16,4 @@ with_floatColor = { prompt = "Enable FloatColorAware?", type = "bool", default =
 
 [hooks]
 pre = ["pre-script.rhai"]
+post = ["post-script.rhai"]

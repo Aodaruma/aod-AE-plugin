@@ -3,6 +3,11 @@ use std::env;
 
 use utils::ToPixel;
 
+{% if features contains "wgpu" -%}
+#[cfg(feature = "gpu_wgpu")]
+mod gpu;
+{%- endif %}
+
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 enum Params {}
 
