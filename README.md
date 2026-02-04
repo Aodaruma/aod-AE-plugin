@@ -33,6 +33,10 @@ template.
   - レイヤーにメビウス変換を適用します / Applies Mobius transformation to layers
 - AOD_NormalGenerate
   - 色領域から法線マップを生成します / Generate a normal map from the color region.
+- AOD_RegionColorize
+  - 不透明または色領域をランダム・位置・インデックスで色分けします / Colors connected regions with random, positional, or index-based schemes.
+- AOD_VoronoiGenerate
+  - BlenderのVoronoi Textureノードに着想したボロノイテクスチャマップを生成します / Generates Voronoi texture maps inspired by Blender's Voronoi Texture node.
 
 ## 2. Issue / バグ報告
 
