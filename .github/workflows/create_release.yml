@@ -3,16 +3,15 @@ name: Create Release Plugin from main
 on:
   workflow_run:
     workflows: ["CI"]
-    branches: ["main"]
+    branches: ["main", "dev"]
     types: [completed]
-  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: plugin-prerelease-main
+  group: plugin-prerelease-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -142,6 +141,9 @@ jobs:
 
   publish:
     needs: build
+    if: ${{ github.event_name != 'pull_request' && (github.event_name == 'workflow_run' || github.ref_name == 'main' || github.ref_name == 'dev') }}
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts
@@ -150,51 +152,88 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Prepare draft prerelease tag
+      - name: Prepare release tag
         id: draft_release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         shell: bash
         run: |
           set -euo pipefail
 
-          PRIMARY_TAG="main-prerelease"
-          DRAFT_TAG="$PRIMARY_TAG"
+          BRANCH="${GITHUB_EVENT_WORKFLOW_RUN_HEAD_BRANCH:-${GITHUB_REF_NAME}}"
+          case "$BRANCH" in
+            main)
+              TAG_PREFIX="main-release"
+              IS_DRAFT="true"
+              IS_PRERELEASE="false"
+              ;;
+            dev)
+              TAG_PREFIX="dev-prerelease"
+              IS_DRAFT="false"
+              IS_PRERELEASE="true"
+              ;;
+            *)
+              echo "Unsupported branch: $BRANCH" >&2
+              exit 1
+              ;;
+          esac
 
-          primary_draft=$(gh release view "$PRIMARY_TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)
-          if [ "$primary_draft" = "true" ]; then
-            # --cleanup-tag はタグが既に消えていると 422 で失敗するため、削除は分離して行う
-            gh release delete "$PRIMARY_TAG" -y
-            gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/${PRIMARY_TAG}" >/dev/null 2>&1 || true
-          elif [ "$primary_draft" = "false" ]; then
-            # Keep published prerelease; use a separate tag for new drafts.
-            DRAFT_TAG="${PRIMARY_TAG}-draft"
-          fi
+          RELEASE_DATE="$(date -u +%Y%m%d)"
+          BASE_TAG="${TAG_PREFIX}-${RELEASE_DATE}"
 
-          if [ "$DRAFT_TAG" != "$PRIMARY_TAG" ]; then
-            alt_draft=$(gh release view "$DRAFT_TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)
-            if [ "$alt_draft" = "true" ]; then
-              # --cleanup-tag はタグが既に消えていると 422 で失敗するため、削除は分離して行う
-              gh release delete "$DRAFT_TAG" -y
-              gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/${DRAFT_TAG}" >/dev/null 2>&1 || true
+          # 同日再実行で衝突する場合は連番 suffix を付与
+          TAG="$BASE_TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            found="false"
+            for i in $(seq 2 99); do
+              suffix="$(printf '%02d' "$i")"
+              candidate="${BASE_TAG}_${suffix}"
+              if ! gh release view "$candidate" >/dev/null 2>&1; then
+                TAG="$candidate"
+                found="true"
+                break
+              fi
+            done
+            if [ "$found" != "true" ]; then
+              echo "Unable to find available tag for ${BASE_TAG} (00-99 exhausted)" >&2
+              exit 1
             fi
           fi
 
-          echo "tag=$DRAFT_TAG" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "is_draft=$IS_DRAFT" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
 
       - name: Create draft prerelease and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TARGET_SHA: ${{ github.event.workflow_run.head_sha }}
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         shell: bash
         run: |
           ls -la artifacts
           RELEASE_DATE="$(date -u +%Y-%m-%d)"
+          TITLE_PREFIX="Release"
+          if [ "${{ steps.draft_release.outputs.is_prerelease }}" = "true" ]; then
+            TITLE_PREFIX="Pre-release"
+          fi
+
+          DRAFT_FLAG=""
+          if [ "${{ steps.draft_release.outputs.is_draft }}" = "true" ]; then
+            DRAFT_FLAG="--draft"
+          fi
+
+          PRERELEASE_FLAG=""
+          if [ "${{ steps.draft_release.outputs.is_prerelease }}" = "true" ]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
           gh release create "${{ steps.draft_release.outputs.tag }}" artifacts/*.zip \
             --target "$TARGET_SHA" \
-            --title "Pre-release (main) - ${RELEASE_DATE}" \
-            --draft \
-            --prerelease \
+            --title "${TITLE_PREFIX} (${{ steps.draft_release.outputs.branch }}) - ${RELEASE_DATE}" \
+            $DRAFT_FLAG \
+            $PRERELEASE_FLAG \
             --generate-notes
