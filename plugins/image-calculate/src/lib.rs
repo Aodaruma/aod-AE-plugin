@@ -69,8 +69,16 @@ enum MathOp {
     ToDegrees,
 }
 
+struct OperationUiInfo {
+    expression: &'static str,
+    b_label: &'static str,
+    c_label: &'static str,
+}
+
 #[derive(Default)]
-struct Plugin {}
+struct Plugin {
+    aegp_id: Option<ae::aegp::PluginId>,
+}
 
 ae::define_effect!(Plugin, (), Params);
 
@@ -84,7 +92,7 @@ impl AdobePluginGlobal for Plugin {
         _in_data: InData,
         _: OutData,
     ) -> Result<(), Error> {
-        params.add(
+        params.add_with_flags(
             Params::Operation,
             "Operation",
             PopupDef::setup(|d| {
@@ -131,22 +139,26 @@ impl AdobePluginGlobal for Plugin {
                 ]);
                 d.set_default(1);
             }),
+            ae::ParamFlag::SUPERVISE,
+            ae::ParamUIFlags::empty(),
         )?;
 
-        params.add(
+        params.add_with_flags(
             Params::InputBSource,
-            "Input B",
+            "Input B (Operand)",
             PopupDef::setup(|d| {
                 d.set_options(&["Value", "Layer"]);
                 d.set_default(1);
             }),
+            ae::ParamFlag::SUPERVISE,
+            ae::ParamUIFlags::empty(),
         )?;
 
-        params.add(Params::LayerB, "Layer B", LayerDef::new())?;
+        params.add(Params::LayerB, "Layer B (Operand)", LayerDef::new())?;
 
         params.add(
             Params::ValueB,
-            "Value B",
+            "Value B (Operand)",
             FloatSliderDef::setup(|d| {
                 d.set_valid_min(-100000.0);
                 d.set_valid_max(100000.0);
@@ -157,20 +169,22 @@ impl AdobePluginGlobal for Plugin {
             }),
         )?;
 
-        params.add(
+        params.add_with_flags(
             Params::InputCSource,
-            "Input C",
+            "Input C (Parameter)",
             PopupDef::setup(|d| {
                 d.set_options(&["Value", "Layer"]);
                 d.set_default(1);
             }),
+            ae::ParamFlag::SUPERVISE,
+            ae::ParamUIFlags::empty(),
         )?;
 
-        params.add(Params::LayerC, "Layer C", LayerDef::new())?;
+        params.add(Params::LayerC, "Layer C (Parameter)", LayerDef::new())?;
 
         params.add(
             Params::ValueC,
-            "Value C",
+            "Value C (Parameter)",
             FloatSliderDef::setup(|d| {
                 d.set_valid_min(-100000.0);
                 d.set_valid_max(100000.0);
@@ -232,7 +246,13 @@ impl AdobePluginGlobal for Plugin {
                 );
             }
             ae::Command::GlobalSetup => {
+                out_data.set_out_flag(OutFlags::SendUpdateParamsUi, true);
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
+                if let Ok(suite) = ae::aegp::suites::Utility::new()
+                    && let Ok(plugin_id) = suite.register_with_aegp("AOD_ImageCalculate")
+                {
+                    self.aegp_id = Some(plugin_id);
+                }
             }
             ae::Command::Render {
                 in_layer,
@@ -276,7 +296,7 @@ impl AdobePluginGlobal for Plugin {
             }
             ae::Command::UpdateParamsUi => {
                 let mut params_copy = params.cloned();
-                Self::update_params_ui(&mut params_copy)?;
+                self.update_params_ui(in_data, &mut params_copy)?;
             }
             _ => {}
         }
@@ -285,17 +305,45 @@ impl AdobePluginGlobal for Plugin {
 }
 
 impl Plugin {
-    fn update_params_ui(params: &mut Parameters<Params>) -> Result<(), Error> {
+    fn update_params_ui(
+        &self,
+        in_data: InData,
+        params: &mut Parameters<Params>,
+    ) -> Result<(), Error> {
         let op = math_op_from_popup(params.get(Params::Operation)?.as_popup()?.value());
         let source_b =
             input_source_from_popup(params.get(Params::InputBSource)?.as_popup()?.value());
         let source_c =
             input_source_from_popup(params.get(Params::InputCSource)?.as_popup()?.value());
+        let ui = operation_ui_info(op);
 
         let uses_b = operation_uses_b(op);
         let uses_c = operation_uses_c(op);
         let uses_eps = operation_uses_epsilon(op);
 
+        Self::set_param_name(
+            params,
+            Params::Operation,
+            &format!("Operation (f={})", ui.expression),
+        )?;
+        Self::set_param_name(
+            params,
+            Params::InputBSource,
+            &format!("Input B ({})", ui.b_label),
+        )?;
+        Self::set_param_name(params, Params::LayerB, &format!("Layer B ({})", ui.b_label))?;
+        Self::set_param_name(params, Params::ValueB, &format!("Value B ({})", ui.b_label))?;
+        Self::set_param_name(
+            params,
+            Params::InputCSource,
+            &format!("Input C ({})", ui.c_label),
+        )?;
+        Self::set_param_name(params, Params::LayerC, &format!("Layer C ({})", ui.c_label))?;
+        Self::set_param_name(params, Params::ValueC, &format!("Value C ({})", ui.c_label))?;
+
+        self.set_param_visible(in_data, params, Params::InputBSource, uses_b)?;
+        self.set_param_visible(in_data, params, Params::LayerB, uses_b)?;
+        self.set_param_visible(in_data, params, Params::ValueB, uses_b)?;
         Self::set_param_enabled(params, Params::InputBSource, uses_b)?;
         Self::set_param_enabled(
             params,
@@ -308,6 +356,9 @@ impl Plugin {
             uses_b && matches!(source_b, InputSource::Value),
         )?;
 
+        self.set_param_visible(in_data, params, Params::InputCSource, uses_c)?;
+        self.set_param_visible(in_data, params, Params::LayerC, uses_c)?;
+        self.set_param_visible(in_data, params, Params::ValueC, uses_c)?;
         Self::set_param_enabled(params, Params::InputCSource, uses_c)?;
         Self::set_param_enabled(
             params,
@@ -324,6 +375,45 @@ impl Plugin {
         Ok(())
     }
 
+    fn set_param_name(
+        params: &mut ae::Parameters<Params>,
+        id: Params,
+        name: &str,
+    ) -> Result<(), Error> {
+        let mut p = params.get_mut(id)?;
+        p.set_name(name)?;
+        p.update_param_ui()?;
+        Ok(())
+    }
+
+    fn set_param_visible(
+        &self,
+        in_data: InData,
+        params: &mut ae::Parameters<Params>,
+        id: Params,
+        visible: bool,
+    ) -> Result<(), Error> {
+        if in_data.is_premiere() {
+            return Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::INVISIBLE, !visible);
+        }
+
+        if let Some(plugin_id) = self.aegp_id {
+            let effect = in_data.effect();
+            if let Some(index) = params.index(id)
+                && let Ok(effect_ref) = effect.aegp_effect(plugin_id)
+                && let Ok(stream) = effect_ref.new_stream_by_index(plugin_id, index as i32)
+            {
+                return stream.set_dynamic_stream_flag(
+                    ae::aegp::DynamicStreamFlags::Hidden,
+                    false,
+                    !visible,
+                );
+            }
+        }
+
+        Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::INVISIBLE, !visible)
+    }
+
     fn set_param_enabled(
         params: &mut ae::Parameters<Params>,
         id: Params,
@@ -338,6 +428,11 @@ impl Plugin {
         flag: ae::pf::ParamUIFlags,
         status: bool,
     ) -> Result<(), Error> {
+        let flag_bits = flag.bits();
+        let current_status = (params.get(id)?.ui_flags().bits() & flag_bits) != 0;
+        if current_status == status {
+            return Ok(());
+        }
         let mut p = params.get_mut(id)?;
         p.set_ui_flag(flag, status);
         p.update_param_ui()?;
@@ -511,6 +606,206 @@ fn math_op_from_popup(value: i32) -> MathOp {
         38 => MathOp::ToRadians,
         39 => MathOp::ToDegrees,
         _ => MathOp::Add,
+    }
+}
+
+fn operation_ui_info(op: MathOp) -> OperationUiInfo {
+    match op {
+        MathOp::Add => OperationUiInfo {
+            expression: "A+B",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Subtract => OperationUiInfo {
+            expression: "A-B",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Multiply => OperationUiInfo {
+            expression: "A*B",
+            b_label: "Factor",
+            c_label: "Parameter",
+        },
+        MathOp::Divide => OperationUiInfo {
+            expression: "A/B",
+            b_label: "Divisor",
+            c_label: "Parameter",
+        },
+        MathOp::Power => OperationUiInfo {
+            expression: "pow(A,B)",
+            b_label: "Exponent",
+            c_label: "Parameter",
+        },
+        MathOp::Logarithm => OperationUiInfo {
+            expression: "log_B(A)",
+            b_label: "Base",
+            c_label: "Parameter",
+        },
+        MathOp::SquareRoot => OperationUiInfo {
+            expression: "sqrt(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::InverseSquareRoot => OperationUiInfo {
+            expression: "1/sqrt(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Absolute => OperationUiInfo {
+            expression: "abs(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Exponent => OperationUiInfo {
+            expression: "exp(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Minimum => OperationUiInfo {
+            expression: "min(A,B)",
+            b_label: "Other Value",
+            c_label: "Parameter",
+        },
+        MathOp::Maximum => OperationUiInfo {
+            expression: "max(A,B)",
+            b_label: "Other Value",
+            c_label: "Parameter",
+        },
+        MathOp::LessThan => OperationUiInfo {
+            expression: "A<B ? 1:0",
+            b_label: "Threshold",
+            c_label: "Parameter",
+        },
+        MathOp::GreaterThan => OperationUiInfo {
+            expression: "A>B ? 1:0",
+            b_label: "Threshold",
+            c_label: "Parameter",
+        },
+        MathOp::Sign => OperationUiInfo {
+            expression: "sign(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Compare => OperationUiInfo {
+            expression: "|A-B|<=C ?1:0",
+            b_label: "Compare To",
+            c_label: "Tolerance",
+        },
+        MathOp::SmoothMinimum => OperationUiInfo {
+            expression: "smin(A,B,C)",
+            b_label: "Other Value",
+            c_label: "Smoothness",
+        },
+        MathOp::SmoothMaximum => OperationUiInfo {
+            expression: "smax(A,B,C)",
+            b_label: "Other Value",
+            c_label: "Smoothness",
+        },
+        MathOp::Round => OperationUiInfo {
+            expression: "round(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Floor => OperationUiInfo {
+            expression: "floor(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Ceil => OperationUiInfo {
+            expression: "ceil(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Truncate => OperationUiInfo {
+            expression: "trunc(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Fraction => OperationUiInfo {
+            expression: "fract(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Modulo => OperationUiInfo {
+            expression: "mod(A,B)",
+            b_label: "Divisor",
+            c_label: "Parameter",
+        },
+        MathOp::Wrap => OperationUiInfo {
+            expression: "wrap(A,B,C)",
+            b_label: "Range Min",
+            c_label: "Range Max",
+        },
+        MathOp::Snap => OperationUiInfo {
+            expression: "floor(A/B)*B",
+            b_label: "Step",
+            c_label: "Parameter",
+        },
+        MathOp::PingPong => OperationUiInfo {
+            expression: "pingpong(A,B)",
+            b_label: "Scale",
+            c_label: "Parameter",
+        },
+        MathOp::Sine => OperationUiInfo {
+            expression: "sin(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Cosine => OperationUiInfo {
+            expression: "cos(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Tangent => OperationUiInfo {
+            expression: "tan(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Arcsine => OperationUiInfo {
+            expression: "asin(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Arccosine => OperationUiInfo {
+            expression: "acos(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Arctangent => OperationUiInfo {
+            expression: "atan(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::Arctan2 => OperationUiInfo {
+            expression: "atan2(A,B)",
+            b_label: "X",
+            c_label: "Parameter",
+        },
+        MathOp::HyperbolicSine => OperationUiInfo {
+            expression: "sinh(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::HyperbolicCosine => OperationUiInfo {
+            expression: "cosh(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::HyperbolicTangent => OperationUiInfo {
+            expression: "tanh(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::ToRadians => OperationUiInfo {
+            expression: "radians(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
+        MathOp::ToDegrees => OperationUiInfo {
+            expression: "degrees(A)",
+            b_label: "Operand",
+            c_label: "Parameter",
+        },
     }
 }
 
