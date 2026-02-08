@@ -16,6 +16,12 @@ struct Site {
     hash: u32,
 };
 
+struct SmoothF1Result {
+    dist: f32,
+    color: vec3<f32>,
+    pos: vec3<f32>,
+};
+
 fn hash_u32(mut x: u32) -> u32 {
     x = x ^ (x >> 16u);
     x = x * 0x7FEB352Du;
@@ -58,6 +64,10 @@ fn hash_color(h: u32) -> vec3<f32> {
     return vec3<f32>(r, g, b);
 }
 
+fn lerp3(a: vec3<f32>, b: vec3<f32>, t: f32) -> vec3<f32> {
+    return a + (b - a) * t;
+}
+
 fn metric_distance(dx: f32, dy: f32, dw: f32, metric: u32, lp_exp: f32) -> f32 {
     let adx = abs(dx);
     let ady = abs(dy);
@@ -81,16 +91,83 @@ fn smoothstep01(x: f32) -> f32 {
     return t * t * (3.0 - 2.0 * t);
 }
 
-fn smooth_blend(d1: f32, d2: f32, smoothness: f32) -> f32 {
-    if smoothness <= 0.0 {
-        return 0.0;
+fn smooth_f1_all(
+    px: f32,
+    py: f32,
+    pw: f32,
+    cell_x: i32,
+    cell_y: i32,
+    cell_w: i32,
+    randomness: f32,
+    seed: u32,
+    metric: u32,
+    lp_exp: f32,
+    smoothness: f32
+) -> SmoothF1Result {
+    let k = max(smoothness, 1e-20); // division用
+    var sd: f32 = 0.0;
+    var first: bool = true;
+    var scol: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+    var spos: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+
+    for (var nw: i32 = cell_w - 2; nw <= cell_w + 2; nw = nw + 1) {
+        for (var ny: i32 = cell_y - 2; ny <= cell_y + 2; ny = ny + 1) {
+            for (var nx: i32 = cell_x - 2; nx <= cell_x + 2; nx = nx + 1) {
+                let site = cell_point(nx, ny, nw, randomness, seed);
+                let d = metric_distance(px - site.x, py - site.y, pw - site.w, metric, lp_exp);
+                if (first) {
+                    sd = d;
+                    first = false;
+                    scol = hash_color(site.hash);
+                    spos = vec3<f32>(site.x, site.y, site.w);
+                    continue;
+                }
+                let x = clamp(0.5 + 0.5 * (sd - d) / k, 0.0, 1.0);
+                let h = smoothstep01(x);
+                let corr_d = smoothness * h * (1.0 - h);
+                sd = lerp(sd, d, h) - corr_d;
+
+                // Blender実装と同様に、color/positionは補正を弱める
+                let corr_attr = corr_d / (1.0 + 3.0 * smoothness);
+                let cell_col = hash_color(site.hash);
+                let site_pos = vec3<f32>(site.x, site.y, site.w);
+                scol = lerp3(scol, cell_col, h) - vec3<f32>(corr_attr);
+                spos = lerp3(spos, site_pos, h) - vec3<f32>(corr_attr);
+            }
+        }
     }
-    let t = clamp((d2 - d1) / smoothness, 0.0, 1.0);
-    return 0.5 * (1.0 - smoothstep01(t));
+    let safe_sd = select(0.0, sd, isFinite(sd));
+    return SmoothF1Result(safe_sd, scol, spos);
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     return a + (b - a) * t;
+}
+
+fn n_sphere_radius(nearest: Site, randomness: f32, seed: u32) -> f32 {
+    // Blender定義: closest feature point と「その点に最も近い別feature point」の距離 / 2
+    // ここは distance(metric) ではなく Euclidean 距離に寄せる
+    let ncx = i32(floor(nearest.x));
+    let ncy = i32(floor(nearest.y));
+    let ncw = i32(floor(nearest.w));
+    var min_d = 1e30;
+
+    for (var dw: i32 = -1; dw <= 1; dw = dw + 1) {
+        for (var dy: i32 = -1; dy <= 1; dy = dy + 1) {
+            for (var dx: i32 = -1; dx <= 1; dx = dx + 1) {
+                if (dx == 0 && dy == 0 && dw == 0) {
+                    continue;
+                }
+                let s = cell_point(ncx + dx, ncy + dy, ncw + dw, randomness, seed);
+                let vx = nearest.x - s.x;
+                let vy = nearest.y - s.y;
+                let vw = nearest.w - s.w;
+                let d = sqrt(vx * vx + vy * vy + vw * vw);
+                min_d = select(min_d, d, d < min_d);
+            }
+        }
+    }
+    return select(0.0, 0.5 * min_d, isFinite(min_d));
 }
 
 @compute @workgroup_size(16, 16, 1)
@@ -106,13 +183,22 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let randomness = params.cell.z;
     let lp_exp = params.cell.w;
     let inv_cell_w = params.extra.x;
+    let use_local = params.extra.y;
+    let origin_x = params.extra.z;
+    let origin_y = params.extra.w;
     let smoothness = params.misc.x;
     let w_value = params.misc.y;
     let offset_x = params.misc.z;
     let offset_y = params.misc.w;
+    let feature_mode = params.seed.y;
 
-    let px = (f32(gid.x) + 0.5 - offset_x) * inv_cell_x;
-    let py = (f32(gid.y) + 0.5 - offset_y) * inv_cell_y;
+    let base_x = f32(gid.x) + 0.5;
+    let base_y = f32(gid.y) + 0.5;
+    let sample_x = select(base_x + origin_x, base_x, use_local > 0.5);
+    let sample_y = select(base_y + origin_y, base_y, use_local > 0.5);
+
+    let px = (sample_x - offset_x) * inv_cell_x;
+    let py = (sample_y - offset_y) * inv_cell_y;
     let pw = w_value * inv_cell_w;
     let cell_x = i32(floor(px));
     let cell_y = i32(floor(py));
@@ -153,30 +239,81 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         second = tmp_site;
     }
 
-    let blend = smooth_blend(d1, d2, smoothness);
     var out = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     if (params.size.w == 0u) {
-        let c1 = hash_color(nearest.hash);
-        let c2 = hash_color(second.hash);
-        out = vec4<f32>(vec3<f32>(
-            lerp(c1.x, c2.x, blend),
-            lerp(c1.y, c2.y, blend),
-            lerp(c1.z, c2.z, blend)
-        ), 1.0);
+        // Color:
+        // - F1 / Smooth(F1): feature point color（Smoothならブレンド）
+        // - F2: 2nd feature point color
+        // - その他（F2-F1, N-sphere等）: Blender互換寄せでモノクロ（distance値）
+        if (feature_mode == 0u && smoothness > 0.0) {
+            let s = smooth_f1_all(
+                px, py, pw,
+                cell_x, cell_y, cell_w,
+                randomness, params.seed.x,
+                params.size.z, lp_exp,
+                smoothness
+            );
+            out = vec4<f32>(s.color, 1.0);
+        } else if (feature_mode == 1u) {
+            out = vec4<f32>(hash_color(second.hash), 1.0);
+        } else if (feature_mode == 2u) {
+            let v = max(d2 - d1, 0.0);
+            out = vec4<f32>(v, v, v, 1.0);
+        } else {
+            let v = n_sphere_radius(nearest, randomness, params.seed.x);
+            out = vec4<f32>(v, v, v, 1.0);
+        }
     } else if (params.size.w == 1u) {
-        let grid_w = max(f32(out_w) * inv_cell_x, 1e-6);
-        let grid_h = max(f32(out_h) * inv_cell_y, 1e-6);
-        let r = nearest.x / grid_w;
-        let g = nearest.y / grid_h;
-        out = vec4<f32>(r, g, 0.0, 1.0);
+        // Position:
+        // - F1 / Smooth(F1): feature point position（Smoothならブレンド）
+        // - F2: 2nd feature point position
+        var p = vec3<f32>(nearest.x, nearest.y, nearest.w);
+        if (feature_mode == 0u && smoothness > 0.0) {
+            let s = smooth_f1_all(
+                px, py, pw,
+                cell_x, cell_y, cell_w,
+                randomness, params.seed.x,
+                params.size.z, lp_exp,
+                smoothness
+            );
+            p = s.pos;
+        } else if (feature_mode == 1u) {
+            p = vec3<f32>(second.x, second.y, second.w);
+        }
+
+        if (use_local > 0.5) {
+            let site_world_x = p.x / inv_cell_x + offset_x;
+            let site_world_y = p.y / inv_cell_y + offset_y;
+            let r = site_world_x / f32(out_w);
+            let g = site_world_y / f32(out_h);
+            out = vec4<f32>(r, g, 0.0, 1.0);
+        } else {
+            let grid_w = max(f32(out_w) * inv_cell_x, 1e-6);
+            let grid_h = max(f32(out_h) * inv_cell_y, 1e-6);
+            let r = p.x / grid_w;
+            let g = p.y / grid_h;
+            out = vec4<f32>(r, g, 0.0, 1.0);
+        }
     } else if (params.size.w == 2u) {
-        let v = lerp(d1, d2, blend);
-        out = vec4<f32>(v, v, v, 1.0);
-    } else if (params.size.w == 3u) {
-        let v = d1;
-        out = vec4<f32>(v, v, v, 1.0);
-    } else {
-        let v = max(d2 - d1, 0.0);
+        var v: f32;
+        if (feature_mode == 0u) {
+            v = d1;
+            if (smoothness > 0.0) {
+                v = smooth_f1_all(
+                    px, py, pw,
+                    cell_x, cell_y, cell_w,
+                    randomness, params.seed.x,
+                    params.size.z, lp_exp,
+                    smoothness
+                ).dist;
+            }
+        } else if (feature_mode == 1u) {
+            v = d2;
+        } else if (feature_mode == 2u) {
+            v = max(d2 - d1, 0.0);
+        } else {
+            v = n_sphere_radius(nearest, randomness, params.seed.x);
+        }
         out = vec4<f32>(v, v, v, 1.0);
     }
 

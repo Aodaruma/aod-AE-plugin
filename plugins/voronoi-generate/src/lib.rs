@@ -19,8 +19,6 @@ enum Params {
     CellGroupEnd,
     DistanceGroupStart,
     DistanceGroupEnd,
-    OutputGroupStart,
-    OutputGroupEnd,
     CellSize,
     ScaleX,
     ScaleY,
@@ -30,11 +28,18 @@ enum Params {
     LpExponent,
     Smoothness,
     OutputType,
+    Mode,
+    PositionLocal,
     ScaleW,
     W,
     Offset,
     Clamp32,
     UseOriginalAlpha,
+    CellMapLayer,
+    BlendGroupStart,
+    BlendGroupEnd,
+    BlendMode,
+    BlendOpacity,
 }
 
 #[derive(Clone, Copy)]
@@ -49,9 +54,45 @@ enum DistanceMetric {
 enum OutputType {
     Color,
     Position,
-    F,
     Distance,
-    Edge,
+}
+
+#[derive(Clone, Copy)]
+enum FeatureMode {
+    F1,
+    F2,
+    F2MinusF1,
+    NSphereRadius,
+}
+
+#[derive(Clone, Copy)]
+enum BlendMode {
+    Normal,
+    Add,
+    Subtract,
+    Multiply,
+    Screen,
+    Overlay,
+    SoftLight,
+    HardLight,
+    ColorDodge,
+    ColorBurn,
+    LinearBurn,
+    LinearLight,
+    VividLight,
+    PinLight,
+    HardMix,
+    Difference,
+    Exclusion,
+    Divide,
+    Darken,
+    Lighten,
+    DarkerColor,
+    LighterColor,
+    Hue,
+    Saturation,
+    Color,
+    Luminosity,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -87,6 +128,33 @@ impl AdobePluginGlobal for Plugin {
         _in_data: InData,
         _: OutData,
     ) -> Result<(), Error> {
+        // Primary controls (ungrouped)
+        params.add(
+            Params::OutputType,
+            "Output",
+            PopupDef::setup(|d| {
+                d.set_options(&["Color", "Position", "Distance"]);
+                d.set_default(1);
+            }),
+        )?;
+
+        params.add(
+            Params::Mode,
+            "Mode",
+            PopupDef::setup(|d| {
+                d.set_options(&["F1", "F2", "F2 - F1", "N-Sphere Radius"]);
+                d.set_default(1);
+            }),
+        )?;
+
+        params.add(
+            Params::PositionLocal,
+            "Layer space (position)",
+            CheckBoxDef::setup(|d| {
+                d.set_default(false);
+            }),
+        )?;
+
         params.add_group(
             Params::CellGroupStart,
             Params::CellGroupEnd,
@@ -105,6 +173,8 @@ impl AdobePluginGlobal for Plugin {
                         d.set_precision(1);
                     }),
                 )?;
+
+                params.add(Params::CellMapLayer, "Cell Size Map Layer", LayerDef::new())?;
 
                 params.add(
                     Params::ScaleX,
@@ -168,6 +238,19 @@ impl AdobePluginGlobal for Plugin {
             false,
             |params| {
                 params.add(
+                    Params::Smoothness,
+                    "Smoothness",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(0.0);
+                        d.set_valid_max(1.0);
+                        d.set_slider_min(0.0);
+                        d.set_slider_max(1.0);
+                        d.set_default(0.0);
+                        d.set_precision(3);
+                    }),
+                )?;
+
+                params.add(
                     Params::DistanceMetric,
                     "Distance Metric",
                     PopupDef::setup(|d| {
@@ -186,19 +269,6 @@ impl AdobePluginGlobal for Plugin {
                         d.set_slider_max(8.0);
                         d.set_default(2.0);
                         d.set_precision(2);
-                    }),
-                )?;
-
-                params.add(
-                    Params::Smoothness,
-                    "Smoothness",
-                    FloatSliderDef::setup(|d| {
-                        d.set_valid_min(0.0);
-                        d.set_valid_max(1.0);
-                        d.set_slider_min(0.0);
-                        d.set_slider_max(1.0);
-                        d.set_default(0.0);
-                        d.set_precision(3);
                     }),
                 )?;
 
@@ -232,53 +302,86 @@ impl AdobePluginGlobal for Plugin {
             },
         )?;
 
+        params.add(
+            Params::Offset,
+            "Offset",
+            PointDef::setup(|p| {
+                p.set_default((0.0, 0.0));
+            }),
+        )?;
+
         params.add_group(
-            Params::OutputGroupStart,
-            Params::OutputGroupEnd,
-            "Output",
+            Params::BlendGroupStart,
+            Params::BlendGroupEnd,
+            "Blend",
             false,
             |params| {
                 params.add(
-                    Params::OutputType,
-                    "Output",
+                    Params::BlendMode,
+                    "Blend Mode",
                     PopupDef::setup(|d| {
                         d.set_options(&[
+                            "Normal",
+                            "Add (Linear Dodge)",
+                            "Subtract",
+                            "Multiply",
+                            "Screen",
+                            "Overlay",
+                            "Soft Light",
+                            "Hard Light",
+                            "Color Dodge",
+                            "Color Burn",
+                            "Linear Burn",
+                            "Linear Light",
+                            "Vivid Light",
+                            "Pin Light",
+                            "Hard Mix",
+                            "Difference",
+                            "Exclusion",
+                            "Divide",
+                            "Darken",
+                            "Lighten",
+                            "Darker Color",
+                            "Lighter Color",
+                            "Hue",
+                            "Saturation",
                             "Color",
-                            "Position",
-                            "F (Smooth F1)",
-                            "Distance (F1)",
-                            "Edge (F2 - F1)",
+                            "Luminosity",
                         ]);
                         d.set_default(1);
                     }),
                 )?;
 
                 params.add(
-                    Params::Offset,
-                    "Offset",
-                    PointDef::setup(|p| {
-                        p.set_default((0.0, 0.0));
+                    Params::BlendOpacity,
+                    "Blend Opacity",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(0.0);
+                        d.set_valid_max(1.0);
+                        d.set_slider_min(0.0);
+                        d.set_slider_max(1.0);
+                        d.set_default(1.0);
+                        d.set_precision(3);
                     }),
                 )?;
-
-                params.add(
-                    Params::Clamp32,
-                    "Clamp (32bpc)",
-                    CheckBoxDef::setup(|d| {
-                        d.set_default(false);
-                    }),
-                )?;
-
-                params.add(
-                    Params::UseOriginalAlpha,
-                    "Use Original Alpha",
-                    CheckBoxDef::setup(|d| {
-                        d.set_default(false);
-                    }),
-                )?;
-
                 Ok(())
             },
+        )?;
+
+        params.add(
+            Params::Clamp32,
+            "Clamp (32bpc)",
+            CheckBoxDef::setup(|d| {
+                d.set_default(false);
+            }),
+        )?;
+
+        params.add(
+            Params::UseOriginalAlpha,
+            "Use Original Alpha",
+            CheckBoxDef::setup(|d| {
+                d.set_default(false);
+            }),
         )?;
 
         Ok(())
@@ -353,7 +456,8 @@ impl AdobePluginGlobal for Plugin {
                 cb.checkin_layer_pixels(0)?;
             }
             ae::Command::UserChangedParam { param_index } => {
-                if params.type_at(param_index) == Params::DistanceMetric {
+                let t = params.type_at(param_index);
+                if t == Params::DistanceMetric || t == Params::OutputType || t == Params::Mode {
                     out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
             }
@@ -373,6 +477,18 @@ impl Plugin {
         let is_lp = metric == 4;
         Self::set_param_enabled(params, Params::LpExponent, is_lp)?;
 
+        // Output popup: 1 Color, 2 Position, 3 Distance
+        let output = params.get(Params::OutputType)?.as_popup()?.value();
+        let is_distance = output == 3;
+        Self::set_param_enabled(params, Params::Mode, is_distance)?;
+        let is_position = output == 2;
+        Self::set_param_enabled(params, Params::PositionLocal, is_position)?;
+        // Smoothness relevant only for Distance + Mode=F1
+        let mode = params.get(Params::Mode)?.as_popup()?.value();
+        let is_smooth_f1 = is_distance && mode == 1;
+        Self::set_param_enabled(params, Params::Smoothness, is_smooth_f1)?;
+
+        // Mode popup: 1 F1, 2 F2, 3 F2-F1, 4 N-Sphere Radius
         Ok(())
     }
 
@@ -399,7 +515,7 @@ impl Plugin {
     #[cfg(feature = "gpu_wgpu")]
     fn do_render_wgpu(
         &self,
-        _in_data: InData,
+        in_data: InData,
         in_layer: &Layer,
         out_layer: &mut Layer,
         params: &mut Parameters<Params>,
@@ -427,9 +543,6 @@ impl Plugin {
         let scale_x = scale_x.max(1.0e-3);
         let scale_y = scale_y.max(1.0e-3);
         let scale_w = scale_w.max(1.0e-3);
-        let inv_cell_x = scale_x / cell_size;
-        let inv_cell_y = scale_y / cell_size;
-        let inv_cell_w = scale_w / cell_size;
 
         let randomness = params.get(Params::Randomness)?.as_float_slider()?.value() as f32;
         let randomness = randomness.clamp(0.0, 1.0);
@@ -452,8 +565,13 @@ impl Plugin {
         let output_type = match params.get(Params::OutputType)?.as_popup()?.value() {
             2 => 1,
             3 => 2,
+            _ => 0,
+        };
+
+        let feature_mode = match params.get(Params::Mode)?.as_popup()?.value() {
+            2 => 1,
+            3 => 2,
             4 => 3,
-            5 => 4,
             _ => 0,
         };
 
@@ -461,8 +579,25 @@ impl Plugin {
         let offset_param = params.get(Params::Offset)?;
         let offset_point = offset_param.as_point()?;
         let (offset_x, offset_y) = point_value_f32(&offset_point);
+        let position_local = params.get(Params::PositionLocal)?.as_checkbox()?.value();
+        let origin = in_data.output_origin();
+        let pre_origin = in_data.pre_effect_source_origin();
+        let origin_x = origin.h as f32 + pre_origin.h as f32;
+        let origin_y = origin.v as f32 + pre_origin.v as f32;
         let clamp_32 = params.get(Params::Clamp32)?.as_checkbox()?.value();
         let use_original_alpha = params.get(Params::UseOriginalAlpha)?.as_checkbox()?.value();
+        let blend_mode = params.get(Params::BlendMode)?.as_popup()?.value();
+        let cell_map_checkout = params.checkout_at(Params::CellMapLayer, None, None, None)?;
+        let has_cell_map_layer = cell_map_checkout.as_layer()?.value().is_some();
+
+        // GPU パスは現状、セルサイズマップとブレンドモード拡張に非対応
+        if has_cell_map_layer || blend_mode != 1 {
+            return Err(Error::BadCallbackParameter);
+        }
+
+        let inv_cell_x = scale_x / cell_size;
+        let inv_cell_y = scale_y / cell_size;
+        let inv_cell_w = scale_w / cell_size;
 
         let render_params = WgpuRenderParams {
             out_w: out_w as u32,
@@ -476,6 +611,10 @@ impl Plugin {
             lp_exp,
             smoothness,
             output_type,
+            feature_mode,
+            position_local,
+            origin_x,
+            origin_y,
             w_value,
             offset_x,
             offset_y,
@@ -530,7 +669,7 @@ impl Plugin {
 
     fn do_render(
         &self,
-        _in_data: InData,
+        in_data: InData,
         in_layer: Layer,
         _out_data: OutData,
         mut out_layer: Layer,
@@ -556,9 +695,6 @@ impl Plugin {
         let scale_x = scale_x.max(1.0e-3);
         let scale_y = scale_y.max(1.0e-3);
         let scale_w = scale_w.max(1.0e-3);
-        let inv_cell_x = scale_x / cell_size;
-        let inv_cell_y = scale_y / cell_size;
-        let inv_cell_w = scale_w / cell_size;
 
         let randomness = params.get(Params::Randomness)?.as_float_slider()?.value() as f32;
         let randomness = randomness.clamp(0.0, 1.0);
@@ -580,28 +716,102 @@ impl Plugin {
 
         let output_type = match params.get(Params::OutputType)?.as_popup()?.value() {
             2 => OutputType::Position,
-            3 => OutputType::F,
-            4 => OutputType::Distance,
-            5 => OutputType::Edge,
+            3 => OutputType::Distance,
             _ => OutputType::Color,
+        };
+
+        let feature_mode = match params.get(Params::Mode)?.as_popup()?.value() {
+            2 => FeatureMode::F2,
+            3 => FeatureMode::F2MinusF1,
+            4 => FeatureMode::NSphereRadius,
+            _ => FeatureMode::F1,
         };
 
         let w_value = params.get(Params::W)?.as_float_slider()?.value() as f32;
         let offset_param = params.get(Params::Offset)?;
         let offset_point = offset_param.as_point()?;
         let (offset_x, offset_y) = point_value_f32(&offset_point);
-
+        let position_local = params.get(Params::PositionLocal)?.as_checkbox()?.value();
+        let origin = in_data.output_origin();
+        let pre_origin = in_data.pre_effect_source_origin();
+        let origin_x = origin.h as f32 + pre_origin.h as f32;
+        let origin_y = origin.v as f32 + pre_origin.v as f32;
         let clamp_32 = params.get(Params::Clamp32)?.as_checkbox()?.value();
         let use_original_alpha = params.get(Params::UseOriginalAlpha)?.as_checkbox()?.value();
-
-        let grid_w = (w as f32) * inv_cell_x;
-        let grid_h = (h as f32) * inv_cell_y;
-        let grid_w = grid_w.max(1.0e-6);
-        let grid_h = grid_h.max(1.0e-6);
+        let cell_map_checkout = params.checkout_at(Params::CellMapLayer, None, None, None)?;
+        let cell_map_layer = cell_map_checkout.as_layer()?.value();
+        let cell_map_world_type = cell_map_layer.as_ref().map(|layer| layer.world_type());
+        let blend_mode = match params.get(Params::BlendMode)?.as_popup()?.value() {
+            2 => BlendMode::Add,
+            3 => BlendMode::Subtract,
+            4 => BlendMode::Multiply,
+            5 => BlendMode::Screen,
+            6 => BlendMode::Overlay,
+            7 => BlendMode::SoftLight,
+            8 => BlendMode::HardLight,
+            9 => BlendMode::ColorDodge,
+            10 => BlendMode::ColorBurn,
+            11 => BlendMode::LinearBurn,
+            12 => BlendMode::LinearLight,
+            13 => BlendMode::VividLight,
+            14 => BlendMode::PinLight,
+            15 => BlendMode::HardMix,
+            16 => BlendMode::Difference,
+            17 => BlendMode::Exclusion,
+            18 => BlendMode::Divide,
+            19 => BlendMode::Darken,
+            20 => BlendMode::Lighten,
+            21 => BlendMode::DarkerColor,
+            22 => BlendMode::LighterColor,
+            23 => BlendMode::Hue,
+            24 => BlendMode::Saturation,
+            25 => BlendMode::Color,
+            26 => BlendMode::Luminosity,
+            _ => BlendMode::Normal,
+        };
+        let blend_opacity = params.get(Params::BlendOpacity)?.as_float_slider()?.value() as f32;
 
         out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
-            let px = (x as f32 + 0.5 - offset_x) * inv_cell_x;
-            let py = (y as f32 + 0.5 - offset_y) * inv_cell_y;
+            let base_x = x as f32 + 0.5;
+            let base_y = y as f32 + 0.5;
+            let sample_x = if position_local {
+                base_x
+            } else {
+                base_x + origin_x
+            };
+            let sample_y = if position_local {
+                base_y
+            } else {
+                base_y + origin_y
+            };
+
+            let src_px = read_pixel_f32(&in_layer, in_world_type, x as usize, y as usize);
+            let map_luminance = if let (Some(layer), Some(world_type)) =
+                (cell_map_layer.as_ref(), cell_map_world_type)
+            {
+                let map_w = layer.width().max(1) as usize;
+                let map_h = layer.height().max(1) as usize;
+                let map_x = (x as usize).min(map_w - 1);
+                let map_y = (y as usize).min(map_h - 1);
+                let px = read_pixel_f32(layer, world_type, map_x, map_y);
+                (0.2126 * px.red + 0.7152 * px.green + 0.0722 * px.blue).clamp(0.0, 1.0)
+            } else {
+                0.5
+            };
+            let cell_size_local = if cell_map_layer.is_some() {
+                let size_factor = lerp(0.5, 1.5, map_luminance);
+                (cell_size * size_factor).clamp(1.0e-3, 8192.0)
+            } else {
+                cell_size
+            };
+            let inv_cell_x = scale_x / cell_size_local;
+            let inv_cell_y = scale_y / cell_size_local;
+            let inv_cell_w = scale_w / cell_size_local;
+            let grid_w = ((w as f32) * inv_cell_x).max(1.0e-6);
+            let grid_h = ((h as f32) * inv_cell_y).max(1.0e-6);
+
+            let px = (sample_x - offset_x) * inv_cell_x;
+            let py = (sample_y - offset_y) * inv_cell_y;
             let pw = w_value * inv_cell_w;
             let cell_x = px.floor() as i32;
             let cell_y = py.floor() as i32;
@@ -610,7 +820,6 @@ impl Plugin {
             let mut d1 = f32::INFINITY;
             let mut d2 = f32::INFINITY;
             let mut nearest = Site::default();
-            let mut second = Site::default();
 
             for nw in (cell_w - 1)..=(cell_w + 1) {
                 for ny in (cell_y - 1)..=(cell_y + 1) {
@@ -623,12 +832,10 @@ impl Plugin {
 
                         if d < d1 {
                             d2 = d1;
-                            second = nearest;
                             d1 = d;
                             nearest = site;
                         } else if d < d2 {
                             d2 = d;
-                            second = site;
                         }
                     }
                 }
@@ -639,28 +846,31 @@ impl Plugin {
             }
             if !d2.is_finite() {
                 d2 = d1;
-                second = nearest;
             }
-
-            let blend = smooth_blend(d1, d2, smoothness);
 
             let mut out_px = match output_type {
                 OutputType::Color => {
                     let (r1, g1, b1) = hash_color(nearest.hash);
-                    let (r2, g2, b2) = hash_color(second.hash);
-                    let r = lerp(r1, r2, blend);
-                    let g = lerp(g1, g2, blend);
-                    let b = lerp(b1, b2, blend);
                     PixelF32 {
                         alpha: 1.0,
-                        red: r,
-                        green: g,
-                        blue: b,
+                        red: r1,
+                        green: g1,
+                        blue: b1,
                     }
                 }
                 OutputType::Position => {
-                    let mut r = nearest.x / grid_w;
-                    let mut g = nearest.y / grid_h;
+                    let mut r;
+                    let mut g;
+                    if position_local {
+                        // ワールド座標系での位置を出力（WGPU実装に合わせる）
+                        let site_world_x = nearest.x / inv_cell_x + offset_x;
+                        let site_world_y = nearest.y / inv_cell_y + offset_y;
+                        r = site_world_x / w as f32;
+                        g = site_world_y / h as f32;
+                    } else {
+                        r = nearest.x / grid_w;
+                        g = nearest.y / grid_h;
+                    }
                     let mut b = 0.0;
 
                     r = sanitize_value(r, out_is_f32, clamp_32);
@@ -674,27 +884,57 @@ impl Plugin {
                         blue: b,
                     }
                 }
-                OutputType::F => {
-                    let mut v = lerp(d1, d2, blend);
-                    v = sanitize_value(v, out_is_f32, clamp_32);
-                    PixelF32 {
-                        alpha: 1.0,
-                        red: v,
-                        green: v,
-                        blue: v,
-                    }
-                }
                 OutputType::Distance => {
-                    let v = sanitize_value(d1, out_is_f32, clamp_32);
-                    PixelF32 {
-                        alpha: 1.0,
-                        red: v,
-                        green: v,
-                        blue: v,
-                    }
-                }
-                OutputType::Edge => {
-                    let mut v = (d2 - d1).max(0.0);
+                    let mut v = match feature_mode {
+                        FeatureMode::F1 => {
+                            if smoothness > 0.0 {
+                                smooth_f1_distance(
+                                    px,
+                                    py,
+                                    pw,
+                                    cell_x,
+                                    cell_y,
+                                    cell_w,
+                                    randomness,
+                                    seed,
+                                    distance_metric,
+                                    lp_exp,
+                                    smoothness,
+                                )
+                            } else {
+                                d1
+                            }
+                        }
+                        FeatureMode::F2 => d2,
+                        FeatureMode::F2MinusF1 => (d2 - d1).max(0.0),
+                        FeatureMode::NSphereRadius => {
+                            let near_cx = nearest.x.floor() as i32;
+                            let near_cy = nearest.y.floor() as i32;
+                            let near_cw = nearest.w.floor() as i32;
+                            let mut min_d = f32::INFINITY;
+                            for nw in (near_cw - 2)..=(near_cw + 2) {
+                                for ny in (near_cy - 2)..=(near_cy + 2) {
+                                    for nx in (near_cx - 2)..=(near_cx + 2) {
+                                        let site = cell_point(nx, ny, nw, randomness, seed);
+                                        if site.hash == nearest.hash {
+                                            continue;
+                                        }
+                                        let d = metric_distance(
+                                            nearest.x - site.x,
+                                            nearest.y - site.y,
+                                            nearest.w - site.w,
+                                            distance_metric,
+                                            lp_exp,
+                                        );
+                                        if d < min_d {
+                                            min_d = d;
+                                        }
+                                    }
+                                }
+                            }
+                            if min_d.is_finite() { 0.5 * min_d } else { 0.0 }
+                        }
+                    };
                     v = sanitize_value(v, out_is_f32, clamp_32);
                     PixelF32 {
                         alpha: 1.0,
@@ -704,6 +944,25 @@ impl Plugin {
                     }
                 }
             };
+
+            // blend with original layer
+            let mut blended = blend_pixels(src_px, out_px, blend_mode);
+            blended.red = sanitize_value(
+                lerp(src_px.red, blended.red, blend_opacity),
+                out_is_f32,
+                clamp_32,
+            );
+            blended.green = sanitize_value(
+                lerp(src_px.green, blended.green, blend_opacity),
+                out_is_f32,
+                clamp_32,
+            );
+            blended.blue = sanitize_value(
+                lerp(src_px.blue, blended.blue, blend_opacity),
+                out_is_f32,
+                clamp_32,
+            );
+            out_px = blended;
 
             if use_original_alpha {
                 let mut out_alpha =
@@ -798,12 +1057,42 @@ fn rand01(h: u32) -> f32 {
     h as f32 / u32::MAX as f32
 }
 
-fn smooth_blend(d1: f32, d2: f32, smoothness: f32) -> f32 {
-    if smoothness <= 0.0 || !d1.is_finite() || !d2.is_finite() {
-        return 0.0;
+// Blender系 Smooth F1: 近傍候補を走査しながら smooth-min を更新する
+fn smooth_f1_distance(
+    px: f32,
+    py: f32,
+    pw: f32,
+    cell_x: i32,
+    cell_y: i32,
+    cell_w: i32,
+    randomness: f32,
+    seed: u32,
+    metric: DistanceMetric,
+    lp_exp: f32,
+    smoothness: f32,
+) -> f32 {
+    let k = smoothness.max(1.0e-20); // division用（0割回避）
+    let mut sd = 0.0f32;
+    let mut first = true;
+
+    for nw in (cell_w - 2)..=(cell_w + 2) {
+        for ny in (cell_y - 2)..=(cell_y + 2) {
+            for nx in (cell_x - 2)..=(cell_x + 2) {
+                let site = cell_point(nx, ny, nw, randomness, seed);
+                let d = metric_distance(px - site.x, py - site.y, pw - site.w, metric, lp_exp);
+                if first {
+                    sd = d;
+                    first = false;
+                    continue;
+                }
+                let x = (0.5 + 0.5 * (sd - d) / k).clamp(0.0, 1.0);
+                let h = smoothstep01(x); // smoothstep(0,1,x)
+                let corr = smoothness * h * (1.0 - h);
+                sd = lerp(sd, d, h) - corr;
+            }
+        }
     }
-    let t = ((d2 - d1) / smoothness).clamp(0.0, 1.0);
-    0.5 * (1.0 - smoothstep01(t))
+    if sd.is_finite() { sd } else { 0.0 }
 }
 
 fn smoothstep01(x: f32) -> f32 {
@@ -827,6 +1116,243 @@ fn sanitize_value(mut v: f32, out_is_f32: bool, clamp_32: bool) -> f32 {
         v = v.clamp(0.0, 1.0);
     }
     v
+}
+
+// --- blend helpers ---
+fn blend_pixels(base: PixelF32, blend: PixelF32, mode: BlendMode) -> PixelF32 {
+    match mode {
+        BlendMode::Hue => {
+            let (bh, _, _bl) = rgb_to_hsl(base.red, base.green, base.blue);
+            let (_, ss, sl) = rgb_to_hsl(blend.red, blend.green, blend.blue);
+            let (r, g, b) = hsl_to_rgb(bh, ss, sl);
+            PixelF32 {
+                alpha: 1.0,
+                red: r,
+                green: g,
+                blue: b,
+            }
+        }
+        BlendMode::Saturation => {
+            let (bh, _bs, bl) = rgb_to_hsl(base.red, base.green, base.blue);
+            let (_, ss, _) = rgb_to_hsl(blend.red, blend.green, blend.blue);
+            let (r, g, b) = hsl_to_rgb(bh, ss, bl);
+            PixelF32 {
+                alpha: 1.0,
+                red: r,
+                green: g,
+                blue: b,
+            }
+        }
+        BlendMode::Color => {
+            let (_, _, bl) = rgb_to_hsl(base.red, base.green, base.blue);
+            let (sh, ss, _) = rgb_to_hsl(blend.red, blend.green, blend.blue);
+            let (r, g, b) = hsl_to_rgb(sh, ss, bl);
+            PixelF32 {
+                alpha: 1.0,
+                red: r,
+                green: g,
+                blue: b,
+            }
+        }
+        BlendMode::Luminosity => {
+            let (bh, bs, _) = rgb_to_hsl(base.red, base.green, base.blue);
+            let (_, _, sl) = rgb_to_hsl(blend.red, blend.green, blend.blue);
+            let (r, g, b) = hsl_to_rgb(bh, bs, sl);
+            PixelF32 {
+                alpha: 1.0,
+                red: r,
+                green: g,
+                blue: b,
+            }
+        }
+        BlendMode::DarkerColor => {
+            let b_sum = base.red + base.green + base.blue;
+            let s_sum = blend.red + blend.green + blend.blue;
+            if s_sum < b_sum {
+                PixelF32 {
+                    alpha: 1.0,
+                    red: blend.red,
+                    green: blend.green,
+                    blue: blend.blue,
+                }
+            } else {
+                PixelF32 {
+                    alpha: 1.0,
+                    red: base.red,
+                    green: base.green,
+                    blue: base.blue,
+                }
+            }
+        }
+        BlendMode::LighterColor => {
+            let b_sum = base.red + base.green + base.blue;
+            let s_sum = blend.red + blend.green + blend.blue;
+            if s_sum > b_sum {
+                PixelF32 {
+                    alpha: 1.0,
+                    red: blend.red,
+                    green: blend.green,
+                    blue: blend.blue,
+                }
+            } else {
+                PixelF32 {
+                    alpha: 1.0,
+                    red: base.red,
+                    green: base.green,
+                    blue: base.blue,
+                }
+            }
+        }
+        _ => {
+            let r = blend_channel(base.red, blend.red, mode);
+            let g = blend_channel(base.green, blend.green, mode);
+            let b = blend_channel(base.blue, blend.blue, mode);
+            PixelF32 {
+                alpha: 1.0,
+                red: r,
+                green: g,
+                blue: b,
+            }
+        }
+    }
+}
+
+fn blend_channel(b: f32, s: f32, mode: BlendMode) -> f32 {
+    match mode {
+        BlendMode::Normal => s,
+        BlendMode::Add => b + s,
+        BlendMode::Subtract => b - s,
+        BlendMode::Multiply => b * s,
+        BlendMode::Screen => 1.0 - (1.0 - b) * (1.0 - s),
+        BlendMode::Overlay => {
+            if b <= 0.5 {
+                2.0 * b * s
+            } else {
+                1.0 - 2.0 * (1.0 - b) * (1.0 - s)
+            }
+        }
+        BlendMode::SoftLight => soft_light(b, s),
+        BlendMode::HardLight => {
+            if s <= 0.5 {
+                2.0 * b * s
+            } else {
+                1.0 - 2.0 * (1.0 - b) * (1.0 - s)
+            }
+        }
+        BlendMode::ColorDodge => {
+            if s >= 1.0 {
+                1.0
+            } else {
+                b / (1.0 - s).max(1.0e-6)
+            }
+        }
+        BlendMode::ColorBurn => {
+            if s <= 0.0 {
+                0.0
+            } else {
+                1.0 - (1.0 - b) / s.max(1.0e-6)
+            }
+        }
+        BlendMode::LinearBurn => b + s - 1.0,
+        BlendMode::LinearLight => b + 2.0 * s - 1.0,
+        BlendMode::VividLight => {
+            if s <= 0.5 {
+                1.0 - (1.0 - b) / (2.0 * s).max(1.0e-6)
+            } else {
+                b / (1.0 - (2.0 * s - 1.0)).max(1.0e-6)
+            }
+        }
+        BlendMode::PinLight => {
+            if s < 0.5 {
+                b.min(2.0 * s)
+            } else {
+                b.max(2.0 * s - 1.0)
+            }
+        }
+        BlendMode::HardMix => {
+            let v = if s <= 0.5 {
+                1.0 - (1.0 - b) / (2.0 * s).max(1.0e-6)
+            } else {
+                b / (1.0 - (2.0 * s - 1.0)).max(1.0e-6)
+            };
+            if v < 0.5 { 0.0 } else { 1.0 }
+        }
+        BlendMode::Difference => (b - s).abs(),
+        BlendMode::Exclusion => b + s - 2.0 * b * s,
+        BlendMode::Divide => {
+            if s.abs() < 1.0e-6 {
+                1.0
+            } else {
+                b / s
+            }
+        }
+        BlendMode::Darken => b.min(s),
+        BlendMode::Lighten => b.max(s),
+        _ => s,
+    }
+}
+
+fn soft_light(b: f32, s: f32) -> f32 {
+    if s <= 0.5 {
+        b - (1.0 - 2.0 * s) * b * (1.0 - b)
+    } else {
+        let d = if b <= 0.25 {
+            ((16.0 * b - 12.0) * b + 4.0) * b
+        } else {
+            b.sqrt()
+        };
+        b + (2.0 * s - 1.0) * (d - b)
+    }
+}
+
+fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) * 0.5;
+    let delta = max - min;
+    if delta.abs() < 1.0e-6 {
+        return (0.0, 0.0, l);
+    }
+    let s = delta / (1.0 - (2.0 * l - 1.0).abs());
+    let h = if max == r {
+        (g - b) / delta + if g < b { 6.0 } else { 0.0 }
+    } else if max == g {
+        (b - r) / delta + 2.0
+    } else {
+        (r - g) / delta + 4.0
+    } / 6.0;
+    (h, s, l)
+}
+
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
+    if s.abs() < 1.0e-6 {
+        return (l, l, l);
+    }
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
+    let p = 2.0 * l - q;
+    let hk = h - h.floor(); // wrap
+    let t = |mut t: f32| {
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    (t(hk + 1.0 / 3.0), t(hk), t(hk - 1.0 / 3.0))
 }
 
 // --- pixel helpers ---
