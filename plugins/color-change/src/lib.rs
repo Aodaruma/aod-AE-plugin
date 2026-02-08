@@ -1,3 +1,5 @@
+#![allow(clippy::drop_non_drop, clippy::question_mark)]
+
 use after_effects as ae;
 use seq_macro::seq;
 use std::env;
@@ -139,12 +141,13 @@ impl AdobePluginGlobal for Plugin {
             }
             ae::Command::GlobalSetup => {
                 // Declare that we do or do not support smart rendering
+                out_data.set_out_flag(OutFlags::SendUpdateParamsUi, true);
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
-                // if let Ok(suite) = ae::aegp::suites::Utility::new() {
-                //     if let Ok(plugin_id) = suite.register_with_aegp("AOD_ColorChange") {
-                //         self.aegp_id = Some(plugin_id);
-                //     }
-                // }
+                if let Ok(suite) = ae::aegp::suites::Utility::new()
+                    && let Ok(plugin_id) = suite.register_with_aegp("AOD_ColorChange")
+                {
+                    self.aegp_id = Some(plugin_id);
+                }
             }
             ae::Command::Render {
                 in_layer,
@@ -176,14 +179,8 @@ impl AdobePluginGlobal for Plugin {
                 let in_layer_opt = cb.checkout_layer_pixels(0)?;
                 let out_layer_opt = cb.checkout_output()?;
 
-                if in_layer_opt.is_some() && out_layer_opt.is_some() {
-                    self.do_render(
-                        in_data,
-                        in_layer_opt.unwrap(),
-                        out_data,
-                        out_layer_opt.unwrap(),
-                        params,
-                    )?;
+                if let (Some(in_layer), Some(out_layer)) = (in_layer_opt, out_layer_opt) {
+                    self.do_render(in_data, in_layer, out_data, out_layer, params)?;
                 }
                 // self.do_render(in_data, in_layer_opt, out_data, out_layer_opt, params)?;
                 cb.checkin_layer_pixels(0)?;
@@ -273,15 +270,15 @@ impl Plugin {
 
         if let Some(plugin_id) = self.aegp_id {
             let effect = in_data.effect();
-            if let Some(index) = params.index(id) {
-                if let Ok(effect_ref) = effect.aegp_effect(plugin_id) {
-                    let stream = effect_ref.new_stream_by_index(plugin_id, index as i32)?;
-                    return stream.set_dynamic_stream_flag(
-                        ae::aegp::DynamicStreamFlags::Hidden,
-                        false,
-                        !visible,
-                    );
-                }
+            if let Some(index) = params.index(id)
+                && let Ok(effect_ref) = effect.aegp_effect(plugin_id)
+                && let Ok(stream) = effect_ref.new_stream_by_index(plugin_id, index as i32)
+            {
+                return stream.set_dynamic_stream_flag(
+                    ae::aegp::DynamicStreamFlags::Hidden,
+                    false,
+                    !visible,
+                );
             }
         }
 
@@ -302,16 +299,13 @@ impl Plugin {
         flag: ae::pf::ParamUIFlags,
         status: bool,
     ) -> Result<(), Error> {
-        // Avoid unnecessary PF_UpdateParamUI calls.
-        // let current_status = params.get(id)?.ui_flags().contains(flag);
-        // if current_status == status {
-        //     return Ok(());
-        // }
+        let flag_bits = flag.bits();
+        let current_status = (params.get(id)?.ui_flags().bits() & flag_bits) != 0;
+        if current_status == status {
+            return Ok(());
+        }
 
-        // AE SDK guidance: don't mutate the original PF_ParamDef when calling PF_UpdateParamUI.
-        // Clone, mutate the clone, then update.
         let mut p = params.get_mut(id)?;
-        // let mut p = p.clone();
         p.set_ui_flag(flag, status);
         p.update_param_ui()?;
         Ok(())
