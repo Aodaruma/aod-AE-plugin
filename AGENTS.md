@@ -72,9 +72,23 @@
 - 共有処理は `crates/utils/` を優先利用
 - 変更後は fmt/clippy/test を通し、CI と同等の品質を担保する
 
+## 動的UI（AE/Premiere 共通）ルール
+
+- 動的UIを使う場合は `build.rs` の PiPL と `GlobalSetup` の両方で `OutFlags::SendUpdateParamsUI` を有効化する。
+- UI更新は `Command::UpdateParamsUi` で行い、値変更は `Command::UserChangedParam` で行う（`UpdateParamsUi` では値を変えない）。
+- `UserChangedParam` を受けたいパラメータには `ParamFlag::SUPERVISE` を付与する。
+- `set_ui_flag(...); update_param_ui();` は必要時のみ呼ぶ（同値再設定を避ける）。
+- 表示/非表示はホスト差分を考慮する:
+  - After Effects: AEGP Stream の `DynamicStreamFlags::Hidden` を使う。
+  - Premiere: `ParamUIFlags::INVISIBLE` を使う。
+- `PF_Param_NO_DATA`（`NullDef`）は未処理のままECWに出すと「Unsupported Effects Control」を表示しうるため、説明表示用途では原則使わない。
+- 説明文は既存パラメータ名の動的変更（`set_name`）で表現することを優先する。
+
 ## ブランチ・PR 運用（必須）
 
 - `main` / `dev` への直接コミットは禁止（PR 経由のみ）。
+- 作業時は必ずトピックブランチを作成し、`dev` へ Pull Request を作成する。
+- 原則として1トピック1ブランチで管理し、無関係な変更を混在させない。
 - Codex は、ユーザーの明示確認があるまでコミットおよび PR 作成を行わない。
 - 実装と検証を先に行い、確認後にコミットと PR 作成を実施する。
 

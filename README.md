@@ -27,8 +27,12 @@ template.
   - RGBと各色空間を相互変換します / Converts between RGB and multiple color spaces
 - AOD_ContourGenerate
   - Canny法でレイヤーから輪郭線を抽出します / Extracts contour lines from a layer using the Canny method
+- AOD_DifferentialGenerate
+  - レイヤーの画像勾配からRGBA微分マップを生成します / Generates RGBA differential maps from image gradients.
 - AOD_DistanceGenerate
   - 色領域の輪郭から距離画像を生成します / Generates distance images from the contours of colored regions
+- AOD_ImageCalculate
+  - 1つまたは2つのレイヤーにBlender風の数式演算を適用します / Applies Blender-style math operations to one or two input layers.
 - AOD_MobiusTransform
   - レイヤーにメビウス変換を適用します / Applies Mobius transformation to layers
 - AOD_NormalGenerate

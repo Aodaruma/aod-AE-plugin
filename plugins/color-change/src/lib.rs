@@ -1,3 +1,5 @@
+#![allow(clippy::drop_non_drop, clippy::question_mark)]
+
 use after_effects as ae;
 use seq_macro::seq;
 use std::env;
@@ -10,8 +12,6 @@ seq!(N in 1..=32 {
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 enum Params {
     Tolerrance,
-    AddPairButton,
-    RemovePairButton,
     PairCount,
     #(
         ColorFrom~N,
@@ -56,24 +56,9 @@ impl AdobePluginGlobal for Plugin {
             }),
         )?;
 
-        params.add(
-            Params::AddPairButton,
-            "Add Color",
-            ae::pf::ButtonDef::setup(|d| {
-                d.set_label("add");
-            }),
-        )?;
-        params.add(
-            Params::RemovePairButton,
-            "Remove Color",
-            ae::pf::ButtonDef::setup(|d| {
-                d.set_label("remove");
-            }),
-        )?;
-
         params.add_with_flags(
             Params::PairCount,
-            "Pair Count",
+            "Number of Colors",
             ae::pf::FloatSliderDef::setup(|d| {
                 d.set_default(DEFAULT_PAIRS as f64);
                 d.set_value(DEFAULT_PAIRS as f64);
@@ -83,8 +68,10 @@ impl AdobePluginGlobal for Plugin {
                 d.set_slider_max(MAX_PAIRS as f32);
                 d.set_precision(0);
             }),
-            ae::ParamFlag::CANNOT_TIME_VARY | ae::ParamFlag::CANNOT_INTERP,
-            ae::ParamUIFlags::NO_ECW_UI,
+            ae::ParamFlag::SUPERVISE
+                | ae::ParamFlag::CANNOT_TIME_VARY
+                | ae::ParamFlag::CANNOT_INTERP,
+            ae::ParamUIFlags::empty(),
         )?;
 
         seq!(N in 1..=32 {
@@ -139,12 +126,13 @@ impl AdobePluginGlobal for Plugin {
             }
             ae::Command::GlobalSetup => {
                 // Declare that we do or do not support smart rendering
+                out_data.set_out_flag(OutFlags::SendUpdateParamsUi, true);
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
-                // if let Ok(suite) = ae::aegp::suites::Utility::new() {
-                //     if let Ok(plugin_id) = suite.register_with_aegp("AOD_ColorChange") {
-                //         self.aegp_id = Some(plugin_id);
-                //     }
-                // }
+                if let Ok(suite) = ae::aegp::suites::Utility::new()
+                    && let Ok(plugin_id) = suite.register_with_aegp("AOD_ColorChange")
+                {
+                    self.aegp_id = Some(plugin_id);
+                }
             }
             ae::Command::Render {
                 in_layer,
@@ -176,36 +164,18 @@ impl AdobePluginGlobal for Plugin {
                 let in_layer_opt = cb.checkout_layer_pixels(0)?;
                 let out_layer_opt = cb.checkout_output()?;
 
-                if in_layer_opt.is_some() && out_layer_opt.is_some() {
-                    self.do_render(
-                        in_data,
-                        in_layer_opt.unwrap(),
-                        out_data,
-                        out_layer_opt.unwrap(),
-                        params,
-                    )?;
+                if let (Some(in_layer), Some(out_layer)) = (in_layer_opt, out_layer_opt) {
+                    self.do_render(in_data, in_layer, out_data, out_layer, params)?;
                 }
                 // self.do_render(in_data, in_layer_opt, out_data, out_layer_opt, params)?;
                 cb.checkin_layer_pixels(0)?;
             }
 
-            ae::Command::UserChangedParam { param_index } => match params.type_at(param_index) {
-                Params::AddPairButton => {
-                    let current_pairs = Self::pair_count(params);
-                    if current_pairs < MAX_PAIRS {
-                        Self::set_pair_count(params, current_pairs + 1)?;
-                        out_data.set_out_flag(OutFlags::RefreshUi, true);
-                    }
+            ae::Command::UserChangedParam { param_index } => {
+                if params.type_at(param_index) == Params::PairCount {
+                    out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
-                Params::RemovePairButton => {
-                    let current_pairs = Self::pair_count(params);
-                    if current_pairs > DEFAULT_PAIRS {
-                        Self::set_pair_count(params, current_pairs - 1)?;
-                        out_data.set_out_flag(OutFlags::RefreshUi, true);
-                    }
-                }
-                _ => {}
-            },
+            }
 
             ae::Command::UpdateParamsUi => {
                 let current_pairs = Self::pair_count(params);
@@ -230,14 +200,6 @@ impl Plugin {
             .clamp(DEFAULT_PAIRS, MAX_PAIRS)
     }
 
-    fn set_pair_count(params: &mut ae::Parameters<Params>, pairs: usize) -> Result<usize, Error> {
-        let pairs = pairs.clamp(DEFAULT_PAIRS, MAX_PAIRS);
-        let mut p = params.get_mut(Params::PairCount)?;
-        p.as_float_slider_mut()?.set_value(pairs as f64);
-        p.set_change_flag(ae::ChangeFlag::CHANGED_VALUE, true);
-        Ok(pairs)
-    }
-
     fn set_color_pairs(
         &self,
         in_data: InData,
@@ -245,10 +207,6 @@ impl Plugin {
         pairs: usize,
     ) -> Result<(), Error> {
         let pairs = pairs.clamp(DEFAULT_PAIRS, MAX_PAIRS);
-
-        // Enable/disable the +/- buttons based on bounds.
-        Self::set_param_enabled(params, Params::AddPairButton, pairs < MAX_PAIRS)?;
-        Self::set_param_enabled(params, Params::RemovePairButton, pairs > DEFAULT_PAIRS)?;
 
         // Show/hide pairs.
         for idx in 0..MAX_PAIRS {
@@ -273,27 +231,19 @@ impl Plugin {
 
         if let Some(plugin_id) = self.aegp_id {
             let effect = in_data.effect();
-            if let Some(index) = params.index(id) {
-                if let Ok(effect_ref) = effect.aegp_effect(plugin_id) {
-                    let stream = effect_ref.new_stream_by_index(plugin_id, index as i32)?;
-                    return stream.set_dynamic_stream_flag(
-                        ae::aegp::DynamicStreamFlags::Hidden,
-                        false,
-                        !visible,
-                    );
-                }
+            if let Some(index) = params.index(id)
+                && let Ok(effect_ref) = effect.aegp_effect(plugin_id)
+                && let Ok(stream) = effect_ref.new_stream_by_index(plugin_id, index as i32)
+            {
+                return stream.set_dynamic_stream_flag(
+                    ae::aegp::DynamicStreamFlags::Hidden,
+                    false,
+                    !visible,
+                );
             }
         }
 
         Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::INVISIBLE, !visible)
-    }
-
-    fn set_param_enabled(
-        params: &mut ae::Parameters<Params>,
-        id: Params,
-        enabled: bool,
-    ) -> Result<(), Error> {
-        Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::DISABLED, !enabled)
     }
 
     fn set_param_ui_flag(
@@ -302,16 +252,13 @@ impl Plugin {
         flag: ae::pf::ParamUIFlags,
         status: bool,
     ) -> Result<(), Error> {
-        // Avoid unnecessary PF_UpdateParamUI calls.
-        // let current_status = params.get(id)?.ui_flags().contains(flag);
-        // if current_status == status {
-        //     return Ok(());
-        // }
+        let flag_bits = flag.bits();
+        let current_status = (params.get(id)?.ui_flags().bits() & flag_bits) != 0;
+        if current_status == status {
+            return Ok(());
+        }
 
-        // AE SDK guidance: don't mutate the original PF_ParamDef when calling PF_UpdateParamUI.
-        // Clone, mutate the clone, then update.
         let mut p = params.get_mut(id)?;
-        // let mut p = p.clone();
         p.set_ui_flag(flag, status);
         p.update_param_ui()?;
         Ok(())
