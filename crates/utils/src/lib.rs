@@ -2,6 +2,11 @@ use ae::sys::{PF_Pixel, PF_PixelFloat};
 use ae::{Pixel8, Pixel16, PixelF32};
 use after_effects as ae;
 
+#[cfg(feature = "spectral")]
+pub mod spectral;
+#[cfg(feature = "spectral_wgpu")]
+pub mod spectral_wgpu;
+
 pub trait ToPixel {
     fn to_pixel32(&self) -> PixelF32;
     fn to_pixel16(&self) -> Pixel16;
@@ -10,7 +15,6 @@ pub trait ToPixel {
 
 impl ToPixel for PF_Pixel {
     fn to_pixel32(&self) -> PixelF32 {
-        // PF_Pixel は 8bpc 相当として扱う
         PixelF32 {
             red: self.red as f32 / ae::MAX_CHANNEL8 as f32,
             green: self.green as f32 / ae::MAX_CHANNEL8 as f32,
@@ -38,27 +42,6 @@ impl ToPixel for PF_Pixel {
     }
 }
 
-// impl ToPixel for Pixel8 {
-//     fn to_pixel32(&self) -> PixelF32 {
-//         PixelF32 {
-//             red: self.red as f32 / ae::MAX_CHANNEL8 as f32,
-//             green: self.green as f32 / ae::MAX_CHANNEL8 as f32,
-//             blue: self.blue as f32 / ae::MAX_CHANNEL8 as f32,
-//             alpha: self.alpha as f32 / ae::MAX_CHANNEL8 as f32,
-//         }
-//     }
-//     fn to_pixel16(&self) -> Pixel16 {
-//         Pixel16 {
-//             red: (self.red as f32 / ae::MAX_CHANNEL8 as f32 * ae::MAX_CHANNEL16 as f32) as u16,
-//             green: (self.green as f32 / ae::MAX_CHANNEL8 as f32 * ae::MAX_CHANNEL16 as f32) as u16,
-//             blue: (self.blue as f32 / ae::MAX_CHANNEL8 as f32 * ae::MAX_CHANNEL16 as f32) as u16,
-//             alpha: (self.alpha as f32 / ae::MAX_CHANNEL8 as f32 * ae::MAX_CHANNEL16 as f32) as u16,
-//         }
-//     }
-//     fn to_pixel8(&self) -> Pixel8 {
-//         *self
-//     }
-// }
 impl ToPixel for Pixel16 {
     fn to_pixel32(&self) -> PixelF32 {
         PixelF32 {

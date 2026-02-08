@@ -29,8 +29,12 @@ template.
   - Canny法でレイヤーから輪郭線を抽出します / Extracts contour lines from a layer using the Canny method
 - AOD_DifferentialGenerate
   - レイヤーの画像勾配からRGBA微分マップを生成します / Generates RGBA differential maps from image gradients.
+- AOD_FFT
+  - レイヤーに2D FFTを適用し、実部または虚部を出力します / Performs 2D FFT on RGBA channels and outputs real or imaginary spectra.
 - AOD_DistanceGenerate
   - 色領域の輪郭から距離画像を生成します / Generates distance images from the contours of colored regions
+- AOD_IFFT
+  - 実部・虚部レイヤーから2D IFFTで画像を再構成します / Reconstructs an RGBA image from 2D FFT real and imaginary inputs.
 - AOD_ImageCalculate
   - 1つまたは2つのレイヤーにBlender風の数式演算を適用します / Applies Blender-style math operations to one or two input layers.
 - AOD_MobiusTransform

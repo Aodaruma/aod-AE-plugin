@@ -3,6 +3,22 @@ name = "utils"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+spectral = ["dep:rustfft", "dep:num-complex", "dep:anyhow"]
+spectral_wgpu = [
+  "dep:wgpu",
+  "dep:pollster",
+  "dep:futures-intrusive",
+  "dep:bytemuck",
+]
+
 [dependencies]
-anyhow = "1"
 after-effects.workspace = true
+anyhow = { version = "1", optional = true }
+rustfft = { workspace = true, optional = true }
+num-complex = { workspace = true, optional = true }
+wgpu = { workspace = true, optional = true }
+bytemuck = { workspace = true, features = ["derive"], optional = true }
+pollster = { workspace = true, optional = true }
+futures-intrusive = { workspace = true, optional = true }
