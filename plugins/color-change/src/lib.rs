@@ -12,8 +12,6 @@ seq!(N in 1..=32 {
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 enum Params {
     Tolerrance,
-    AddPairButton,
-    RemovePairButton,
     PairCount,
     #(
         ColorFrom~N,
@@ -58,24 +56,9 @@ impl AdobePluginGlobal for Plugin {
             }),
         )?;
 
-        params.add(
-            Params::AddPairButton,
-            "Add Color",
-            ae::pf::ButtonDef::setup(|d| {
-                d.set_label("add");
-            }),
-        )?;
-        params.add(
-            Params::RemovePairButton,
-            "Remove Color",
-            ae::pf::ButtonDef::setup(|d| {
-                d.set_label("remove");
-            }),
-        )?;
-
         params.add_with_flags(
             Params::PairCount,
-            "Pair Count",
+            "Number of Colors",
             ae::pf::FloatSliderDef::setup(|d| {
                 d.set_default(DEFAULT_PAIRS as f64);
                 d.set_value(DEFAULT_PAIRS as f64);
@@ -85,8 +68,10 @@ impl AdobePluginGlobal for Plugin {
                 d.set_slider_max(MAX_PAIRS as f32);
                 d.set_precision(0);
             }),
-            ae::ParamFlag::CANNOT_TIME_VARY | ae::ParamFlag::CANNOT_INTERP,
-            ae::ParamUIFlags::NO_ECW_UI,
+            ae::ParamFlag::SUPERVISE
+                | ae::ParamFlag::CANNOT_TIME_VARY
+                | ae::ParamFlag::CANNOT_INTERP,
+            ae::ParamUIFlags::empty(),
         )?;
 
         seq!(N in 1..=32 {
@@ -186,23 +171,11 @@ impl AdobePluginGlobal for Plugin {
                 cb.checkin_layer_pixels(0)?;
             }
 
-            ae::Command::UserChangedParam { param_index } => match params.type_at(param_index) {
-                Params::AddPairButton => {
-                    let current_pairs = Self::pair_count(params);
-                    if current_pairs < MAX_PAIRS {
-                        Self::set_pair_count(params, current_pairs + 1)?;
-                        out_data.set_out_flag(OutFlags::RefreshUi, true);
-                    }
+            ae::Command::UserChangedParam { param_index } => {
+                if params.type_at(param_index) == Params::PairCount {
+                    out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
-                Params::RemovePairButton => {
-                    let current_pairs = Self::pair_count(params);
-                    if current_pairs > DEFAULT_PAIRS {
-                        Self::set_pair_count(params, current_pairs - 1)?;
-                        out_data.set_out_flag(OutFlags::RefreshUi, true);
-                    }
-                }
-                _ => {}
-            },
+            }
 
             ae::Command::UpdateParamsUi => {
                 let current_pairs = Self::pair_count(params);
@@ -227,14 +200,6 @@ impl Plugin {
             .clamp(DEFAULT_PAIRS, MAX_PAIRS)
     }
 
-    fn set_pair_count(params: &mut ae::Parameters<Params>, pairs: usize) -> Result<usize, Error> {
-        let pairs = pairs.clamp(DEFAULT_PAIRS, MAX_PAIRS);
-        let mut p = params.get_mut(Params::PairCount)?;
-        p.as_float_slider_mut()?.set_value(pairs as f64);
-        p.set_change_flag(ae::ChangeFlag::CHANGED_VALUE, true);
-        Ok(pairs)
-    }
-
     fn set_color_pairs(
         &self,
         in_data: InData,
@@ -242,10 +207,6 @@ impl Plugin {
         pairs: usize,
     ) -> Result<(), Error> {
         let pairs = pairs.clamp(DEFAULT_PAIRS, MAX_PAIRS);
-
-        // Enable/disable the +/- buttons based on bounds.
-        Self::set_param_enabled(params, Params::AddPairButton, pairs < MAX_PAIRS)?;
-        Self::set_param_enabled(params, Params::RemovePairButton, pairs > DEFAULT_PAIRS)?;
 
         // Show/hide pairs.
         for idx in 0..MAX_PAIRS {
@@ -283,14 +244,6 @@ impl Plugin {
         }
 
         Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::INVISIBLE, !visible)
-    }
-
-    fn set_param_enabled(
-        params: &mut ae::Parameters<Params>,
-        id: Params,
-        enabled: bool,
-    ) -> Result<(), Error> {
-        Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::DISABLED, !enabled)
     }
 
     fn set_param_ui_flag(
