@@ -78,7 +78,7 @@ impl AdobePluginGlobal for Plugin {
             Params::Axis,
             "Axis",
             PopupDef::setup(|d| {
-                d.set_options(&["X", "Y", "Gradient Length"]);
+                d.set_options(&["X", "Y", "Magnitude (X&Y)"]);
                 d.set_default(1);
             }),
         )?;
