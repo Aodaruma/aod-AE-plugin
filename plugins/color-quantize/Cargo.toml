@@ -1,0 +1,34 @@
+[package]
+name = "color_quantize"
+description = "Reduces image colors with k-means clustering."
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["gpu_wgpu"]
+catch-panics = []
+gpu_wgpu = ["dep:wgpu", "dep:pollster", "dep:futures-intrusive", "dep:bytemuck"]
+
+[dependencies]
+after-effects = { workspace = true }
+color-art = "0.3"
+palette = "0.7.6"
+utils = { path = "../../crates/utils" }
+
+wgpu = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+pollster = { workspace = true, optional = true }
+futures-intrusive = { workspace = true, optional = true }
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true
