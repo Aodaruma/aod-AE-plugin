@@ -331,89 +331,109 @@ impl Plugin {
         Ok(())
     }
 
-    fn do_render(
-        &self,
-        _in_data: InData,
-        in_layer: Layer,
-        _out_data: OutData,
-        mut out_layer: Layer,
-        params: &mut Parameters<Params>,
-    ) -> Result<(), Error> {
-        let profile_enabled = profiling_enabled();
-        let profile_total_start = Instant::now();
-
-        let w = in_layer.width();
-        let h = in_layer.height();
+    fn build_regions_opacity(
+        in_layer: &Layer,
+        in_world_type: ae::aegp::WorldType,
+        w: usize,
+        h: usize,
+        alpha_thr: f32,
+        mut alpha_map: Option<&mut [f32]>,
+    ) -> (Vec<u32>, Vec<RegionInfo>, Duration, Duration) {
         let n = w * h;
-        let progress_final = out_layer.height() as i32;
-        let out_world_type = out_layer.world_type();
-
-        let mode = mode_from_popup(params.get(Params::Mode)?.as_popup()?.value());
-
-        let region_source = match params.get(Params::RegionSource)?.as_popup()?.value() {
-            2 => RegionSource::Color,
-            _ => RegionSource::Opacity,
-        };
-
-        let mode_randomness = params
-            .get(Params::ModeRandomness)?
-            .as_float_slider()?
-            .value() as f32;
-        let mode_randomness = mode_randomness.clamp(0.0, 1.0);
-
-        let gradient_point = if matches!(mode, Mode::IndexMaskPointDistance) {
-            let point_param = params.get(Params::GradientPoint)?;
-            let point = point_param.as_point()?;
-            point_value_f32(&point)
-        } else {
-            (0.0, 0.0)
-        };
-
-        let position_center = if matches!(mode, Mode::PositionColor) {
-            let x = params
-                .get(Params::PositionCenterX)?
-                .as_float_slider()?
-                .value() as f32;
-            let y = params
-                .get(Params::PositionCenterY)?
-                .as_float_slider()?
-                .value() as f32;
-            (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0))
-        } else {
-            (0.5, 0.5)
-        };
-
-        let seed = params.get(Params::Seed)?.as_slider()?.value().max(0) as u32;
-
-        let threshold = params.get(Params::Tolerance)?.as_float_slider()?.value() as f32;
-        let alpha_thr = threshold;
-        let label_tol = threshold;
-        let use_original_alpha = params.get(Params::UseOriginalAlpha)?.as_checkbox()?.value();
-
-        let in_world_type = in_layer.world_type();
-        let mut base_label: Vec<u32> = vec![0; n];
-        let mut alpha_map: Option<Vec<f32>> = if use_original_alpha {
-            Some(vec![1.0; n])
-        } else {
-            None
-        };
+        let mut region_id: Vec<u32> = vec![0; n];
+        let mut parent: Vec<u32> = vec![0];
 
         let read_start = Instant::now();
         for y in 0..h {
             for x in 0..w {
                 let idx = y * w + x;
-                let px = read_pixel_f32(&in_layer, in_world_type, x, y);
+                let alpha = read_alpha_f32(in_layer, in_world_type, x, y);
+                if let Some(alpha_map) = alpha_map.as_mut() {
+                    alpha_map[idx] = alpha;
+                }
+                if alpha < alpha_thr {
+                    continue;
+                }
+
+                let left = if x > 0 { region_id[idx - 1] } else { 0 };
+                let up = if y > 0 { region_id[idx - w] } else { 0 };
+
+                let assigned = match (left, up) {
+                    (0, 0) => {
+                        let new_label = parent.len() as u32;
+                        parent.push(new_label);
+                        new_label
+                    }
+                    (l, 0) => l,
+                    (0, u) => u,
+                    (l, u) => {
+                        let keep = l.min(u);
+                        let merge = l.max(u);
+                        uf_union_min_root(&mut parent, keep, merge);
+                        keep
+                    }
+                };
+
+                region_id[idx] = assigned;
+            }
+        }
+        let read_elapsed = read_start.elapsed();
+
+        let ccl_start = Instant::now();
+        let mut regions: Vec<RegionInfo> = vec![RegionInfo::default()];
+        if parent.len() > 1 {
+            let mut root_to_id: Vec<u32> = vec![0; parent.len()];
+            for (idx, label) in region_id.iter_mut().enumerate() {
+                if *label == 0 {
+                    continue;
+                }
+                let root = uf_find_root(&mut parent, *label);
+                let root_idx = root as usize;
+                let mut mapped = root_to_id[root_idx];
+                if mapped == 0 {
+                    mapped = regions.len() as u32;
+                    root_to_id[root_idx] = mapped;
+                    regions.push(RegionInfo::default());
+                }
+                *label = mapped;
+
+                let x = idx % w;
+                let y = idx / w;
+                let info = &mut regions[mapped as usize];
+                info.count = info.count.saturating_add(1);
+                info.sum_x = info.sum_x.saturating_add(x as u64);
+                info.sum_y = info.sum_y.saturating_add(y as u64);
+            }
+        }
+        let ccl_elapsed = ccl_start.elapsed();
+
+        (region_id, regions, read_elapsed, ccl_elapsed)
+    }
+
+    fn build_regions_color(
+        in_layer: &Layer,
+        in_world_type: ae::aegp::WorldType,
+        w: usize,
+        h: usize,
+        alpha_thr: f32,
+        label_tol: f32,
+        mut alpha_map: Option<&mut [f32]>,
+    ) -> (Vec<u32>, Vec<RegionInfo>, Duration, Duration) {
+        let n = w * h;
+        let mut base_label: Vec<u32> = vec![0; n];
+
+        let read_start = Instant::now();
+        for y in 0..h {
+            for x in 0..w {
+                let idx = y * w + x;
+                let px = read_pixel_f32(in_layer, in_world_type, x, y);
                 if let Some(alpha_map) = alpha_map.as_mut() {
                     alpha_map[idx] = px.alpha;
                 }
                 if px.alpha < alpha_thr {
-                    base_label[idx] = 0;
                     continue;
                 }
-                base_label[idx] = match region_source {
-                    RegionSource::Opacity => 1,
-                    RegionSource::Color => pack_label(px, alpha_thr, label_tol),
-                };
+                base_label[idx] = pack_label(px, alpha_thr, label_tol);
             }
         }
         let read_elapsed = read_start.elapsed();
@@ -482,6 +502,95 @@ impl Plugin {
             }
         }
         let ccl_elapsed = ccl_start.elapsed();
+
+        (region_id, regions, read_elapsed, ccl_elapsed)
+    }
+
+    fn do_render(
+        &self,
+        _in_data: InData,
+        in_layer: Layer,
+        _out_data: OutData,
+        mut out_layer: Layer,
+        params: &mut Parameters<Params>,
+    ) -> Result<(), Error> {
+        let profile_enabled = profiling_enabled();
+        let profile_total_start = Instant::now();
+
+        let w = in_layer.width();
+        let h = in_layer.height();
+        let n = w * h;
+        let progress_final = out_layer.height() as i32;
+        let out_world_type = out_layer.world_type();
+
+        let mode = mode_from_popup(params.get(Params::Mode)?.as_popup()?.value());
+
+        let region_source = match params.get(Params::RegionSource)?.as_popup()?.value() {
+            2 => RegionSource::Color,
+            _ => RegionSource::Opacity,
+        };
+
+        let mode_randomness = params
+            .get(Params::ModeRandomness)?
+            .as_float_slider()?
+            .value() as f32;
+        let mode_randomness = mode_randomness.clamp(0.0, 1.0);
+
+        let gradient_point = if matches!(mode, Mode::IndexMaskPointDistance) {
+            let point_param = params.get(Params::GradientPoint)?;
+            let point = point_param.as_point()?;
+            point_value_f32(&point)
+        } else {
+            (0.0, 0.0)
+        };
+
+        let position_center = if matches!(mode, Mode::PositionColor) {
+            let x = params
+                .get(Params::PositionCenterX)?
+                .as_float_slider()?
+                .value() as f32;
+            let y = params
+                .get(Params::PositionCenterY)?
+                .as_float_slider()?
+                .value() as f32;
+            (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0))
+        } else {
+            (0.5, 0.5)
+        };
+
+        let seed = params.get(Params::Seed)?.as_slider()?.value().max(0) as u32;
+
+        let threshold = params.get(Params::Tolerance)?.as_float_slider()?.value() as f32;
+        let alpha_thr = threshold;
+        let label_tol = threshold;
+        let use_original_alpha = params.get(Params::UseOriginalAlpha)?.as_checkbox()?.value();
+
+        let in_world_type = in_layer.world_type();
+        let mut alpha_map: Option<Vec<f32>> = if use_original_alpha {
+            Some(vec![1.0; n])
+        } else {
+            None
+        };
+
+        let (region_id, regions, read_elapsed, ccl_elapsed) = match region_source {
+            RegionSource::Opacity => Self::build_regions_opacity(
+                &in_layer,
+                in_world_type,
+                w,
+                h,
+                alpha_thr,
+                alpha_map.as_deref_mut(),
+            ),
+            RegionSource::Color => Self::build_regions_color(
+                &in_layer,
+                in_world_type,
+                w,
+                h,
+                alpha_thr,
+                label_tol,
+                alpha_map.as_deref_mut(),
+            ),
+        };
 
         let region_count = regions.len().saturating_sub(1);
         let mut region_color: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0]; regions.len()];
@@ -569,38 +678,80 @@ impl Plugin {
         let color_elapsed = color_start.elapsed();
 
         let write_start = Instant::now();
-        out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
-            let idx = y as usize * w + x as usize;
-            let id = region_id[idx] as usize;
-            let mut out_px = PixelF32 {
-                alpha: 1.0,
-                red: region_color[id][0],
-                green: region_color[id][1],
-                blue: region_color[id][2],
-            };
-
-            if let Some(alpha_map) = alpha_map.as_ref() {
-                let mut out_alpha = alpha_map[idx];
-                if !out_alpha.is_finite() {
-                    out_alpha = 0.0;
-                }
-                out_alpha = out_alpha.clamp(0.0, 1.0);
-                out_px.red *= out_alpha;
-                out_px.green *= out_alpha;
-                out_px.blue *= out_alpha;
-                out_px.alpha = out_alpha;
+        match (out_world_type, alpha_map.as_deref()) {
+            (ae::aegp::WorldType::U8, None) => {
+                let cached = build_region_cache_u8(&region_color);
+                out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
+                    let idx = y as usize * w + x as usize;
+                    let id = region_id[idx] as usize;
+                    dst.set_from_u8(cached[id]);
+                    Ok(())
+                })?;
             }
-
-            match out_world_type {
-                ae::aegp::WorldType::U8 => dst.set_from_u8(out_px.to_pixel8()),
-                ae::aegp::WorldType::U15 => dst.set_from_u16(out_px.to_pixel16()),
-                ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => {
-                    dst.set_from_f32(out_px);
-                }
+            (ae::aegp::WorldType::U15, None) => {
+                let cached = build_region_cache_u16(&region_color);
+                out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
+                    let idx = y as usize * w + x as usize;
+                    let id = region_id[idx] as usize;
+                    dst.set_from_u16(cached[id]);
+                    Ok(())
+                })?;
             }
-
-            Ok(())
-        })?;
+            (ae::aegp::WorldType::F32 | ae::aegp::WorldType::None, None) => {
+                let cached = build_region_cache_f32(&region_color);
+                out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
+                    let idx = y as usize * w + x as usize;
+                    let id = region_id[idx] as usize;
+                    dst.set_from_f32(cached[id]);
+                    Ok(())
+                })?;
+            }
+            (ae::aegp::WorldType::U8, Some(alpha_map)) => {
+                out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
+                    let idx = y as usize * w + x as usize;
+                    let id = region_id[idx] as usize;
+                    let out_alpha = sanitize_alpha(alpha_map[idx]);
+                    let rgb = region_color[id];
+                    dst.set_from_u8(pixel8_from_rgb_alpha(
+                        rgb[0] * out_alpha,
+                        rgb[1] * out_alpha,
+                        rgb[2] * out_alpha,
+                        out_alpha,
+                    ));
+                    Ok(())
+                })?;
+            }
+            (ae::aegp::WorldType::U15, Some(alpha_map)) => {
+                out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
+                    let idx = y as usize * w + x as usize;
+                    let id = region_id[idx] as usize;
+                    let out_alpha = sanitize_alpha(alpha_map[idx]);
+                    let rgb = region_color[id];
+                    dst.set_from_u16(pixel16_from_rgb_alpha(
+                        rgb[0] * out_alpha,
+                        rgb[1] * out_alpha,
+                        rgb[2] * out_alpha,
+                        out_alpha,
+                    ));
+                    Ok(())
+                })?;
+            }
+            (ae::aegp::WorldType::F32 | ae::aegp::WorldType::None, Some(alpha_map)) => {
+                out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
+                    let idx = y as usize * w + x as usize;
+                    let id = region_id[idx] as usize;
+                    let out_alpha = sanitize_alpha(alpha_map[idx]);
+                    let rgb = region_color[id];
+                    dst.set_from_f32(PixelF32 {
+                        red: rgb[0] * out_alpha,
+                        green: rgb[1] * out_alpha,
+                        blue: rgb[2] * out_alpha,
+                        alpha: out_alpha,
+                    });
+                    Ok(())
+                })?;
+            }
+        }
         let write_elapsed = write_start.elapsed();
 
         if profile_enabled {
@@ -646,6 +797,91 @@ fn read_pixel_f32(layer: &Layer, world_type: ae::aegp::WorldType, x: usize, y: u
         ae::aegp::WorldType::U8 => layer.as_pixel8(x, y).to_pixel32(),
         ae::aegp::WorldType::U15 => layer.as_pixel16(x, y).to_pixel32(),
         ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => *layer.as_pixel32(x, y),
+    }
+}
+
+fn read_alpha_f32(layer: &Layer, world_type: ae::aegp::WorldType, x: usize, y: usize) -> f32 {
+    match world_type {
+        ae::aegp::WorldType::U8 => layer.as_pixel8(x, y).alpha as f32 / ae::MAX_CHANNEL8 as f32,
+        ae::aegp::WorldType::U15 => layer.as_pixel16(x, y).alpha as f32 / ae::MAX_CHANNEL16 as f32,
+        ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => layer.as_pixel32(x, y).alpha,
+    }
+}
+
+fn uf_find_root(parent: &mut [u32], mut x: u32) -> u32 {
+    let mut root = x;
+    while parent[root as usize] != root {
+        root = parent[root as usize];
+    }
+    while parent[x as usize] != x {
+        let p = parent[x as usize];
+        parent[x as usize] = root;
+        x = p;
+    }
+    root
+}
+
+fn uf_union_min_root(parent: &mut [u32], a: u32, b: u32) {
+    let ra = uf_find_root(parent, a);
+    let rb = uf_find_root(parent, b);
+    if ra == rb {
+        return;
+    }
+    if ra < rb {
+        parent[rb as usize] = ra;
+    } else {
+        parent[ra as usize] = rb;
+    }
+}
+
+fn build_region_cache_f32(region_color: &[[f32; 3]]) -> Vec<PixelF32> {
+    region_color
+        .iter()
+        .map(|rgb| PixelF32 {
+            red: rgb[0].clamp(0.0, 1.0),
+            green: rgb[1].clamp(0.0, 1.0),
+            blue: rgb[2].clamp(0.0, 1.0),
+            alpha: 1.0,
+        })
+        .collect()
+}
+
+fn build_region_cache_u8(region_color: &[[f32; 3]]) -> Vec<Pixel8> {
+    region_color
+        .iter()
+        .map(|rgb| pixel8_from_rgb_alpha(rgb[0], rgb[1], rgb[2], 1.0))
+        .collect()
+}
+
+fn build_region_cache_u16(region_color: &[[f32; 3]]) -> Vec<Pixel16> {
+    region_color
+        .iter()
+        .map(|rgb| pixel16_from_rgb_alpha(rgb[0], rgb[1], rgb[2], 1.0))
+        .collect()
+}
+
+fn sanitize_alpha(mut alpha: f32) -> f32 {
+    if !alpha.is_finite() {
+        alpha = 0.0;
+    }
+    alpha.clamp(0.0, 1.0)
+}
+
+fn pixel8_from_rgb_alpha(red: f32, green: f32, blue: f32, alpha: f32) -> Pixel8 {
+    Pixel8 {
+        red: (red.clamp(0.0, 1.0) * ae::MAX_CHANNEL8 as f32) as u8,
+        green: (green.clamp(0.0, 1.0) * ae::MAX_CHANNEL8 as f32) as u8,
+        blue: (blue.clamp(0.0, 1.0) * ae::MAX_CHANNEL8 as f32) as u8,
+        alpha: (alpha.clamp(0.0, 1.0) * ae::MAX_CHANNEL8 as f32) as u8,
+    }
+}
+
+fn pixel16_from_rgb_alpha(red: f32, green: f32, blue: f32, alpha: f32) -> Pixel16 {
+    Pixel16 {
+        red: (red.clamp(0.0, 1.0) * ae::MAX_CHANNEL16 as f32) as u16,
+        green: (green.clamp(0.0, 1.0) * ae::MAX_CHANNEL16 as f32) as u16,
+        blue: (blue.clamp(0.0, 1.0) * ae::MAX_CHANNEL16 as f32) as u16,
+        alpha: (alpha.clamp(0.0, 1.0) * ae::MAX_CHANNEL16 as f32) as u16,
     }
 }
 
