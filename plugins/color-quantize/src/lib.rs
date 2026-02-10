@@ -4,11 +4,12 @@ use after_effects as ae;
 use color_art::{Color as ArtColor, ColorSpace as ArtColorSpace};
 use palette::hues::{OklabHue, RgbHue};
 use palette::{FromColor, Hsv, LinSrgb, Oklab, Oklch, Srgb};
-use std::env;
 use std::str::FromStr;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 #[cfg(feature = "gpu_wgpu")]
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use ae::pf::*;
 use utils::ToPixel;
@@ -20,6 +21,8 @@ use crate::gpu::wgpu::{WgpuContext, WgpuRenderParams};
 
 const MAX_CLUSTERS: usize = 64;
 const MAX_SELECTED_COLORS: usize = 8;
+const SPLIT_DECISION_MAX_SAMPLES: usize = 4096;
+const HAMERLY_EPSILON: f32 = 1.0e-4;
 const OKLAB_AB_MAX: f32 = 0.5;
 const OKLCH_CHROMA_MAX: f32 = 0.4;
 const YIQ_I_MAX: f32 = 0.5957;
@@ -46,6 +49,7 @@ enum Params {
     SelectedColor8,
     GMeansAlpha,
     RgbOnly,
+    UseGpuIfAvailable,
 }
 
 const SELECTED_COLOR_PARAMS: [Params; MAX_SELECTED_COLORS] = [
@@ -71,6 +75,7 @@ enum InitMethod {
     Random = 0,
     Area = 1,
     SelectedColors = 2,
+    KMeansParallel = 3,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,6 +106,7 @@ struct RenderSettings {
     selected_colors: Vec<[f32; 3]>,
     gmeans_alpha: f32,
     rgb_only: bool,
+    use_gpu_if_available: bool,
 }
 
 #[derive(Clone)]
@@ -119,16 +125,107 @@ struct Plugin {
 ae::define_effect!(Plugin, (), Params);
 
 const PLUGIN_DESCRIPTION: &str = "Reduces image colors with k-means clustering.";
+#[cfg(feature = "gpu_wgpu")]
+static WGPU_CONTEXT: OnceLock<Result<Arc<WgpuContext>, String>> = OnceLock::new();
+static PERF_LOG_ENABLED: OnceLock<bool> = OnceLock::new();
 
 #[cfg(feature = "gpu_wgpu")]
-static WGPU_CONTEXT: OnceLock<Result<Arc<WgpuContext>, ()>> = OnceLock::new();
-
-#[cfg(feature = "gpu_wgpu")]
-fn wgpu_context() -> Option<Arc<WgpuContext>> {
-    match WGPU_CONTEXT.get_or_init(|| WgpuContext::new().map(Arc::new).map_err(|_| ())) {
-        Ok(ctx) => Some(ctx.clone()),
-        Err(_) => None,
+fn wgpu_context() -> Result<Arc<WgpuContext>, String> {
+    match WGPU_CONTEXT.get_or_init(|| WgpuContext::new().map(Arc::new)) {
+        Ok(ctx) => Ok(ctx.clone()),
+        Err(reason) => Err(reason.clone()),
     }
+}
+
+#[derive(Default)]
+struct PerfFrame {
+    enabled: bool,
+    start: Option<Instant>,
+    last: Option<Instant>,
+    stages: Vec<(&'static str, f64)>,
+}
+
+impl PerfFrame {
+    fn new() -> Self {
+        let enabled = perf_log_enabled();
+        let now = if enabled { Some(Instant::now()) } else { None };
+        Self {
+            enabled,
+            start: now,
+            last: now,
+            stages: Vec::new(),
+        }
+    }
+
+    fn mark(&mut self, stage: &'static str) {
+        if !self.enabled {
+            return;
+        }
+        if let Some(last) = self.last {
+            let now = Instant::now();
+            self.stages
+                .push((stage, now.duration_since(last).as_secs_f64() * 1000.0));
+            self.last = Some(now);
+        }
+    }
+
+    fn flush(
+        &self,
+        width: usize,
+        height: usize,
+        method: ClusterMethod,
+        backend: &str,
+        extra: &str,
+    ) {
+        if !self.enabled {
+            return;
+        }
+        let total_ms = self
+            .start
+            .map(|s| s.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or(0.0);
+
+        let mut summary = format!(
+            "[AOD_ColorQuantize][perf] {}x{} method={:?} backend={} total={:.3}ms",
+            width, height, method, backend, total_ms
+        );
+        if !extra.is_empty() {
+            summary.push(' ');
+            summary.push_str(extra);
+        }
+
+        for (stage, ms) in &self.stages {
+            summary.push_str(&format!(" | {}={:.3}ms", stage, ms));
+        }
+
+        perf_log(summary.as_str());
+    }
+}
+
+fn perf_log_enabled() -> bool {
+    *PERF_LOG_ENABLED.get_or_init(|| cfg!(debug_assertions))
+}
+
+fn perf_log(message: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        let mut wide = message.encode_utf16().collect::<Vec<u16>>();
+        wide.push(b'\n' as u16);
+        wide.push(0);
+        unsafe {
+            OutputDebugStringW(wide.as_ptr());
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        eprintln!("{}", message);
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn OutputDebugStringW(lp_output_string: *const u16);
 }
 
 impl AdobePluginGlobal for Plugin {
@@ -216,7 +313,7 @@ impl AdobePluginGlobal for Plugin {
             Params::InitMethod,
             "Init Method",
             PopupDef::setup(|d| {
-                d.set_options(&["Random", "Area Similarity", "Selected Colors"]);
+                d.set_options(&["Random", "Area Similarity", "Selected Colors", "k-means||"]);
                 d.set_default(1);
             }),
             supervise_flags(),
@@ -327,6 +424,14 @@ impl AdobePluginGlobal for Plugin {
         params.add(
             Params::RgbOnly,
             "RGB Only",
+            CheckBoxDef::setup(|d| {
+                d.set_default(true);
+            }),
+        )?;
+
+        params.add(
+            Params::UseGpuIfAvailable,
+            "Use GPU (if available)",
             CheckBoxDef::setup(|d| {
                 d.set_default(true);
             }),
@@ -522,37 +627,144 @@ impl Plugin {
         if width == 0 || height == 0 {
             return Ok(());
         }
+        let mut perf = PerfFrame::new();
 
         let pixel_count = width
             .checked_mul(height)
             .ok_or(Error::BadCallbackParameter)?;
         let settings = read_settings(params, pixel_count)?;
+        perf.mark("read_settings");
         let encoded_pixels = encode_input_layer(in_layer, width, height, settings.color_space);
+        perf.mark("encode_input");
+        let _allow_gpu = settings.use_gpu_if_available;
 
         #[cfg(feature = "gpu_wgpu")]
         {
-            if matches!(settings.cluster_method, ClusterMethod::KMeans) {
+            if _allow_gpu && matches!(settings.cluster_method, ClusterMethod::KMeans) {
                 let target_k = target_k_for_kmeans(&settings, pixel_count);
                 let initial = build_initial_centroids(&encoded_pixels, &settings, target_k);
-                if !initial.is_empty()
-                    && let Some(ctx) = wgpu_context()
-                    && let Ok(output) = self.do_render_wgpu(
-                        width,
-                        height,
-                        &encoded_pixels,
-                        &initial,
-                        &settings,
-                        &ctx,
-                    )
-                {
-                    return write_output_layer(out_layer, &output);
+                perf.mark("init_centroids");
+                if initial.is_empty() {
+                    if perf_log_enabled() {
+                        perf_log("[AOD_ColorQuantize][gpu] fallback: initial centroids are empty");
+                    }
+                } else {
+                    match wgpu_context() {
+                        Ok(ctx) => match self.do_render_wgpu(
+                            width,
+                            height,
+                            &encoded_pixels,
+                            &initial,
+                            &settings,
+                            &ctx,
+                        ) {
+                            Ok(output) => {
+                                perf.mark("gpu_cluster");
+                                write_output_layer(out_layer, &output.data)?;
+                                perf.mark("write_output");
+                                let extra = format!(
+                                    "iters={} converged={}",
+                                    output.stats.iterations_executed, output.stats.converged
+                                );
+                                perf.flush(
+                                    width,
+                                    height,
+                                    settings.cluster_method,
+                                    "gpu",
+                                    extra.as_str(),
+                                );
+                                return Ok(());
+                            }
+                            Err(err) => {
+                                if perf_log_enabled() {
+                                    let msg = format!(
+                                        "[AOD_ColorQuantize][gpu] fallback: render failed: {:?}",
+                                        err
+                                    );
+                                    perf_log(&msg);
+                                }
+                            }
+                        },
+                        Err(reason) => {
+                            if perf_log_enabled() {
+                                let msg = format!(
+                                    "[AOD_ColorQuantize][gpu] fallback: context init failed: {}",
+                                    reason
+                                );
+                                perf_log(&msg);
+                            }
+                        }
+                    }
                 }
             }
         }
 
         let result = run_cluster_method(&encoded_pixels, &settings);
+        perf.mark("cpu_cluster");
+
+        #[cfg(feature = "gpu_wgpu")]
+        {
+            if _allow_gpu
+                && !matches!(settings.cluster_method, ClusterMethod::KMeans)
+                && !result.centroids.is_empty()
+            {
+                match wgpu_context() {
+                    Ok(ctx) => match self.do_render_wgpu(
+                        width,
+                        height,
+                        &encoded_pixels,
+                        result.centroids.as_slice(),
+                        &settings,
+                        &ctx,
+                    ) {
+                        Ok(output) => {
+                            perf.mark("gpu_refine");
+                            write_output_layer(out_layer, &output.data)?;
+                            perf.mark("write_output");
+                            let extra = format!(
+                                "iters={} converged={} seed_clusters={}",
+                                output.stats.iterations_executed,
+                                output.stats.converged,
+                                result.centroids.len()
+                            );
+                            perf.flush(
+                                width,
+                                height,
+                                settings.cluster_method,
+                                "gpu_refine",
+                                extra.as_str(),
+                            );
+                            return Ok(());
+                        }
+                        Err(err) => {
+                            if perf_log_enabled() {
+                                let msg = format!(
+                                    "[AOD_ColorQuantize][gpu] fallback: refine failed: {:?}",
+                                    err
+                                );
+                                perf_log(&msg);
+                            }
+                        }
+                    },
+                    Err(reason) => {
+                        if perf_log_enabled() {
+                            let msg = format!(
+                                "[AOD_ColorQuantize][gpu] fallback: refine context init failed: {}",
+                                reason
+                            );
+                            perf_log(&msg);
+                        }
+                    }
+                }
+            }
+        }
+
         let output = compose_output_from_clusters(&encoded_pixels, &result, &settings);
-        write_output_layer(out_layer, &output)
+        perf.mark("compose_output");
+        write_output_layer(out_layer, &output)?;
+        perf.mark("write_output");
+        perf.flush(width, height, settings.cluster_method, "cpu", "");
+        Ok(())
     }
 
     #[cfg(feature = "gpu_wgpu")]
@@ -564,7 +776,7 @@ impl Plugin {
         initial_centroids: &[[f32; 4]],
         settings: &RenderSettings,
         ctx: &WgpuContext,
-    ) -> Result<Vec<f32>, Error> {
+    ) -> Result<crate::gpu::wgpu::WgpuOutput, Error> {
         if initial_centroids.is_empty() {
             return Err(Error::BadCallbackParameter);
         }
@@ -580,7 +792,7 @@ impl Plugin {
         };
 
         let output = ctx.render(&render_params, encoded_pixels, initial_centroids)?;
-        Ok(output.data)
+        Ok(output)
     }
 }
 
@@ -615,6 +827,10 @@ fn read_settings(
         .clamp(1, MAX_SELECTED_COLORS as i32) as usize;
     let gmeans_alpha = params.get(Params::GMeansAlpha)?.as_float_slider()?.value() as f32;
     let rgb_only = params.get(Params::RgbOnly)?.as_checkbox()?.value();
+    let use_gpu_if_available = params
+        .get(Params::UseGpuIfAvailable)?
+        .as_checkbox()?
+        .value();
 
     let mut selected_colors = Vec::with_capacity(selected_count);
     for param_id in SELECTED_COLOR_PARAMS.iter().take(selected_count) {
@@ -634,6 +850,7 @@ fn read_settings(
         selected_colors,
         gmeans_alpha: gmeans_alpha.clamp(0.0001, 0.5),
         rgb_only,
+        use_gpu_if_available,
     })
 }
 
@@ -847,9 +1064,14 @@ fn split_cluster_xmeans(
     settings: &RenderSettings,
     seed: u32,
 ) -> Option<([f32; 4], [f32; 4])> {
-    let (seed_a, seed_b) =
-        make_split_seeds(samples, indices, parent_centroid, settings.color_space);
-    let subset = collect_subset_samples(samples, indices);
+    let sampled_indices = sample_indices_for_split(indices, SPLIT_DECISION_MAX_SAMPLES, seed);
+    let (seed_a, seed_b) = make_split_seeds(
+        samples,
+        sampled_indices.as_slice(),
+        parent_centroid,
+        settings.color_space,
+    );
+    let subset = collect_subset_samples(samples, sampled_indices.as_slice());
     let local = run_kmeans(
         &subset,
         vec![seed_a, seed_b],
@@ -857,11 +1079,17 @@ fn split_cluster_xmeans(
         settings.color_space,
         seed,
     );
-    if local.centroids.len() != 2 || local.counts.iter().any(|&c| c == 0) {
+    if local.centroids.len() != 2 || local.counts.contains(&0) {
         return None;
     }
 
-    let child_sse = local.sse_per_cluster.iter().sum::<f64>();
+    let child_sse = estimate_two_centroid_sse(
+        samples,
+        indices,
+        local.centroids[0],
+        local.centroids[1],
+        settings.color_space,
+    );
     let n = indices.len();
     if n < 3 {
         return None;
@@ -884,9 +1112,14 @@ fn split_cluster_gmeans(
     settings: &RenderSettings,
     seed: u32,
 ) -> Option<([f32; 4], [f32; 4])> {
-    let (seed_a, seed_b) =
-        make_split_seeds(samples, indices, parent_centroid, settings.color_space);
-    let subset = collect_subset_samples(samples, indices);
+    let sampled_indices = sample_indices_for_split(indices, SPLIT_DECISION_MAX_SAMPLES, seed);
+    let (seed_a, seed_b) = make_split_seeds(
+        samples,
+        sampled_indices.as_slice(),
+        parent_centroid,
+        settings.color_space,
+    );
+    let subset = collect_subset_samples(samples, sampled_indices.as_slice());
     let local = run_kmeans(
         &subset,
         vec![seed_a, seed_b],
@@ -938,34 +1171,87 @@ fn run_kmeans(
         centroids.push(sample_at(samples, 0));
     }
     let k = centroids.len();
-    let mut labels = vec![usize::MAX; sample_count];
+    let mut labels = vec![0usize; sample_count];
+    let mut upper = vec![f32::INFINITY; sample_count];
+    let mut lower = vec![0.0f32; sample_count];
     let mut rng = XorShift64::new(seed as u64 ^ 0xA1D2_C3F4_55AA_1100);
 
-    for _ in 0..max_iterations.max(1) {
-        let mut changed = false;
-        let mut accums = vec![ClusterAccum::default(); k];
+    for idx in 0..sample_count {
+        let sample = sample_at(samples, idx);
+        let (best_idx, best_dist_sq, second_dist_sq) =
+            nearest_two_centroids(sample, &centroids, color_space);
+        labels[idx] = best_idx;
+        upper[idx] = best_dist_sq.sqrt();
+        lower[idx] = second_dist_sq.sqrt();
+    }
 
-        for (idx, label) in labels.iter_mut().enumerate().take(sample_count) {
+    for _ in 0..max_iterations.max(1) {
+        let separation = half_min_center_distances(&centroids, color_space);
+        let mut accums = vec![ClusterAccum::default(); k];
+        let mut changed = false;
+
+        for idx in 0..sample_count {
             let sample = sample_at(samples, idx);
-            let (best_idx, _) = nearest_centroid_idx(sample, &centroids, color_space);
-            if *label != best_idx {
-                *label = best_idx;
-                changed = true;
+            let current = labels[idx];
+
+            if upper[idx] <= separation[current].max(lower[idx]) {
+                accums[current].accumulate(sample, color_space);
+                continue;
             }
-            accums[best_idx].accumulate(sample, color_space);
+
+            let current_dist = feature_distance_sq(sample, centroids[current], color_space).sqrt();
+            upper[idx] = current_dist;
+            if upper[idx] <= separation[current].max(lower[idx]) {
+                accums[current].accumulate(sample, color_space);
+                continue;
+            }
+
+            let (best_idx, best_dist_sq, second_dist_sq) =
+                nearest_two_centroids(sample, &centroids, color_space);
+            if best_idx != current {
+                changed = true;
+                labels[idx] = best_idx;
+            }
+            upper[idx] = best_dist_sq.sqrt();
+            lower[idx] = second_dist_sq.sqrt();
+            accums[labels[idx]].accumulate(sample, color_space);
         }
 
+        let old_centroids = centroids.clone();
+        let mut movements = vec![0.0f32; k];
+        let mut max_move = 0.0f32;
         for cluster_idx in 0..k {
             if accums[cluster_idx].count == 0 {
                 centroids[cluster_idx] = sample_at(samples, rng.gen_index(sample_count));
-                continue;
+            } else {
+                centroids[cluster_idx] = accums[cluster_idx].mean(color_space);
             }
-            centroids[cluster_idx] = accums[cluster_idx].mean(color_space);
+            let shift = feature_distance_sq(
+                old_centroids[cluster_idx],
+                centroids[cluster_idx],
+                color_space,
+            )
+            .sqrt();
+            movements[cluster_idx] = shift;
+            if shift > max_move {
+                max_move = shift;
+            }
         }
 
-        if !changed {
+        for idx in 0..sample_count {
+            let label = labels[idx];
+            upper[idx] += movements[label];
+            lower[idx] = (lower[idx] - max_move).max(0.0);
+        }
+
+        if !changed && max_move <= HAMERLY_EPSILON {
             break;
         }
+    }
+
+    for idx in 0..sample_count {
+        let sample = sample_at(samples, idx);
+        labels[idx] = nearest_centroid_idx(sample, &centroids, color_space).0;
     }
 
     let mut counts = vec![0usize; k];
@@ -1009,6 +1295,9 @@ fn build_initial_centroids(
         InitMethod::SelectedColors => {
             init_centroids_selected(samples, settings, target_k, settings.seed)
         }
+        InitMethod::KMeansParallel => {
+            init_centroids_kmeans_parallel(samples, target_k, settings.color_space, settings.seed)
+        }
     };
 
     if centroids.len() < target_k {
@@ -1045,6 +1334,149 @@ fn init_centroids_random(samples: &[f32], target_k: usize, seed: u32) -> Vec<[f3
         centroids.push(sample_at(samples, 0));
     }
     centroids
+}
+
+fn init_centroids_kmeans_parallel(
+    samples: &[f32],
+    target_k: usize,
+    color_space: ColorSpace,
+    seed: u32,
+) -> Vec<[f32; 4]> {
+    let sample_count = samples.len() / 4;
+    if sample_count == 0 || target_k == 0 {
+        return vec![];
+    }
+    if target_k == 1 {
+        return vec![sample_at(samples, seed as usize % sample_count)];
+    }
+
+    let mut rng = XorShift64::new(seed as u64 ^ 0xB7E1_5163_9A4F_2D11);
+    let mut candidates = Vec::with_capacity(target_k * 4);
+    candidates.push(sample_at(samples, rng.gen_index(sample_count)));
+
+    let oversampling = (target_k * 2).clamp(2, 64);
+    let rounds = 5usize;
+    let mut nearest_d2 = vec![f32::INFINITY; sample_count];
+
+    for idx in 0..sample_count {
+        let sample = sample_at(samples, idx);
+        nearest_d2[idx] = feature_distance_sq(sample, candidates[0], color_space);
+    }
+
+    for _ in 0..rounds {
+        let phi = nearest_d2
+            .iter()
+            .map(|&d| d as f64)
+            .sum::<f64>()
+            .max(1.0e-12);
+        for idx in 0..sample_count {
+            let p = ((oversampling as f64) * (nearest_d2[idx] as f64) / phi).min(1.0);
+            if rng.next_f64() < p {
+                candidates.push(sample_at(samples, idx));
+            }
+        }
+        candidates = dedup_centroids(candidates, color_space);
+        if candidates.len() > MAX_CLUSTERS * 8 {
+            break;
+        }
+
+        for idx in 0..sample_count {
+            let sample = sample_at(samples, idx);
+            let mut best = nearest_d2[idx];
+            for &c in &candidates {
+                let d = feature_distance_sq(sample, c, color_space);
+                if d < best {
+                    best = d;
+                }
+            }
+            nearest_d2[idx] = best;
+        }
+    }
+
+    candidates = dedup_centroids(candidates, color_space);
+    if candidates.is_empty() {
+        return init_centroids_random(samples, target_k, seed);
+    }
+    if candidates.len() <= target_k {
+        let mut out = candidates;
+        if out.len() < target_k {
+            let mut fallback =
+                init_centroids_random(samples, target_k.saturating_sub(out.len()), seed);
+            out.append(&mut fallback);
+        }
+        out.truncate(target_k);
+        return dedup_centroids(out, color_space);
+    }
+
+    let mut weights = vec![0usize; candidates.len()];
+    for idx in 0..sample_count {
+        let sample = sample_at(samples, idx);
+        let (nearest, _) = nearest_centroid_idx(sample, &candidates, color_space);
+        weights[nearest] += 1;
+    }
+
+    let mut chosen = Vec::with_capacity(target_k);
+    let mut chosen_mask = vec![false; candidates.len()];
+    let first_idx = weighted_pick_usize(&weights, &mut rng).unwrap_or(0);
+    chosen.push(candidates[first_idx]);
+    chosen_mask[first_idx] = true;
+
+    let mut cand_to_chosen_d2 = vec![f32::INFINITY; candidates.len()];
+    for c_idx in 0..candidates.len() {
+        cand_to_chosen_d2[c_idx] = feature_distance_sq(candidates[c_idx], chosen[0], color_space);
+    }
+
+    while chosen.len() < target_k {
+        let mut score_sum = 0.0f64;
+        for idx in 0..candidates.len() {
+            if chosen_mask[idx] || weights[idx] == 0 {
+                continue;
+            }
+            score_sum += (weights[idx] as f64) * (cand_to_chosen_d2[idx] as f64);
+        }
+
+        let next_idx = if score_sum <= 1.0e-20 {
+            (0..candidates.len())
+                .filter(|&i| !chosen_mask[i])
+                .max_by_key(|&i| weights[i])
+                .unwrap_or(first_idx)
+        } else {
+            let mut threshold = rng.next_f64() * score_sum;
+            let mut picked = first_idx;
+            for idx in 0..candidates.len() {
+                if chosen_mask[idx] || weights[idx] == 0 {
+                    continue;
+                }
+                threshold -= (weights[idx] as f64) * (cand_to_chosen_d2[idx] as f64);
+                if threshold <= 0.0 {
+                    picked = idx;
+                    break;
+                }
+            }
+            picked
+        };
+
+        if chosen_mask[next_idx] {
+            break;
+        }
+        chosen_mask[next_idx] = true;
+        chosen.push(candidates[next_idx]);
+
+        for c_idx in 0..candidates.len() {
+            let d = feature_distance_sq(candidates[c_idx], candidates[next_idx], color_space);
+            if d < cand_to_chosen_d2[c_idx] {
+                cand_to_chosen_d2[c_idx] = d;
+            }
+        }
+    }
+
+    if chosen.len() < target_k {
+        let mut fallback =
+            init_centroids_random(samples, target_k.saturating_sub(chosen.len()), seed);
+        chosen.append(&mut fallback);
+    }
+    chosen.truncate(target_k);
+    dedup_centroids(chosen, color_space)
 }
 
 fn init_centroids_area_based(
@@ -1360,6 +1792,7 @@ fn init_method_from_popup(value: i32) -> InitMethod {
     match value {
         2 => InitMethod::Area,
         3 => InitMethod::SelectedColors,
+        4 => InitMethod::KMeansParallel,
         _ => InitMethod::Random,
     }
 }
@@ -1414,6 +1847,54 @@ fn nearest_centroid_idx(
         }
     }
     (best_idx, best_dist)
+}
+
+fn nearest_two_centroids(
+    sample: [f32; 4],
+    centroids: &[[f32; 4]],
+    color_space: ColorSpace,
+) -> (usize, f32, f32) {
+    let mut best_idx = 0usize;
+    let mut best_dist = f32::INFINITY;
+    let mut second_dist = f32::INFINITY;
+
+    for (idx, centroid) in centroids.iter().enumerate() {
+        let dist = feature_distance_sq(sample, *centroid, color_space);
+        if dist < best_dist {
+            second_dist = best_dist;
+            best_dist = dist;
+            best_idx = idx;
+        } else if dist < second_dist {
+            second_dist = dist;
+        }
+    }
+
+    (best_idx, best_dist, second_dist)
+}
+
+fn half_min_center_distances(centroids: &[[f32; 4]], color_space: ColorSpace) -> Vec<f32> {
+    let k = centroids.len();
+    if k == 0 {
+        return vec![];
+    }
+    if k == 1 {
+        return vec![f32::INFINITY];
+    }
+
+    let mut mins = vec![f32::INFINITY; k];
+    for i in 0..k {
+        for j in (i + 1)..k {
+            let dist = feature_distance_sq(centroids[i], centroids[j], color_space).sqrt() * 0.5;
+            if dist < mins[i] {
+                mins[i] = dist;
+            }
+            if dist < mins[j] {
+                mins[j] = dist;
+            }
+        }
+    }
+
+    mins
 }
 
 fn dedup_centroids(mut centroids: Vec<[f32; 4]>, color_space: ColorSpace) -> Vec<[f32; 4]> {
@@ -1502,6 +1983,47 @@ fn collect_subset_samples(samples: &[f32], indices: &[usize]) -> Vec<f32> {
         subset.extend_from_slice(&sample);
     }
     subset
+}
+
+fn sample_indices_for_split(indices: &[usize], limit: usize, seed: u32) -> Vec<usize> {
+    if indices.len() <= limit {
+        return indices.to_vec();
+    }
+
+    let mut rng = XorShift64::new(seed as u64 ^ 0xDD22_55AA_7711_CC33);
+    let mut out = Vec::with_capacity(limit);
+    let mut remaining = indices.len();
+    let mut need = limit;
+
+    for &idx in indices {
+        if need == 0 {
+            break;
+        }
+        if rng.gen_index(remaining) < need {
+            out.push(idx);
+            need -= 1;
+        }
+        remaining -= 1;
+    }
+
+    out
+}
+
+fn estimate_two_centroid_sse(
+    samples: &[f32],
+    indices: &[usize],
+    c1: [f32; 4],
+    c2: [f32; 4],
+    color_space: ColorSpace,
+) -> f64 {
+    let mut sse = 0.0f64;
+    for &idx in indices {
+        let sample = sample_at(samples, idx);
+        let d1 = feature_distance_sq(sample, c1, color_space);
+        let d2 = feature_distance_sq(sample, c2, color_space);
+        sse += d1.min(d2) as f64;
+    }
+    sse
 }
 
 fn build_cluster_indices(labels: &[usize], cluster_count: usize) -> Vec<Vec<usize>> {
@@ -1690,6 +2212,23 @@ fn sample_at(samples: &[f32], idx: usize) -> [f32; 4] {
     ]
 }
 
+fn weighted_pick_usize(weights: &[usize], rng: &mut XorShift64) -> Option<usize> {
+    let total = weights.iter().copied().map(|w| w as u128).sum::<u128>();
+    if total == 0 {
+        return None;
+    }
+
+    let mut r = (rng.next_u64() as u128) % total;
+    for (idx, &w) in weights.iter().enumerate() {
+        let w = w as u128;
+        if r < w {
+            return Some(idx);
+        }
+        r -= w;
+    }
+    Some(weights.len().saturating_sub(1))
+}
+
 #[inline]
 fn encode_signed(value: f32, max_abs: f32) -> f32 {
     if max_abs <= 0.0 {
@@ -1782,6 +2321,11 @@ impl XorShift64 {
         x ^= x << 17;
         self.state = x;
         x
+    }
+
+    fn next_f64(&mut self) -> f64 {
+        const SCALE: f64 = (1u64 << 53) as f64;
+        ((self.next_u64() >> 11) as f64) / SCALE
     }
 
     fn gen_index(&mut self, upper: usize) -> usize {

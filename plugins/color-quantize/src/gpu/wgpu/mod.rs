@@ -10,6 +10,7 @@ pub const MAX_CLUSTERS: u32 = 64;
 
 const PIXELS_WORKGROUP: u32 = 256;
 const CLUSTERS_WORKGROUP: u32 = 64;
+const CONVERGENCE_CHECK_INTERVAL: u32 = 4;
 
 pub struct WgpuRenderParams {
     pub out_w: u32,
@@ -21,13 +22,21 @@ pub struct WgpuRenderParams {
     pub sum_scale: f32,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WgpuRenderStats {
+    pub iterations_executed: u32,
+    pub converged: bool,
+}
+
 pub struct WgpuOutput {
     pub data: Vec<f32>,
+    pub stats: WgpuRenderStats,
 }
 
 pub struct WgpuContext {
     device: Device,
     queue: Queue,
+    clear_labels_pipeline: ComputePipeline,
     assign_pipeline: ComputePipeline,
     update_pipeline: ComputePipeline,
     output_pipeline: ComputePipeline,
@@ -36,14 +45,16 @@ pub struct WgpuContext {
 }
 
 impl WgpuContext {
-    pub fn new() -> Result<Self, ae::Error> {
+    pub fn new() -> Result<Self, String> {
         let power_preference =
             wgpu::PowerPreference::from_env().unwrap_or(PowerPreference::HighPerformance);
         let mut instance_desc = InstanceDescriptor::default();
         if instance_desc.backends.contains(Backends::DX12)
             && instance_desc.flags.contains(InstanceFlags::VALIDATION)
         {
-            instance_desc.backends.remove(Backends::DX12);
+            instance_desc
+                .flags
+                .remove(InstanceFlags::VALIDATION | InstanceFlags::GPU_BASED_VALIDATION);
         }
 
         let instance = Instance::new(&instance_desc);
@@ -51,23 +62,35 @@ impl WgpuContext {
             power_preference,
             ..Default::default()
         }))
-        .map_err(|_| ae::Error::BadCallbackParameter)?;
+        .map_err(|err| {
+            format!(
+                "request_adapter failed: {:?} (backends={:?}, flags={:?})",
+                err, instance_desc.backends, instance_desc.flags
+            )
+        })?;
+
+        let required_features = Features::empty();
+        let required_limits = Limits::default()
+            .using_resolution(adapter.limits())
+            .using_alignment(adapter.limits());
 
         let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
             label: None,
-            required_features: adapter.features(),
-            required_limits: adapter.limits(),
+            required_features,
+            required_limits,
             experimental_features: ExperimentalFeatures::disabled(),
             memory_hints: MemoryHints::Performance,
             trace: Trace::Off,
         }))
-        .map_err(|_| ae::Error::BadCallbackParameter)?;
+        .map_err(|err| format!("request_device failed: {:?}", err))?;
 
-        let pipelines = create_pipelines(&device)?;
+        let pipelines = create_pipelines(&device)
+            .map_err(|err| format!("create_pipelines failed: {:?}", err))?;
 
         Ok(Self {
             device,
             queue,
+            clear_labels_pipeline: pipelines.clear_labels_pipeline,
             assign_pipeline: pipelines.assign_pipeline,
             update_pipeline: pipelines.update_pipeline,
             output_pipeline: pipelines.output_pipeline,
@@ -83,7 +106,10 @@ impl WgpuContext {
         init_centroids: &[[f32; 4]],
     ) -> Result<WgpuOutput, ae::Error> {
         if params.out_w == 0 || params.out_h == 0 || input.is_empty() {
-            return Ok(WgpuOutput { data: vec![] });
+            return Ok(WgpuOutput {
+                data: vec![],
+                stats: WgpuRenderStats::default(),
+            });
         }
         if params.cluster_count == 0 || params.cluster_count > MAX_CLUSTERS {
             return Err(ae::Error::BadCallbackParameter);
@@ -144,40 +170,99 @@ impl WgpuContext {
         self.queue
             .write_buffer(&res.centroids_buf, 0, bytemuck::cast_slice(&centroid_data));
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&CommandEncoderDescriptor { label: None });
-
         let dispatch_pixels = dispatch_dim(pixel_count as u32, PIXELS_WORKGROUP);
         let dispatch_clusters = dispatch_dim(params.cluster_count, CLUSTERS_WORKGROUP);
 
-        for _ in 0..params.max_iterations.max(1) {
-            encoder.clear_buffer(&res.sums_buf, 0, None);
-            encoder.clear_buffer(&res.counts_buf, 0, None);
+        let max_iterations = params.max_iterations.max(1);
+        let mut iterations_executed = 0u32;
+        let mut converged = false;
+        let mut did_clear_labels = false;
 
-            {
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                    label: Some("assign_accumulate"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.assign_pipeline);
-                pass.set_bind_group(0, &res.bind_group, &[]);
-                pass.dispatch_workgroups(dispatch_pixels, 1, 1);
+        while iterations_executed < max_iterations {
+            let batch = (max_iterations - iterations_executed).min(CONVERGENCE_CHECK_INTERVAL);
+            let mut encoder = self
+                .device
+                .create_command_encoder(&CommandEncoderDescriptor { label: None });
+
+            if !did_clear_labels {
+                {
+                    let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                        label: Some("clear_labels"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.clear_labels_pipeline);
+                    pass.set_bind_group(0, &res.bind_group, &[]);
+                    pass.dispatch_workgroups(dispatch_pixels, 1, 1);
+                }
+                did_clear_labels = true;
             }
 
-            {
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                    label: Some("update_centroids"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.update_pipeline);
-                pass.set_bind_group(0, &res.bind_group, &[]);
-                pass.dispatch_workgroups(dispatch_clusters, 1, 1);
+            for _ in 0..batch {
+                encoder.clear_buffer(&res.sums_buf, 0, None);
+                encoder.clear_buffer(&res.counts_buf, 0, None);
+                encoder.clear_buffer(&res.changes_buf, 0, None);
+
+                {
+                    let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                        label: Some("assign_accumulate"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.assign_pipeline);
+                    pass.set_bind_group(0, &res.bind_group, &[]);
+                    pass.dispatch_workgroups(dispatch_pixels, 1, 1);
+                }
+
+                {
+                    let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                        label: Some("update_centroids"),
+                        timestamp_writes: None,
+                    });
+                    pass.set_pipeline(&self.update_pipeline);
+                    pass.set_bind_group(0, &res.bind_group, &[]);
+                    pass.dispatch_workgroups(dispatch_clusters, 1, 1);
+                }
+
+                iterations_executed = iterations_executed.saturating_add(1);
+            }
+
+            encoder.copy_buffer_to_buffer(
+                &res.changes_buf,
+                0,
+                &res.staging_changes_buf,
+                0,
+                std::mem::size_of::<u32>() as u64,
+            );
+
+            let (sender, receiver) = oneshot_channel();
+            encoder.map_buffer_on_submit(&res.staging_changes_buf, MapMode::Read, ..4, move |r| {
+                let _ = sender.send(r);
+            });
+
+            self.queue.submit(Some(encoder.finish()));
+            let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+
+            let changed = if let Some(Ok(())) = pollster::block_on(receiver.receive()) {
+                let mapped = res.staging_changes_buf.slice(..4).get_mapped_range();
+                let src: &[u32] = bytemuck::cast_slice(&mapped);
+                let value = *src.first().unwrap_or(&1u32);
+                drop(mapped);
+                res.staging_changes_buf.unmap();
+                value
+            } else {
+                return Err(ae::Error::BadCallbackParameter);
+            };
+
+            if changed == 0 {
+                converged = true;
+                break;
             }
         }
 
+        let mut output_encoder = self
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor { label: None });
         {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+            let mut pass = output_encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("write_output"),
                 timestamp_writes: None,
             });
@@ -185,18 +270,19 @@ impl WgpuContext {
             pass.set_bind_group(0, &res.bind_group, &[]);
             pass.dispatch_workgroups(dispatch_pixels, 1, 1);
         }
+        output_encoder.copy_buffer_to_buffer(&res.out_buf, 0, &res.staging_buf, 0, res.out_bytes);
 
-        encoder.copy_buffer_to_buffer(&res.out_buf, 0, &res.staging_buf, 0, res.out_bytes);
-        self.queue.submit(Some(encoder.finish()));
-
-        let slice = res.staging_buf.slice(..);
         let (sender, receiver) = oneshot_channel();
-        slice.map_async(MapMode::Read, move |result| sender.send(result).unwrap());
+        output_encoder.map_buffer_on_submit(&res.staging_buf, MapMode::Read, .., move |r| {
+            let _ = sender.send(r);
+        });
+
+        self.queue.submit(Some(output_encoder.finish()));
         let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
 
         let mut out = vec![0.0f32; pixel_count * 4];
         if let Some(Ok(())) = pollster::block_on(receiver.receive()) {
-            let mapped = slice.get_mapped_range();
+            let mapped = res.staging_buf.slice(..).get_mapped_range();
             let src: &[f32] = bytemuck::cast_slice(&mapped);
             let out_len = out.len();
             out.copy_from_slice(&src[..out_len]);
@@ -206,11 +292,18 @@ impl WgpuContext {
             return Err(ae::Error::BadCallbackParameter);
         }
 
-        Ok(WgpuOutput { data: out })
+        Ok(WgpuOutput {
+            data: out,
+            stats: WgpuRenderStats {
+                iterations_executed,
+                converged,
+            },
+        })
     }
 }
 
 struct PipelineBundle {
+    clear_labels_pipeline: ComputePipeline,
     assign_pipeline: ComputePipeline,
     update_pipeline: ComputePipeline,
     output_pipeline: ComputePipeline,
@@ -226,8 +319,11 @@ struct WgpuResources {
     centroids_buf: Buffer,
     sums_buf: Buffer,
     counts_buf: Buffer,
+    _labels_buf: Buffer,
+    changes_buf: Buffer,
     out_buf: Buffer,
     staging_buf: Buffer,
+    staging_changes_buf: Buffer,
     bind_group: BindGroup,
 }
 
@@ -239,6 +335,7 @@ impl WgpuResources {
         out_h: u32,
     ) -> Result<Self, ae::Error> {
         let out_bytes = calc_pixel_bytes(out_w, out_h)?;
+        let labels_bytes = calc_label_bytes(out_w, out_h)?;
         let centroids_bytes = (MAX_CLUSTERS as u64)
             .checked_mul(4)
             .and_then(|v| v.checked_mul(std::mem::size_of::<f32>() as u64))
@@ -286,6 +383,20 @@ impl WgpuResources {
             mapped_at_creation: false,
         });
 
+        let labels_buf = device.create_buffer(&BufferDescriptor {
+            label: Some("labels"),
+            size: labels_bytes,
+            usage: BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+
+        let changes_buf = device.create_buffer(&BufferDescriptor {
+            label: Some("changes"),
+            size: std::mem::size_of::<u32>() as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+
         let out_buf = device.create_buffer(&BufferDescriptor {
             label: Some("output"),
             size: out_bytes,
@@ -296,6 +407,13 @@ impl WgpuResources {
         let staging_buf = device.create_buffer(&BufferDescriptor {
             label: Some("staging"),
             size: out_bytes,
+            usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let staging_changes_buf = device.create_buffer(&BufferDescriptor {
+            label: Some("staging_changes"),
+            size: std::mem::size_of::<u32>() as u64,
             usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -326,6 +444,14 @@ impl WgpuResources {
                 },
                 BindGroupEntry {
                     binding: 5,
+                    resource: labels_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 6,
+                    resource: changes_buf.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 7,
                     resource: out_buf.as_entire_binding(),
                 },
             ],
@@ -340,8 +466,11 @@ impl WgpuResources {
             centroids_buf,
             sums_buf,
             counts_buf,
+            _labels_buf: labels_buf,
+            changes_buf,
             out_buf,
             staging_buf,
+            staging_changes_buf,
             bind_group,
         })
     }
@@ -424,6 +553,26 @@ fn create_pipelines(device: &Device) -> Result<PipelineBundle, ae::Error> {
                 },
                 count: None,
             },
+            BindGroupLayoutEntry {
+                binding: 6,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 7,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
         ],
     });
 
@@ -431,6 +580,15 @@ fn create_pipelines(device: &Device) -> Result<PipelineBundle, ae::Error> {
         label: Some("color_quantize_pipeline_layout"),
         bind_group_layouts: &[&layout],
         immediate_size: 0,
+    });
+
+    let clear_labels_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+        label: Some("clear_labels_pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: Some("clear_labels"),
+        compilation_options: Default::default(),
+        cache: Default::default(),
     });
 
     let assign_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
@@ -461,6 +619,7 @@ fn create_pipelines(device: &Device) -> Result<PipelineBundle, ae::Error> {
     });
 
     Ok(PipelineBundle {
+        clear_labels_pipeline,
         assign_pipeline,
         update_pipeline,
         output_pipeline,
@@ -482,4 +641,13 @@ fn calc_pixel_bytes(out_w: u32, out_h: u32) -> Result<u64, ae::Error> {
         .and_then(|v| v.checked_mul(std::mem::size_of::<f32>() as u64))
         .ok_or(ae::Error::BadCallbackParameter)?;
     Ok(bytes)
+}
+
+fn calc_label_bytes(out_w: u32, out_h: u32) -> Result<u64, ae::Error> {
+    let pixels = (out_w as u64)
+        .checked_mul(out_h as u64)
+        .ok_or(ae::Error::BadCallbackParameter)?;
+    pixels
+        .checked_mul(std::mem::size_of::<u32>() as u64)
+        .ok_or(ae::Error::BadCallbackParameter)
 }

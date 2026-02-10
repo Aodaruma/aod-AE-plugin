@@ -1,14 +1,16 @@
 const MAX_CLUSTERS: u32 = 64u;
+const WORKGROUP_SIZE: u32 = 256u;
 const TAU: f32 = 6.28318530717958647692;
 const OKLAB_AB_MAX: f32 = 0.5;
 const OKLCH_CHROMA_MAX: f32 = 0.4;
 const YIQ_I_MAX: f32 = 0.5957;
 const YIQ_Q_MAX: f32 = 0.5226;
+const INVALID_LABEL: u32 = MAX_CLUSTERS;
 
 struct Params {
-    size: vec4<u32>;  // x: width, y: height, z: pixel_count, w: cluster_count
-    mode: vec4<u32>;  // x: color_space, y: rgb_only
-    scale: vec4<f32>; // x: sum_scale
+    size: vec4<u32>,  // x: width, y: height, z: pixel_count, w: cluster_count
+    mode: vec4<u32>,  // x: color_space, y: rgb_only
+    scale: vec4<f32>, // x: sum_scale
 }
 
 struct PixelBuffer {
@@ -27,6 +29,14 @@ struct CountsBuffer {
     data: array<atomic<u32>, MAX_CLUSTERS>,
 }
 
+struct LabelBuffer {
+    data: array<u32>,
+}
+
+struct ChangeCounterBuffer {
+    value: atomic<u32>,
+}
+
 @group(0) @binding(0)
 var<uniform> params: Params;
 
@@ -43,10 +53,35 @@ var<storage, read_write> sums: SumsBuffer;
 var<storage, read_write> counts: CountsBuffer;
 
 @group(0) @binding(5)
+var<storage, read_write> labels: LabelBuffer;
+
+@group(0) @binding(6)
+var<storage, read_write> change_counter: ChangeCounterBuffer;
+
+@group(0) @binding(7)
 var<storage, read_write> output_pixels: PixelBuffer;
+
+var<workgroup> local_sums: array<atomic<u32>, MAX_CLUSTERS * 4u>;
+var<workgroup> local_counts: array<atomic<u32>, MAX_CLUSTERS>;
 
 fn clamp01(v: f32) -> f32 {
     return clamp(v, 0.0, 1.0);
+}
+
+fn linear_to_srgb_channel(v: f32) -> f32 {
+    let x = clamp01(v);
+    if x <= 0.0031308 {
+        return 12.92 * x;
+    }
+    return 1.055 * pow(x, 1.0 / 2.4) - 0.055;
+}
+
+fn linear_to_srgb(rgb: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        linear_to_srgb_channel(rgb.x),
+        linear_to_srgb_channel(rgb.y),
+        linear_to_srgb_channel(rgb.z),
+    );
 }
 
 fn encode_signed(value: f32, max_abs: f32) -> f32 {
@@ -63,11 +98,12 @@ fn hue_distance(a: f32, b: f32) -> f32 {
 }
 
 fn feature_distance(a: vec3<f32>, b: vec3<f32>, color_space: u32) -> f32 {
-    let dx = if color_space == 2u || color_space == 3u {
-        hue_distance(a.x, b.x)
+    var dx: f32;
+    if color_space == 2u || color_space == 3u {
+        dx = hue_distance(a.x, b.x);
     } else {
-        a.x - b.x
-    };
+        dx = a.x - b.x;
+    }
     let dy = a.y - b.y;
     let dz = a.z - b.z;
     return dx * dx + dy * dy + dz * dz;
@@ -127,24 +163,12 @@ fn hsv_to_rgb(hsv: vec3<f32>) -> vec3<f32> {
     let t = v * (1.0 - (1.0 - f) * s);
 
     switch i % 6u {
-        case 0u: {
-            return vec3<f32>(v, t, p);
-        }
-        case 1u: {
-            return vec3<f32>(q, v, p);
-        }
-        case 2u: {
-            return vec3<f32>(p, v, t);
-        }
-        case 3u: {
-            return vec3<f32>(p, q, v);
-        }
-        case 4u: {
-            return vec3<f32>(t, p, v);
-        }
-        default: {
-            return vec3<f32>(v, p, q);
-        }
+        case 0u: { return vec3<f32>(v, t, p); }
+        case 1u: { return vec3<f32>(q, v, p); }
+        case 2u: { return vec3<f32>(p, v, t); }
+        case 3u: { return vec3<f32>(p, q, v); }
+        case 4u: { return vec3<f32>(t, p, v); }
+        default: { return vec3<f32>(v, p, q); }
     }
 }
 
@@ -153,7 +177,8 @@ fn decode_feature_to_rgb(feature: vec3<f32>, color_space: u32) -> vec3<f32> {
         let l = clamp01(feature.z);
         let a = decode_signed(feature.x, OKLAB_AB_MAX);
         let b = decode_signed(feature.y, OKLAB_AB_MAX);
-        return clamp(oklab_to_rgb(vec3<f32>(l, a, b)), vec3<f32>(0.0), vec3<f32>(1.0));
+        let lin = clamp(oklab_to_rgb(vec3<f32>(l, a, b)), vec3<f32>(0.0), vec3<f32>(1.0));
+        return clamp(linear_to_srgb(lin), vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     if color_space == 2u {
@@ -162,7 +187,8 @@ fn decode_feature_to_rgb(feature: vec3<f32>, color_space: u32) -> vec3<f32> {
         let hue = clamp01(feature.x) * TAU;
         let a = c * cos(hue);
         let b = c * sin(hue);
-        return clamp(oklab_to_rgb(vec3<f32>(l, a, b)), vec3<f32>(0.0), vec3<f32>(1.0));
+        let lin = clamp(oklab_to_rgb(vec3<f32>(l, a, b)), vec3<f32>(0.0), vec3<f32>(1.0));
+        return clamp(linear_to_srgb(lin), vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
     if color_space == 3u {
@@ -179,26 +205,87 @@ fn decode_feature_to_rgb(feature: vec3<f32>, color_space: u32) -> vec3<f32> {
         return clamp(vec3<f32>(r, g, b), vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
-    return clamp(feature, vec3<f32>(0.0), vec3<f32>(1.0));
+    return clamp(linear_to_srgb(feature), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-@compute @workgroup_size(256)
-fn assign_accumulate(@builtin(global_invocation_id) gid: vec3<u32>) {
+@compute @workgroup_size(WORKGROUP_SIZE)
+fn clear_labels(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     if idx >= params.size.z {
         return;
     }
+    labels.data[idx] = INVALID_LABEL;
+}
 
-    let sample = input_pixels.data[idx];
-    let centroid_idx = nearest_centroid(sample.xyz);
-    let base = centroid_idx * 4u;
-    let scale = params.scale.x;
+@compute @workgroup_size(WORKGROUP_SIZE)
+fn assign_accumulate(
+    @builtin(global_invocation_id) gid: vec3<u32>,
+    @builtin(local_invocation_id) lid: vec3<u32>,
+) {
+    var i = lid.x;
+    loop {
+        if i >= MAX_CLUSTERS * 4u {
+            break;
+        }
+        atomicStore(&local_sums[i], 0u);
+        i = i + WORKGROUP_SIZE;
+    }
 
-    atomicAdd(&sums.data[base + 0u], u32(round(clamp01(sample.x) * scale)));
-    atomicAdd(&sums.data[base + 1u], u32(round(clamp01(sample.y) * scale)));
-    atomicAdd(&sums.data[base + 2u], u32(round(clamp01(sample.z) * scale)));
-    atomicAdd(&sums.data[base + 3u], u32(round(clamp01(sample.w) * scale)));
-    atomicAdd(&counts.data[centroid_idx], 1u);
+    var j = lid.x;
+    loop {
+        if j >= MAX_CLUSTERS {
+            break;
+        }
+        atomicStore(&local_counts[j], 0u);
+        j = j + WORKGROUP_SIZE;
+    }
+
+    workgroupBarrier();
+
+    let idx = gid.x;
+    if idx < params.size.z {
+        let sample = input_pixels.data[idx];
+        let centroid_idx = nearest_centroid(sample.xyz);
+        let old = labels.data[idx];
+        labels.data[idx] = centroid_idx;
+        if old != centroid_idx {
+            atomicAdd(&change_counter.value, 1u);
+        }
+
+        let base = centroid_idx * 4u;
+        let scale = params.scale.x;
+        atomicAdd(&local_sums[base + 0u], u32(round(clamp01(sample.x) * scale)));
+        atomicAdd(&local_sums[base + 1u], u32(round(clamp01(sample.y) * scale)));
+        atomicAdd(&local_sums[base + 2u], u32(round(clamp01(sample.z) * scale)));
+        atomicAdd(&local_sums[base + 3u], u32(round(clamp01(sample.w) * scale)));
+        atomicAdd(&local_counts[centroid_idx], 1u);
+    }
+
+    workgroupBarrier();
+
+    var k = lid.x;
+    loop {
+        if k >= MAX_CLUSTERS * 4u {
+            break;
+        }
+        let v = atomicLoad(&local_sums[k]);
+        if v != 0u {
+            atomicAdd(&sums.data[k], v);
+        }
+        k = k + WORKGROUP_SIZE;
+    }
+
+    var c = lid.x;
+    loop {
+        if c >= MAX_CLUSTERS {
+            break;
+        }
+        let v = atomicLoad(&local_counts[c]);
+        if v != 0u {
+            atomicAdd(&counts.data[c], v);
+        }
+        c = c + WORKGROUP_SIZE;
+    }
 }
 
 @compute @workgroup_size(64)
@@ -224,7 +311,7 @@ fn update_centroids(@builtin(global_invocation_id) gid: vec3<u32>) {
     centroids.data[centroid_idx] = vec4<f32>(clamp01(x), clamp01(y), clamp01(z), clamp01(w));
 }
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(WORKGROUP_SIZE)
 fn write_output(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     if idx >= params.size.z {
@@ -232,7 +319,11 @@ fn write_output(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     let src = input_pixels.data[idx];
-    let centroid_idx = nearest_centroid(src.xyz);
+    let label = labels.data[idx];
+    var centroid_idx: u32 = 0u;
+    if label < params.size.w {
+        centroid_idx = label;
+    }
     let centroid = centroids.data[centroid_idx];
     let rgb = decode_feature_to_rgb(centroid.xyz, params.mode.x);
     let alpha = select(centroid.w, src.w, params.mode.y != 0u);
