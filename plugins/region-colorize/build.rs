@@ -62,6 +62,7 @@ fn main() {
             | OutFlags::UseOutputExtent
             | OutFlags::DeepColorAware
             | OutFlags::WideTimeInput
+            | OutFlags::SendUpdateParamsUI
             ,
         ),
         Property::AE_Effect_Global_OutFlags_2( 
