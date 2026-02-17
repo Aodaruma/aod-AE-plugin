@@ -1,6 +1,7 @@
 #![allow(clippy::drop_non_drop, clippy::question_mark)]
 
 use after_effects as ae;
+use std::collections::HashMap as StdHashMap;
 use std::env;
 
 #[cfg(feature = "gpu_wgpu")]
@@ -40,6 +41,7 @@ enum Params {
     BlendGroupEnd,
     BlendMode,
     BlendOpacity,
+    NormalizeDistance,
 }
 
 #[derive(Clone, Copy)]
@@ -384,6 +386,14 @@ impl AdobePluginGlobal for Plugin {
             }),
         )?;
 
+        params.add(
+            Params::NormalizeDistance,
+            "Normalize Distance",
+            CheckBoxDef::setup(|d| {
+                d.set_default(false);
+            }),
+        )?;
+
         Ok(())
     }
 
@@ -407,6 +417,7 @@ impl AdobePluginGlobal for Plugin {
             }
             ae::Command::GlobalSetup => {
                 // Declare that we do or do not support smart rendering
+                out_data.set_out_flag(OutFlags::SendUpdateParamsUi, true);
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
             }
             ae::Command::Render {
@@ -487,6 +498,7 @@ impl Plugin {
         let mode = params.get(Params::Mode)?.as_popup()?.value();
         let is_smooth_f1 = is_distance && mode == 1;
         Self::set_param_enabled(params, Params::Smoothness, is_smooth_f1)?;
+        Self::set_param_enabled(params, Params::NormalizeDistance, is_smooth_f1)?;
 
         // Mode popup: 1 F1, 2 F2, 3 F2-F1, 4 N-Sphere Radius
         Ok(())
@@ -562,11 +574,16 @@ impl Plugin {
         let smoothness = params.get(Params::Smoothness)?.as_float_slider()?.value() as f32;
         let smoothness = smoothness.clamp(0.0, 1.0);
 
-        let output_type = match params.get(Params::OutputType)?.as_popup()?.value() {
+        let output_popup = params.get(Params::OutputType)?.as_popup()?.value();
+        let output_type = match output_popup {
             2 => 1,
             3 => 2,
             _ => 0,
         };
+        let normalize_distance = params
+            .get(Params::NormalizeDistance)?
+            .as_checkbox()?
+            .value();
 
         let feature_mode = match params.get(Params::Mode)?.as_popup()?.value() {
             2 => 1,
@@ -590,8 +607,8 @@ impl Plugin {
         let cell_map_checkout = params.checkout_at(Params::CellMapLayer, None, None, None)?;
         let has_cell_map_layer = cell_map_checkout.as_layer()?.value().is_some();
 
-        // GPU パスは現状、セルサイズマップとブレンドモード拡張に非対応
-        if has_cell_map_layer || blend_mode != 1 {
+        // GPU パスは現状、セルサイズマップ・ブレンド拡張・距離正規化に非対応
+        if has_cell_map_layer || blend_mode != 1 || (output_popup == 3 && normalize_distance) {
             return Err(Error::BadCallbackParameter);
         }
 
@@ -738,6 +755,10 @@ impl Plugin {
         let origin_y = origin.v as f32 + pre_origin.v as f32;
         let clamp_32 = params.get(Params::Clamp32)?.as_checkbox()?.value();
         let use_original_alpha = params.get(Params::UseOriginalAlpha)?.as_checkbox()?.value();
+        let normalize_distance = params
+            .get(Params::NormalizeDistance)?
+            .as_checkbox()?
+            .value();
         let cell_map_checkout = params.checkout_at(Params::CellMapLayer, None, None, None)?;
         let cell_map_layer = cell_map_checkout.as_layer()?.value();
         let cell_map_world_type = cell_map_layer.as_ref().map(|layer| layer.world_type());
@@ -770,6 +791,40 @@ impl Plugin {
             _ => BlendMode::Normal,
         };
         let blend_opacity = params.get(Params::BlendOpacity)?.as_float_slider()?.value() as f32;
+
+        if matches!(output_type, OutputType::Distance)
+            && matches!(feature_mode, FeatureMode::F1)
+            && normalize_distance
+            && cell_map_layer.is_none()
+        {
+            let inv_cell_x = scale_x / cell_size;
+            let inv_cell_y = scale_y / cell_size;
+            let inv_cell_w = scale_w / cell_size;
+            return self.render_cell_max_normalized_distance(
+                &in_layer,
+                &mut out_layer,
+                in_world_type,
+                out_world_type,
+                out_is_f32,
+                clamp_32,
+                use_original_alpha,
+                inv_cell_x,
+                inv_cell_y,
+                inv_cell_w,
+                randomness,
+                seed,
+                distance_metric,
+                lp_exp,
+                w_value,
+                offset_x,
+                offset_y,
+                position_local,
+                origin_x,
+                origin_y,
+                blend_mode,
+                blend_opacity,
+            );
+        }
 
         out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
             let base_x = x as f32 + 0.5;
@@ -816,37 +871,8 @@ impl Plugin {
             let cell_x = px.floor() as i32;
             let cell_y = py.floor() as i32;
             let cell_w = pw.floor() as i32;
-
-            let mut d1 = f32::INFINITY;
-            let mut d2 = f32::INFINITY;
-            let mut nearest = Site::default();
-
-            for nw in (cell_w - 1)..=(cell_w + 1) {
-                for ny in (cell_y - 1)..=(cell_y + 1) {
-                    for nx in (cell_x - 1)..=(cell_x + 1) {
-                        let site = cell_point(nx, ny, nw, randomness, seed);
-                        let dx = px - site.x;
-                        let dy = py - site.y;
-                        let dw = pw - site.w;
-                        let d = metric_distance(dx, dy, dw, distance_metric, lp_exp);
-
-                        if d < d1 {
-                            d2 = d1;
-                            d1 = d;
-                            nearest = site;
-                        } else if d < d2 {
-                            d2 = d;
-                        }
-                    }
-                }
-            }
-
-            if !d1.is_finite() {
-                d1 = 0.0;
-            }
-            if !d2.is_finite() {
-                d2 = d1;
-            }
+            let (d1, d2, nearest, _) =
+                sample_voronoi(px, py, pw, randomness, seed, distance_metric, lp_exp);
 
             let mut out_px = match output_type {
                 OutputType::Color => {
@@ -990,6 +1016,141 @@ impl Plugin {
 
         Ok(())
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_cell_max_normalized_distance(
+        &self,
+        in_layer: &Layer,
+        out_layer: &mut Layer,
+        in_world_type: ae::aegp::WorldType,
+        out_world_type: ae::aegp::WorldType,
+        out_is_f32: bool,
+        clamp_32: bool,
+        use_original_alpha: bool,
+        inv_cell_x: f32,
+        inv_cell_y: f32,
+        inv_cell_w: f32,
+        randomness: f32,
+        seed: u32,
+        distance_metric: DistanceMetric,
+        lp_exp: f32,
+        w_value: f32,
+        offset_x: f32,
+        offset_y: f32,
+        position_local: bool,
+        origin_x: f32,
+        origin_y: f32,
+        blend_mode: BlendMode,
+        blend_opacity: f32,
+    ) -> Result<(), Error> {
+        let w = out_layer.width();
+        let h = out_layer.height();
+        if w == 0 || h == 0 {
+            return Ok(());
+        }
+
+        let pw = w_value * inv_cell_w;
+        let n = w * h;
+        let mut distances = vec![0.0_f32; n];
+        let mut nearest_hashes = vec![0_u32; n];
+        let mut cell_max_distances: StdHashMap<u32, f32> = StdHashMap::new();
+
+        for y in 0..h {
+            for x in 0..w {
+                let base_x = x as f32 + 0.5;
+                let base_y = y as f32 + 0.5;
+                let sample_x = if position_local {
+                    base_x
+                } else {
+                    base_x + origin_x
+                };
+                let sample_y = if position_local {
+                    base_y
+                } else {
+                    base_y + origin_y
+                };
+                let px = (sample_x - offset_x) * inv_cell_x;
+                let py = (sample_y - offset_y) * inv_cell_y;
+                let (d1, _, nearest, _) =
+                    sample_voronoi(px, py, pw, randomness, seed, distance_metric, lp_exp);
+                let idx = y * w + x;
+                distances[idx] = d1;
+                nearest_hashes[idx] = nearest.hash;
+                let entry = cell_max_distances.entry(nearest.hash).or_insert(d1);
+                if d1 > *entry {
+                    *entry = d1;
+                }
+            }
+        }
+
+        out_layer.iterate(0, h as i32, None, |x, y, mut dst| {
+            let idx = y as usize * w + x as usize;
+            let d1 = distances[idx];
+            let nearest_hash = nearest_hashes[idx];
+            let max_distance = cell_max_distances
+                .get(&nearest_hash)
+                .copied()
+                .unwrap_or(0.0);
+
+            let mut v = if max_distance > 1.0e-6 {
+                d1 / max_distance
+            } else {
+                0.0
+            };
+            v = sanitize_value(v, out_is_f32, clamp_32);
+
+            let src_px = read_pixel_f32(in_layer, in_world_type, x as usize, y as usize);
+            let mut out_px = PixelF32 {
+                alpha: 1.0,
+                red: v,
+                green: v,
+                blue: v,
+            };
+
+            let mut blended = blend_pixels(src_px, out_px, blend_mode);
+            blended.red = sanitize_value(
+                lerp(src_px.red, blended.red, blend_opacity),
+                out_is_f32,
+                clamp_32,
+            );
+            blended.green = sanitize_value(
+                lerp(src_px.green, blended.green, blend_opacity),
+                out_is_f32,
+                clamp_32,
+            );
+            blended.blue = sanitize_value(
+                lerp(src_px.blue, blended.blue, blend_opacity),
+                out_is_f32,
+                clamp_32,
+            );
+            out_px = blended;
+
+            if use_original_alpha {
+                let mut out_alpha =
+                    read_pixel_f32(in_layer, in_world_type, x as usize, y as usize).alpha;
+                if !out_alpha.is_finite() {
+                    out_alpha = 0.0;
+                }
+                out_alpha = out_alpha.clamp(0.0, 1.0);
+                out_px.red *= out_alpha;
+                out_px.green *= out_alpha;
+                out_px.blue *= out_alpha;
+                out_px.alpha = out_alpha;
+            }
+
+            match out_world_type {
+                ae::aegp::WorldType::U8 => dst.set_from_u8(out_px.to_pixel8()),
+                ae::aegp::WorldType::U15 => dst.set_from_u16(out_px.to_pixel16()),
+                ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => {
+                    dst.set_from_f32(out_px);
+                }
+            }
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
 }
 
 fn point_value_f32(point: &PointDef<'_>) -> (f32, f32) {
@@ -1000,6 +1161,57 @@ fn point_value_f32(point: &PointDef<'_>) -> (f32, f32) {
 }
 
 // --- voronoi helpers ---
+fn sample_voronoi(
+    px: f32,
+    py: f32,
+    pw: f32,
+    randomness: f32,
+    seed: u32,
+    distance_metric: DistanceMetric,
+    lp_exp: f32,
+) -> (f32, f32, Site, Site) {
+    let cell_x = px.floor() as i32;
+    let cell_y = py.floor() as i32;
+    let cell_w = pw.floor() as i32;
+
+    let mut d1 = f32::INFINITY;
+    let mut d2 = f32::INFINITY;
+    let mut nearest = Site::default();
+    let mut second = Site::default();
+
+    for nw in (cell_w - 1)..=(cell_w + 1) {
+        for ny in (cell_y - 1)..=(cell_y + 1) {
+            for nx in (cell_x - 1)..=(cell_x + 1) {
+                let site = cell_point(nx, ny, nw, randomness, seed);
+                let dx = px - site.x;
+                let dy = py - site.y;
+                let dw = pw - site.w;
+                let d = metric_distance(dx, dy, dw, distance_metric, lp_exp);
+
+                if d < d1 {
+                    d2 = d1;
+                    second = nearest;
+                    d1 = d;
+                    nearest = site;
+                } else if d < d2 {
+                    d2 = d;
+                    second = site;
+                }
+            }
+        }
+    }
+
+    if !d1.is_finite() {
+        d1 = 0.0;
+    }
+    if !d2.is_finite() {
+        d2 = d1;
+        second = nearest;
+    }
+
+    (d1, d2, nearest, second)
+}
+
 fn metric_distance(dx: f32, dy: f32, dw: f32, metric: DistanceMetric, lp_exp: f32) -> f32 {
     match metric {
         DistanceMetric::Euclidean => (dx * dx + dy * dy + dw * dw).sqrt(),
