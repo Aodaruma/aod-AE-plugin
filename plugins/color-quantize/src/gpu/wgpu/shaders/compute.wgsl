@@ -205,6 +205,11 @@ fn decode_feature_to_rgb(feature: vec3<f32>, color_space: u32) -> vec3<f32> {
         return clamp(vec3<f32>(r, g, b), vec3<f32>(0.0), vec3<f32>(1.0));
     }
 
+    if color_space == 5u {
+        let v = clamp01(feature.x);
+        return vec3<f32>(v, v, v);
+    }
+
     return clamp(linear_to_srgb(feature), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
