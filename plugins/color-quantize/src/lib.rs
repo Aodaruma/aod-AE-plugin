@@ -85,6 +85,7 @@ enum ColorSpace {
     Oklch = 2,
     Hsv = 3,
     Yiq = 4,
+    AlphaOnly = 5,
 }
 
 impl ColorSpace {
@@ -300,13 +301,15 @@ impl AdobePluginGlobal for Plugin {
             }),
         )?;
 
-        params.add(
+        params.add_with_flags(
             Params::ColorSpace,
             "Color Space",
             PopupDef::setup(|d| {
-                d.set_options(&["Linear RGB", "OKLab", "OKLCH", "HSV", "YIQ"]);
+                d.set_options(&["Linear RGB", "OKLab", "OKLCH", "HSV", "YIQ", "Alpha Only"]);
                 d.set_default(2);
             }),
+            supervise_flags(),
+            ae::ParamUIFlags::empty(),
         )?;
 
         params.add_with_flags(
@@ -505,6 +508,7 @@ impl AdobePluginGlobal for Plugin {
                 if t == Params::ClusterMethod
                     || t == Params::InitMethod
                     || t == Params::SelectedColorCount
+                    || t == Params::ColorSpace
                 {
                     out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
@@ -534,6 +538,8 @@ impl Plugin {
             .as_slider()?
             .value()
             .clamp(1, MAX_SELECTED_COLORS as i32) as usize;
+        let color_space =
+            color_space_from_popup(params.get(Params::ColorSpace)?.as_popup()?.value());
 
         let is_kmeans = matches!(method, ClusterMethod::KMeans);
         let is_auto = !is_kmeans;
@@ -559,6 +565,8 @@ impl Plugin {
         let show_gmeans_alpha = matches!(method, ClusterMethod::GMeans);
         self.set_param_visible(in_data, params, Params::GMeansAlpha, show_gmeans_alpha)?;
         Self::set_param_enabled(params, Params::GMeansAlpha, show_gmeans_alpha)?;
+        let allow_rgb_only = !matches!(color_space, ColorSpace::AlphaOnly);
+        Self::set_param_enabled(params, Params::RgbOnly, allow_rgb_only)?;
 
         Ok(())
     }
@@ -826,7 +834,8 @@ fn read_settings(
         .value()
         .clamp(1, MAX_SELECTED_COLORS as i32) as usize;
     let gmeans_alpha = params.get(Params::GMeansAlpha)?.as_float_slider()?.value() as f32;
-    let rgb_only = params.get(Params::RgbOnly)?.as_checkbox()?.value();
+    let rgb_only = params.get(Params::RgbOnly)?.as_checkbox()?.value()
+        && !matches!(color_space, ColorSpace::AlphaOnly);
     let use_gpu_if_available = params
         .get(Params::UseGpuIfAvailable)?
         .as_checkbox()?
@@ -1646,12 +1655,17 @@ fn encode_input_layer(
                 sanitize01(px.green),
                 sanitize01(px.blue),
             ];
-            let feature = encode_feature(rgb, color_space);
+            let alpha = sanitize01(px.alpha);
+            let feature = if matches!(color_space, ColorSpace::AlphaOnly) {
+                [alpha, 0.0, 0.0]
+            } else {
+                encode_feature(rgb, color_space)
+            };
             let idx = (y * width + x) * 4;
             encoded[idx] = feature[0];
             encoded[idx + 1] = feature[1];
             encoded[idx + 2] = feature[2];
-            encoded[idx + 3] = sanitize01(px.alpha);
+            encoded[idx + 3] = alpha;
         }
     }
 
@@ -1701,6 +1715,10 @@ fn encode_feature(rgb: [f32; 3], color_space: ColorSpace) -> [f32; 3] {
                 encode_signed(yiq[2] as f32, YIQ_Q_MAX),
                 clamp01(yiq[0] as f32),
             ]
+        }
+        ColorSpace::AlphaOnly => {
+            let y = clamp01(0.2126 * lin.red + 0.7152 * lin.green + 0.0722 * lin.blue);
+            [y, 0.0, 0.0]
         }
     }
 }
@@ -1777,6 +1795,10 @@ fn decode_feature(feature: [f32; 3], color_space: ColorSpace) -> [f32; 3] {
                 [sanitize01(r), sanitize01(g), sanitize01(b)]
             }
         }
+        ColorSpace::AlphaOnly => {
+            let v = clamp01(feature[0]);
+            [v, v, v]
+        }
     }
 }
 
@@ -1803,6 +1825,7 @@ fn color_space_from_popup(value: i32) -> ColorSpace {
         3 => ColorSpace::Oklch,
         4 => ColorSpace::Hsv,
         5 => ColorSpace::Yiq,
+        6 => ColorSpace::AlphaOnly,
         _ => ColorSpace::LinearRgb,
     }
 }
