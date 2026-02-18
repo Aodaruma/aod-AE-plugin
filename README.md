@@ -27,6 +27,8 @@ template.
   - RGBと各色空間を相互変換します / Converts between RGB and multiple color spaces
 - AOD_ColorQuantize
   - 画像の色をk-meansで減色します / Reduces image colors with k-means clustering.
+- AOD_ColorSelect
+  - 指定した複数色を透過（Key）または保持（Keep）します / Selects specified colors for keying or keeping with dynamic multi-color controls.
 - AOD_ContourGenerate
   - Canny法でレイヤーから輪郭線を抽出します / Extracts contour lines from a layer using the Canny method
 - AOD_DifferentialGenerate

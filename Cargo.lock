@@ -489,6 +489,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "color_select"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "seq-macro",
+ "utils",
+]
+
+[[package]]
 name = "const_format"
 version = "0.2.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
