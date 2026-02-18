@@ -158,11 +158,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
 
-          BRANCH="${GITHUB_EVENT_WORKFLOW_RUN_HEAD_BRANCH:-${GITHUB_REF_NAME}}"
+          BRANCH="${SOURCE_BRANCH}"
           case "$BRANCH" in
             main)
               TAG_PREFIX="main-release"
