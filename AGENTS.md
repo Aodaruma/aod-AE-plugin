@@ -46,6 +46,22 @@
    - `src/lib.rs` の `PLUGIN_DESCRIPTION`
 3) ルート `README.md` のプラグイン一覧に追加
 
+### cargo-generate 非対話実行メモ（知見）
+
+- `--template-values-file` を使う場合、ファイルは必ず `[values]` セクションを持つこと。  
+  例:
+  ```toml
+  [values]
+  description = "Short description."
+  features = []
+  with_deepcolor = true
+  with_thrededrender = true
+  with_smartrender = true
+  ```
+- `[values]` を付けないと `missing field 'values'` で生成に失敗する。
+- テンプレートのキー名は `with_thrededrender`（スペルそのまま）なので、values ファイル側も同名で指定する。
+- 新規生成直後は `cargo check -p <crate_name>` を実行し、テンプレート由来の構文崩れや置換漏れを早期検知する。
+
 ## ビルド・インストール
 
 - 全プラグイン: `just build` / `just release`
