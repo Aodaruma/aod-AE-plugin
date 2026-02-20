@@ -455,6 +455,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "color_composite"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "seq-macro",
+ "utils",
+]
+
+[[package]]
 name = "color_convert"
 version = "0.1.0"
 dependencies = [

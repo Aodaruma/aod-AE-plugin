@@ -23,6 +23,8 @@ template.
   - OKLCH/HSLで色相・彩度・明度を調整します / Adjusts hue, chroma, and lightness in OKLCH or HSL color spaces
 - AOD_ColorChange:
   - 指定色を別の色に置換します / Changes a specific color to another color with tolerance
+- AOD_ColorComposite
+  - 複数色を選択した合成モードと不透明度で順次合成します / Sequentially composites multiple colors using selectable blend modes and opacities.
 - AOD_ColorConvert
   - RGBと各色空間を相互変換します / Converts between RGB and multiple color spaces
 - AOD_ColorQuantize
