@@ -1207,6 +1207,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_scaler"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
+]
+
+[[package]]
 name = "imageproc"
 version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

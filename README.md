@@ -41,6 +41,8 @@ template.
   - 実部・虚部レイヤーから2D IFFTで画像を再構成します / Reconstructs an RGBA image from 2D FFT real and imaginary inputs.
 - AOD_ImageCalculate
   - 1つまたは2つのレイヤーにBlender風の数式演算を適用します / Applies Blender-style math operations to one or two input layers.
+- AOD_ImageScaler
+  - レイヤーを補間方式指定で拡大・縮小します / Scales layers with selectable interpolation modes and optional reciprocal scaling.
 - AOD_LineRepaint
   - 主線色に一致する画素を近傍色の伝播で塗り替えます / Repaints line-colored pixels by propagating neighboring colors.
 - AOD_MobiusTransform
