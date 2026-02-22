@@ -13,6 +13,8 @@ catch-panics = []
 
 [dependencies]
 after-effects = { workspace = true }
+color-art = "0.3"
+palette = "0.7.6"
 utils = { path = "../../crates/utils" }
 
 [dev-dependencies]
