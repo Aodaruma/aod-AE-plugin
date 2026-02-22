@@ -100,16 +100,24 @@ enum Params {
     RemoveColor,
     ShowAdvancedBlendModes,
     #(
+        CompositeGroupStart~N,
+        IsLayerComposite~N,
         Color~N,
+        Layer~N,
         Mode~N,
         AdvancedMode~N,
         Opacity~N,
+        CompositeGroupEnd~N,
     )*
 }
 });
 
 seq!(N in 1..=16 {
+const COMPOSITE_GROUP_START_PARAMS: [Params; 16] = [#(Params::CompositeGroupStart~N,)*];
+const COMPOSITE_GROUP_END_PARAMS: [Params; 16] = [#(Params::CompositeGroupEnd~N,)*];
 const COLOR_PARAMS: [Params; 16] = [#(Params::Color~N,)*];
+const IS_LAYER_COMPOSITE_PARAMS: [Params; 16] = [#(Params::IsLayerComposite~N,)*];
+const LAYER_PARAMS: [Params; 16] = [#(Params::Layer~N,)*];
 const MODE_PARAMS: [Params; 16] = [#(Params::Mode~N,)*];
 const ADVANCED_MODE_PARAMS: [Params; 16] = [#(Params::AdvancedMode~N,)*];
 const OPACITY_PARAMS: [Params; 16] = [#(Params::Opacity~N,)*];
@@ -357,8 +365,14 @@ advanced_modes_table! {
 }
 
 #[derive(Clone, Copy)]
+enum CompositeSource {
+    Color([f32; 3]),
+    Layer(usize),
+}
+
+#[derive(Clone, Copy)]
 struct CompositeLayer {
-    color: [f32; 3],
+    source: CompositeSource,
     mode: BlendMode,
     opacity: f32,
 }
@@ -392,7 +406,7 @@ impl AdobePluginGlobal for Plugin {
 
         params.add_with_flags(
             Params::ColorCount,
-            "Number of Colors",
+            "Number of Composite Inputs",
             FloatSliderDef::setup(|d| {
                 d.set_default(DEFAULT_COLORS as f64);
                 d.set_value(DEFAULT_COLORS as f64);
@@ -408,7 +422,7 @@ impl AdobePluginGlobal for Plugin {
 
         params.add(
             Params::AddColor,
-            "Add Color",
+            "Add Composite",
             ButtonDef::setup(|d| {
                 d.set_label("Add");
             }),
@@ -416,7 +430,7 @@ impl AdobePluginGlobal for Plugin {
 
         params.add(
             Params::RemoveColor,
-            "Remove Color",
+            "Remove Composite",
             ButtonDef::setup(|d| {
                 d.set_label("Remove");
             }),
@@ -433,43 +447,70 @@ impl AdobePluginGlobal for Plugin {
         )?;
 
         for idx in 0..MAX_COLORS {
-            params.add(
-                COLOR_PARAMS[idx],
-                &format!("Color{}", idx + 1),
-                ColorDef::setup(|d| {
-                    d.set_default(default_color(idx));
-                }),
-            )?;
+            let slot = idx + 1;
+            params.add_group(
+                COMPOSITE_GROUP_START_PARAMS[idx],
+                COMPOSITE_GROUP_END_PARAMS[idx],
+                &format!("Composite {}", slot),
+                false,
+                |params| {
+                    params.add_with_flags(
+                        IS_LAYER_COMPOSITE_PARAMS[idx],
+                        &format!("Use Layer Input{}", slot),
+                        CheckBoxDef::setup(|d| {
+                            d.set_default(false);
+                        }),
+                        supervise_flags(),
+                        ae::ParamUIFlags::empty(),
+                    )?;
 
-            params.add(
-                MODE_PARAMS[idx],
-                &format!("Blend Mode{}", idx + 1),
-                PopupDef::setup(|d| {
-                    d.set_options(&AE_BLEND_MODE_OPTIONS);
-                    d.set_default(1);
-                }),
-            )?;
+                    params.add(
+                        COLOR_PARAMS[idx],
+                        &format!("Color{}", slot),
+                        ColorDef::setup(|d| {
+                            d.set_default(default_color(idx));
+                        }),
+                    )?;
 
-            params.add(
-                ADVANCED_MODE_PARAMS[idx],
-                &format!("Advanced Blend Mode{}", idx + 1),
-                PopupDef::setup(|d| {
-                    d.set_options(&ADVANCED_BLEND_MODE_OPTIONS);
-                    d.set_default(1);
-                }),
-            )?;
+                    params.add(
+                        LAYER_PARAMS[idx],
+                        &format!("Layer{}", slot),
+                        LayerDef::new(),
+                    )?;
 
-            params.add(
-                OPACITY_PARAMS[idx],
-                &format!("Opacity{} (%)", idx + 1),
-                FloatSliderDef::setup(|d| {
-                    d.set_valid_min(0.0);
-                    d.set_valid_max(100.0);
-                    d.set_slider_min(0.0);
-                    d.set_slider_max(100.0);
-                    d.set_default(100.0);
-                    d.set_precision(1);
-                }),
+                    params.add(
+                        MODE_PARAMS[idx],
+                        &format!("Blend Mode{}", slot),
+                        PopupDef::setup(|d| {
+                            d.set_options(&AE_BLEND_MODE_OPTIONS);
+                            d.set_default(1);
+                        }),
+                    )?;
+
+                    params.add(
+                        ADVANCED_MODE_PARAMS[idx],
+                        &format!("Advanced Blend Mode{}", slot),
+                        PopupDef::setup(|d| {
+                            d.set_options(&ADVANCED_BLEND_MODE_OPTIONS);
+                            d.set_default(1);
+                        }),
+                    )?;
+
+                    params.add(
+                        OPACITY_PARAMS[idx],
+                        &format!("Opacity{} (%)", slot),
+                        FloatSliderDef::setup(|d| {
+                            d.set_valid_min(0.0);
+                            d.set_valid_max(100.0);
+                            d.set_slider_min(0.0);
+                            d.set_slider_max(100.0);
+                            d.set_default(100.0);
+                            d.set_precision(1);
+                        }),
+                    )?;
+
+                    Ok(())
+                },
             )?;
         }
 
@@ -584,6 +625,11 @@ impl Plugin {
         out_data: &mut OutData,
     ) -> Result<(), Error> {
         let changed = params.type_at(param_index);
+        if IS_LAYER_COMPOSITE_PARAMS.contains(&changed) {
+            out_data.set_out_flag(OutFlags::RefreshUi, true);
+            return Ok(());
+        }
+
         match changed {
             Params::ColorCount | Params::AddColor | Params::RemoveColor => {
                 let current = Self::color_count(params);
@@ -614,7 +660,17 @@ impl Plugin {
 
         for idx in 0..MAX_COLORS {
             let visible = idx < count;
+            let is_layer_composite = params
+                .get(IS_LAYER_COMPOSITE_PARAMS[idx])
+                .ok()
+                .and_then(|p| p.as_checkbox().ok().map(|c| c.value()))
+                .unwrap_or(false);
+
+            self.set_param_visible(in_data, params, COMPOSITE_GROUP_START_PARAMS[idx], visible)?;
+            self.set_param_visible(in_data, params, COMPOSITE_GROUP_END_PARAMS[idx], visible)?;
             self.set_param_visible(in_data, params, COLOR_PARAMS[idx], visible)?;
+            self.set_param_visible(in_data, params, IS_LAYER_COMPOSITE_PARAMS[idx], visible)?;
+            self.set_param_visible(in_data, params, LAYER_PARAMS[idx], visible)?;
             self.set_param_visible(in_data, params, MODE_PARAMS[idx], visible && !show_advanced)?;
             self.set_param_visible(
                 in_data,
@@ -624,7 +680,9 @@ impl Plugin {
             )?;
             self.set_param_visible(in_data, params, OPACITY_PARAMS[idx], visible)?;
 
-            Self::set_param_enabled(params, COLOR_PARAMS[idx], visible)?;
+            Self::set_param_enabled(params, COLOR_PARAMS[idx], visible && !is_layer_composite)?;
+            Self::set_param_enabled(params, IS_LAYER_COMPOSITE_PARAMS[idx], visible)?;
+            Self::set_param_enabled(params, LAYER_PARAMS[idx], visible && is_layer_composite)?;
             Self::set_param_enabled(params, MODE_PARAMS[idx], visible && !show_advanced)?;
             Self::set_param_enabled(params, ADVANCED_MODE_PARAMS[idx], visible && show_advanced)?;
             Self::set_param_enabled(params, OPACITY_PARAMS[idx], visible)?;
@@ -696,11 +754,10 @@ impl Plugin {
         let mut layers = Vec::with_capacity(active_colors);
 
         for idx in 0..active_colors {
-            let color = params
-                .get(COLOR_PARAMS[idx])?
-                .as_color()?
-                .value()
-                .to_pixel32();
+            let is_layer_composite = params
+                .get(IS_LAYER_COMPOSITE_PARAMS[idx])?
+                .as_checkbox()?
+                .value();
             let mode = if show_advanced {
                 blend_mode_from_advanced_popup(
                     params.get(ADVANCED_MODE_PARAMS[idx])?.as_popup()?.value(),
@@ -715,8 +772,19 @@ impl Plugin {
                 continue;
             }
 
+            let source = if is_layer_composite {
+                CompositeSource::Layer(idx)
+            } else {
+                let color = params
+                    .get(COLOR_PARAMS[idx])?
+                    .as_color()?
+                    .value()
+                    .to_pixel32();
+                CompositeSource::Color(color_to_straight_rgb(color))
+            };
+
             layers.push(CompositeLayer {
-                color: color_to_straight_rgb(color),
+                source,
                 mode,
                 opacity,
             });
@@ -736,6 +804,20 @@ impl Plugin {
         }
 
         let settings = Self::read_settings(params)?;
+        let active_slots = Self::color_count(params);
+        let mut layer_sources: Vec<Option<Layer>> = Vec::with_capacity(active_slots);
+        let mut layer_world_types: Vec<Option<ae::aegp::WorldType>> =
+            Vec::with_capacity(active_slots);
+        let mut _layer_checkouts = Vec::with_capacity(active_slots);
+        for layer_param in LAYER_PARAMS.iter().take(active_slots) {
+            let checkout = params.checkout_at(*layer_param, None, None, None)?;
+            let layer = checkout.as_layer()?.value();
+            let world_type = layer.as_ref().map(|l| l.world_type());
+            layer_sources.push(layer);
+            layer_world_types.push(world_type);
+            _layer_checkouts.push(checkout);
+        }
+
         let progress_final = out_layer.height() as i32;
 
         in_layer.iterate_with(
@@ -743,12 +825,24 @@ impl Plugin {
             0,
             progress_final,
             None,
-            |_x, _y, src, mut dst| {
+            |x, y, src, mut dst| {
+                let x = x as usize;
+                let y = y as usize;
                 let src_px = read_input_pixel(src);
                 let mut composed_rgb = pixel_to_straight_rgb(src_px);
 
                 for layer in &settings.layers {
-                    let blended = blend_rgb(composed_rgb, layer.color, layer.mode);
+                    let blend_input = match layer.source {
+                        CompositeSource::Color(color) => Some(color),
+                        CompositeSource::Layer(slot) => {
+                            sample_layer_source_rgb(slot, x, y, &layer_sources, &layer_world_types)
+                        }
+                    };
+                    let Some(blend_input) = blend_input else {
+                        continue;
+                    };
+
+                    let blended = blend_rgb(composed_rgb, blend_input, layer.mode);
                     composed_rgb[0] = lerp(composed_rgb[0], blended[0], layer.opacity);
                     composed_rgb[1] = lerp(composed_rgb[1], blended[1], layer.opacity);
                     composed_rgb[2] = lerp(composed_rgb[2], blended[2], layer.opacity);
@@ -1397,6 +1491,38 @@ fn sanitize_channel(value: f32) -> f32 {
 
 fn color_to_straight_rgb(color: PixelF32) -> [f32; 3] {
     pixel_to_straight_rgb(color)
+}
+
+fn sample_layer_source_rgb(
+    slot: usize,
+    x: usize,
+    y: usize,
+    layer_sources: &[Option<Layer>],
+    layer_world_types: &[Option<ae::aegp::WorldType>],
+) -> Option<[f32; 3]> {
+    let layer = layer_sources.get(slot)?.as_ref()?;
+    let world_type = layer_world_types.get(slot).copied().flatten()?;
+    if layer.width() == 0 || layer.height() == 0 {
+        return None;
+    }
+
+    let sx = x.min(layer.width().saturating_sub(1));
+    let sy = y.min(layer.height().saturating_sub(1));
+    let px = read_layer_pixel_f32(layer, world_type, sx, sy);
+    Some(pixel_to_straight_rgb(px))
+}
+
+fn read_layer_pixel_f32(
+    layer: &Layer,
+    world_type: ae::aegp::WorldType,
+    x: usize,
+    y: usize,
+) -> PixelF32 {
+    match world_type {
+        ae::aegp::WorldType::U8 => layer.as_pixel8(x, y).to_pixel32(),
+        ae::aegp::WorldType::U15 => layer.as_pixel16(x, y).to_pixel32(),
+        ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => *layer.as_pixel32(x, y),
+    }
 }
 
 fn pixel_to_straight_rgb(px: PixelF32) -> [f32; 3] {
