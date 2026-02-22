@@ -35,6 +35,8 @@ template.
   - レイヤーの画像勾配からRGBA微分マップを生成します / Generates RGBA differential maps from image gradients.
 - AOD_FFT
   - レイヤーに2D FFTを適用し、実部または虚部を出力します / Performs 2D FFT on RGBA channels and outputs real or imaginary spectra.
+- AOD_FourierFilter
+  - FFT領域フィルタとマスク駆動のスペクトル整形を動的UIで適用します / Applies FFT-domain filters and mask-driven spectral shaping with dynamic controls.
 - AOD_DistanceGenerate
   - 色領域の輪郭から距離画像を生成します / Generates distance images from the contours of colored regions
 - AOD_IFFT
