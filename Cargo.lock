@@ -1213,6 +1213,8 @@ version = "0.1.0"
 dependencies = [
  "after-effects",
  "chrono",
+ "color-art",
+ "palette",
  "pipl",
  "utils",
 ]
