@@ -31,6 +31,8 @@ template.
   - 画像の色をk-meansで減色します / Reduces image colors with k-means clustering.
 - AOD_ColorSelect
   - 指定した複数色を透過（Key）または保持（Keep）します / Selects specified colors for keying or keeping with dynamic multi-color controls.
+- AOD_ChannelRemap
+  - RGBA各出力チャンネルを入力・定数・レイヤー由来で再割り当てします / Remaps RGBA channels from source channels, constants, and layers with selectable color spaces.
 - AOD_ContourGenerate
   - Canny法でレイヤーから輪郭線を抽出します / Extracts contour lines from a layer using the Canny method
 - AOD_DifferentialGenerate
