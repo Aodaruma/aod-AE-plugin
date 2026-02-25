@@ -1,0 +1,29 @@
+[package]
+name = "fourier_filter"
+description = "Applies FFT-domain filters and mask-driven spectral shaping with dynamic controls."
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["gpu_wgpu"]
+catch-panics = []
+gpu_wgpu = ["utils/spectral_wgpu"]
+
+[dependencies]
+after-effects = { workspace = true }
+palette = "0.7.6"
+utils = { path = "../../crates/utils", features = ["spectral"] }
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true
