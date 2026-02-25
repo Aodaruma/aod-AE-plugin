@@ -1,4 +1,4 @@
-name: Create Release Plugin from main
+name: Create Release Plugin
 
 on:
   workflow_run:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: plugin-prerelease-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  group: plugin-release-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -19,11 +19,9 @@ env:
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
   NO_INSTALL: "1"
 
-
 jobs:
   build:
-    # workflow_run の場合は CI 成功時のみ続行
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') || (github.event_name == 'workflow_dispatch' && (github.ref_name == 'main' || github.ref_name == 'dev')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -36,7 +34,6 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
-          # workflow_run では GITHUB_SHA が「この workflow の実体」の SHA になるため、CI が走った SHA を明示して checkout
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           submodules: recursive
 
@@ -63,8 +60,8 @@ jobs:
           which awk
           awk --version | head -n 1 || true
 
-      - name: Build (release)
-        run: just release
+      - name: Build and package (release-ci)
+        run: just release-ci
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
@@ -79,7 +76,6 @@ jobs:
             SUFFIX="$(git rev-parse --short=12 HEAD)"
           fi
 
-          # zip ファイル名として危険な文字を潰す
           SUFFIX_SAFE="$(echo "$SUFFIX" | sed -E 's/[^A-Za-z0-9._-]+/_/g')"
           ZIP_NAME="aod-AE-plugins_macos_${SUFFIX_SAFE}.zip"
 
@@ -107,15 +103,12 @@ jobs:
           $tag = (git tag --points-at HEAD | Select-Object -First 1)
           if ($tag) { $suffix = $tag.Trim() } else { $suffix = (git rev-parse --short=12 HEAD).Trim() }
 
-          # Windows ファイル名として危険な文字を潰す
           $suffixSafe = ($suffix -replace '[^A-Za-z0-9._-]', '_')
           $zipName = "aod-AE-plugins_windows_$suffixSafe.zip"
 
           $releaseDir = Join-Path $env:CARGO_TARGET_DIR "release"
 
           New-Item -ItemType Directory -Force -Path dist\windows | Out-Null
-
-          # 念のため -File を付けて、見つからない場合はディレクトリ一覧を出して落とす
           $plugins = Get-ChildItem -Path $releaseDir -Filter *.aex -File -ErrorAction SilentlyContinue
           if (-not $plugins) {
             Write-Host "No .aex found in $releaseDir"
@@ -137,28 +130,85 @@ jobs:
             aod-AE-plugins_windows_*.zip
           if-no-files-found: error
 
-
-
   publish:
     needs: build
-    if: ${{ github.event_name != 'pull_request' && (github.event_name == 'workflow_run' || github.ref_name == 'main' || github.ref_name == 'dev') }}
+    if: ${{ needs.build.result == 'success' }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout source revision
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
 
+      - name: Resolve source branch
+        id: source_meta
+        env:
+          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          EVENT_BRANCH: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main dev
+
+          SHA="$TARGET_SHA"
+          if [ -z "$SHA" ]; then
+            SHA="$(git rev-parse HEAD)"
+          fi
+
+          branch=""
+          if [ "$EVENT_BRANCH" = "main" ] || [ "$EVENT_BRANCH" = "dev" ]; then
+            if git merge-base --is-ancestor "$SHA" "origin/$EVENT_BRANCH"; then
+              branch="$EVENT_BRANCH"
+            fi
+          fi
+
+          if [ -z "$branch" ]; then
+            in_main=0
+            in_dev=0
+            if git merge-base --is-ancestor "$SHA" origin/main; then in_main=1; fi
+            if git merge-base --is-ancestor "$SHA" origin/dev; then in_dev=1; fi
+
+            if [ "$in_main" -eq 1 ] && [ "$in_dev" -eq 0 ]; then
+              branch="main"
+            elif [ "$in_main" -eq 0 ] && [ "$in_dev" -eq 1 ]; then
+              branch="dev"
+            elif [ "$in_main" -eq 1 ] && [ "$in_dev" -eq 1 ]; then
+              if [ "$EVENT_BRANCH" = "main" ] || [ "$EVENT_BRANCH" = "dev" ]; then
+                branch="$EVENT_BRANCH"
+              elif [ "$SHA" = "$(git rev-parse origin/main)" ]; then
+                branch="main"
+              elif [ "$SHA" = "$(git rev-parse origin/dev)" ]; then
+                branch="dev"
+              else
+                echo "Unable to resolve source branch for $SHA (contained in both main and dev)." >&2
+                exit 1
+              fi
+            else
+              echo "Unsupported source SHA: $SHA" >&2
+              exit 1
+            fi
+          fi
+
+          echo "target_sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$branch" >> "$GITHUB_OUTPUT"
+
       - name: Prepare release tag
         id: draft_release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-          SOURCE_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          TARGET_SHA: ${{ steps.source_meta.outputs.target_sha }}
+          SOURCE_BRANCH: ${{ steps.source_meta.outputs.source_branch }}
         shell: bash
         run: |
           set -euo pipefail
@@ -167,12 +217,12 @@ jobs:
           case "$BRANCH" in
             main)
               TAG_PREFIX="main-release"
-              IS_DRAFT="true"
+              IS_DRAFT="false"
               IS_PRERELEASE="false"
               ;;
             dev)
               TAG_PREFIX="dev-prerelease"
-              IS_DRAFT="false"
+              IS_DRAFT="true"
               IS_PRERELEASE="true"
               ;;
             *)
@@ -184,7 +234,6 @@ jobs:
           RELEASE_DATE="$(date -u +%Y%m%d)"
           BASE_TAG="${TAG_PREFIX}-${RELEASE_DATE}"
 
-          # 同日再実行で衝突する場合は連番 suffix を付与
           TAG="$BASE_TAG"
           if gh release view "$TAG" >/dev/null 2>&1; then
             found="false"
@@ -207,14 +256,16 @@ jobs:
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "is_draft=$IS_DRAFT" >> "$GITHUB_OUTPUT"
           echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "tag_prefix=$TAG_PREFIX" >> "$GITHUB_OUTPUT"
 
       - name: Create draft prerelease and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          TARGET_SHA: ${{ steps.source_meta.outputs.target_sha }}
         shell: bash
         run: |
+          set -euo pipefail
           ls -la artifacts
           RELEASE_DATE="$(date -u +%Y-%m-%d)"
           TITLE_PREFIX="Release"
@@ -238,3 +289,33 @@ jobs:
             $DRAFT_FLAG \
             $PRERELEASE_FLAG \
             --generate-notes
+
+      - name: Delete stale draft releases
+        if: ${{ steps.draft_release.outputs.is_draft == 'true' && steps.draft_release.outputs.is_prerelease == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CURRENT_TAG: ${{ steps.draft_release.outputs.tag }}
+          TAG_PREFIX: ${{ steps.draft_release.outputs.tag_prefix }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          stale_tags="$(gh api "repos/${GH_REPO}/releases?per_page=100" | jq -r --arg current "$CURRENT_TAG" --arg prefix "${TAG_PREFIX}-" '
+            .[]
+            | select(.draft == true)
+            | select(.tag_name != $current)
+            | select(.tag_name | startswith($prefix))
+            | .tag_name
+          ')"
+
+          if [ -z "$stale_tags" ]; then
+            echo "No stale draft releases to delete."
+            exit 0
+          fi
+
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            echo "Deleting stale draft: $tag"
+            gh release delete "$tag" --cleanup-tag --yes
+          done <<< "$stale_tags"

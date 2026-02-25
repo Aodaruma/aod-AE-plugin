@@ -5,14 +5,14 @@ TargetDir := env_var_or_default("CARGO_TARGET_DIR", WorkspaceRoot + "/target")
 
 [windows]
 build:
-    cargo build -p {{CrateName}}
+    if (-not $env:NO_CARGO_BUILD) { cargo build -p {{CrateName}} }
     if (-not $env:NO_INSTALL) { \
         Start-Process PowerShell -Verb runAs -ArgumentList "-command Set-Location '{{source_directory()}}'; Copy-Item -Force '{{TargetDir}}\debug\{{BinaryName}}.dll' 'C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore\{{PluginName}}.aex'" \
     }
 
 [windows]
 release:
-    cargo build -p {{CrateName}} --release
+    if (-not $env:NO_CARGO_BUILD) { cargo build -p {{CrateName}} --release }
     Copy-Item -Force '{{TargetDir}}\release\{{BinaryName}}.dll' '{{TargetDir}}\release\{{PluginName}}.aex'
     if (-not $env:NO_INSTALL) { \
         Start-Process PowerShell -Verb runAs -ArgumentList "-command Set-Location '{{source_directory()}}'; Copy-Item -Force '{{TargetDir}}\release\{{BinaryName}}.dll' 'C:\Program Files\Adobe\Common\Plug-ins\7.0\MediaCore\{{PluginName}}.aex'" \
@@ -20,12 +20,12 @@ release:
 
 [macos]
 build:
-    cargo build -p {{CrateName}}
+    if [ -z "${NO_CARGO_BUILD:-}" ]; then cargo build -p {{CrateName}}; fi
     just -f {{justfile()}} create_bundle debug {{TargetDir}}
 
 [macos]
 release:
-    cargo build -p {{CrateName}} --release
+    if [ -z "${NO_CARGO_BUILD:-}" ]; then cargo build -p {{CrateName}} --release; fi
     just -f {{justfile()}} create_bundle release {{TargetDir}}
 
 [macos]
@@ -40,12 +40,14 @@ create_bundle profile TargetDir:
     mkdir -p {{TargetDir}}/{{profile}}/{{PluginName}}.plugin/Contents/MacOS
 
     if [ "{{profile}}" == "release" ]; then
-        # Build universal binary
-        rustup target add aarch64-apple-darwin
-        rustup target add x86_64-apple-darwin
+        if [ -z "${NO_CARGO_BUILD:-}" ]; then
+            # Build universal binary
+            rustup target add aarch64-apple-darwin
+            rustup target add x86_64-apple-darwin
 
-        cargo build -p {{CrateName}} --release --target x86_64-apple-darwin
-        cargo build -p {{CrateName}} --release --target aarch64-apple-darwin
+            cargo build -p {{CrateName}} --release --target x86_64-apple-darwin
+            cargo build -p {{CrateName}} --release --target aarch64-apple-darwin
+        fi
 
         cp {{TargetDir}}/x86_64-apple-darwin/release/{{BinaryName}}.rsrc {{TargetDir}}/{{profile}}/{{PluginName}}.plugin/Contents/Resources/{{PluginName}}.rsrc
         cp {{TargetDir}}/x86_64-apple-darwin/release/{{BinaryName}}_PkgInfo {{TargetDir}}/{{profile}}/{{PluginName}}.plugin/Contents/PkgInfo
