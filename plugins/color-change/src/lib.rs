@@ -7,12 +7,15 @@ use std::env;
 use utils::ToPixel;
 
 const MAX_PAIRS: usize = 32;
+const MIN_PAIRS: usize = 1;
 const DEFAULT_PAIRS: usize = 1;
 seq!(N in 1..=32 {
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 enum Params {
     Tolerrance,
     PairCount,
+    AddColor,
+    RemoveColor,
     #(
         ColorFrom~N,
         ColorTo~N,
@@ -72,6 +75,22 @@ impl AdobePluginGlobal for Plugin {
                 | ae::ParamFlag::CANNOT_TIME_VARY
                 | ae::ParamFlag::CANNOT_INTERP,
             ae::ParamUIFlags::empty(),
+        )?;
+
+        params.add(
+            Params::AddColor,
+            "Add Color",
+            ae::pf::ButtonDef::setup(|d| {
+                d.set_label("Add");
+            }),
+        )?;
+
+        params.add(
+            Params::RemoveColor,
+            "Remove Color",
+            ae::pf::ButtonDef::setup(|d| {
+                d.set_label("Remove");
+            }),
         )?;
 
         seq!(N in 1..=32 {
@@ -172,15 +191,12 @@ impl AdobePluginGlobal for Plugin {
             }
 
             ae::Command::UserChangedParam { param_index } => {
-                if params.type_at(param_index) == Params::PairCount {
-                    out_data.set_out_flag(OutFlags::RefreshUi, true);
-                }
+                self.handle_user_changed_param(param_index, params, &mut out_data)?;
             }
 
             ae::Command::UpdateParamsUi => {
-                let current_pairs = Self::pair_count(params);
                 let mut params_copy = params.cloned();
-                self.set_color_pairs(in_data, &mut params_copy, current_pairs)?;
+                self.update_params_ui(in_data, &mut params_copy)?;
             }
 
             _ => {}
@@ -197,7 +213,56 @@ impl Plugin {
             .and_then(|p| p.as_float_slider().ok().map(|s| s.value()))
             .map(|v| v.round() as usize)
             .unwrap_or(DEFAULT_PAIRS)
-            .clamp(DEFAULT_PAIRS, MAX_PAIRS)
+            .clamp(MIN_PAIRS, MAX_PAIRS)
+    }
+
+    fn set_pair_count(params: &mut ae::Parameters<Params>, count: usize) -> Result<(), Error> {
+        let clamped = count.clamp(MIN_PAIRS, MAX_PAIRS);
+        let mut pair_count = params.get_mut(Params::PairCount)?;
+        pair_count.as_float_slider_mut()?.set_value(clamped as f64);
+        pair_count.update_param_ui()?;
+        Ok(())
+    }
+
+    fn handle_user_changed_param(
+        &self,
+        param_index: usize,
+        params: &mut ae::Parameters<Params>,
+        out_data: &mut OutData,
+    ) -> Result<(), Error> {
+        let changed = params.type_at(param_index);
+        if changed != Params::PairCount
+            && changed != Params::AddColor
+            && changed != Params::RemoveColor
+        {
+            return Ok(());
+        }
+
+        if changed == Params::AddColor || changed == Params::RemoveColor {
+            let current = Self::pair_count(params);
+            let next = match changed {
+                Params::AddColor => current.saturating_add(1),
+                Params::RemoveColor => current.saturating_sub(1),
+                _ => current,
+            }
+            .clamp(MIN_PAIRS, MAX_PAIRS);
+            Self::set_pair_count(params, next)?;
+        }
+
+        out_data.set_out_flag(OutFlags::RefreshUi, true);
+        Ok(())
+    }
+
+    fn update_params_ui(
+        &self,
+        in_data: InData,
+        params: &mut Parameters<Params>,
+    ) -> Result<(), Error> {
+        let current_pairs = Self::pair_count(params);
+        self.set_color_pairs(in_data, params, current_pairs)?;
+        Self::set_param_enabled(params, Params::AddColor, current_pairs < MAX_PAIRS)?;
+        Self::set_param_enabled(params, Params::RemoveColor, current_pairs > MIN_PAIRS)?;
+        Ok(())
     }
 
     fn set_color_pairs(
@@ -206,7 +271,7 @@ impl Plugin {
         params: &mut ae::Parameters<Params>,
         pairs: usize,
     ) -> Result<(), Error> {
-        let pairs = pairs.clamp(DEFAULT_PAIRS, MAX_PAIRS);
+        let pairs = pairs.clamp(MIN_PAIRS, MAX_PAIRS);
 
         // Show/hide pairs.
         for idx in 0..MAX_PAIRS {
@@ -216,6 +281,14 @@ impl Plugin {
         }
 
         Ok(())
+    }
+
+    fn set_param_enabled(
+        params: &mut ae::Parameters<Params>,
+        id: Params,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::DISABLED, !enabled)
     }
 
     fn set_param_visible(
@@ -272,64 +345,90 @@ impl Plugin {
         mut out_layer: Layer,
         params: &mut Parameters<Params>,
     ) -> Result<(), Error> {
+        if out_layer.width() == 0 || out_layer.height() == 0 {
+            return Ok(());
+        }
+
         let progress_final = out_layer.height() as i32;
-        // let width = in_layer.width() as usize;
-        // let height = in_layer.height() as usize;
-        // let frame_num = in_data.current_frame() as usize;
-
-        // Process here
         let tolerance = params.get(Params::Tolerrance)?.as_float_slider()?.value() as f32;
+        let tolerance_sq = tolerance * tolerance;
         let active_pairs = Self::pair_count(params);
-
+        let mut color_pairs = Vec::with_capacity(active_pairs);
         for i in 0..active_pairs {
             let color_from = params
                 .get(COLOR_FROM_PARAMS[i])?
                 .as_color()?
                 .value()
                 .to_pixel32();
-            let color_to = params.get(COLOR_TO_PARAMS[i])?.as_color()?.value();
+            let color_to = params
+                .get(COLOR_TO_PARAMS[i])?
+                .as_color()?
+                .value()
+                .to_pixel32();
+            color_pairs.push((color_from, color_to));
+        }
 
-            in_layer.iterate_with(&mut out_layer, 0, progress_final, None, |_x, _y, ip, op| {
-                let ip = ip.as_f32();
-                // let alpha = ip.alpha;
+        in_layer.iterate_with(
+            &mut out_layer,
+            0,
+            progress_final,
+            None,
+            |_x, _y, ip, mut op| {
+                let src = read_input_pixel(ip);
+                let mut out = src;
 
-                let dr = ip.red - color_from.red;
-                let dg = ip.green - color_from.green;
-                let db = ip.blue - color_from.blue;
-                let dist = (dr * dr + dg * dg + db * db).sqrt();
-                if dist < tolerance {
-                    match op {
-                        GenericPixelMut::Pixel8(p) => {
-                            let to_color = color_to.to_pixel8();
-                            p.red = to_color.red;
-                            p.green = to_color.green;
-                            p.blue = to_color.blue;
-                        }
-                        GenericPixelMut::Pixel16(p) => {
-                            let to_color = color_to.to_pixel16();
-                            p.red = to_color.red;
-                            p.green = to_color.green;
-                            p.blue = to_color.blue;
-                        }
-                        GenericPixelMut::PixelF32(p) => {
-                            let to_color = color_to.to_pixel32();
-                            p.red = to_color.red;
-                            p.green = to_color.green;
-                            p.blue = to_color.blue;
-                        }
-                        GenericPixelMut::PixelF64(p) => {
-                            let to_color = color_to.to_pixel32();
-                            p.redF = to_color.red as _;
-                            p.greenF = to_color.green as _;
-                            p.blueF = to_color.blue as _;
-                        }
+                for (color_from, color_to) in &color_pairs {
+                    let dr = src.red - color_from.red;
+                    let dg = src.green - color_from.green;
+                    let db = src.blue - color_from.blue;
+                    let dist_sq = dr * dr + dg * dg + db * db;
+                    if dist_sq < tolerance_sq {
+                        out.red = color_to.red;
+                        out.green = color_to.green;
+                        out.blue = color_to.blue;
                     }
                 }
 
+                write_output_pixel(&mut op, out);
+
                 Ok(())
-            })?;
-        }
+            },
+        )?;
 
         Ok(())
+    }
+}
+
+fn read_input_pixel(src: GenericPixel<'_>) -> PixelF32 {
+    match src {
+        GenericPixel::Pixel8(p) => p.to_pixel32(),
+        GenericPixel::Pixel16(p) => p.to_pixel32(),
+        GenericPixel::PixelF32(p) => *p,
+        GenericPixel::PixelF64(p) => PixelF32 {
+            alpha: p.alphaF as f32,
+            red: p.redF as f32,
+            green: p.greenF as f32,
+            blue: p.blueF as f32,
+        },
+    }
+}
+
+fn write_output_pixel(dst: &mut GenericPixelMut<'_>, px: PixelF32) {
+    match dst {
+        GenericPixelMut::Pixel8(p) => {
+            **p = px.to_pixel8();
+        }
+        GenericPixelMut::Pixel16(p) => {
+            **p = px.to_pixel16();
+        }
+        GenericPixelMut::PixelF32(p) => {
+            **p = px;
+        }
+        GenericPixelMut::PixelF64(p) => {
+            p.alphaF = px.alpha as _;
+            p.redF = px.red as _;
+            p.greenF = px.green as _;
+            p.blueF = px.blue as _;
+        }
     }
 }
