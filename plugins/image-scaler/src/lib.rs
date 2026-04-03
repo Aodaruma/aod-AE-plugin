@@ -4,16 +4,23 @@ use after_effects as ae;
 use std::env;
 
 use ae::pf::*;
+use palette::hues::{OklabHue, RgbHue};
+use palette::{FromColor, Hsl, Hsv, Lab, LinSrgb, Oklab, Oklch, Srgb};
 use utils::ToPixel;
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 enum Params {
-    ScalePercent,
-    UseReciprocal,
-    Interpolation,
     ScaleMode,
+    UseReciprocal,
+    ScalePercent,
     ScaleExp,
     ScalePower2,
+    Interpolation,
+    InterpolationColorSpace,
+    MitchellB,
+    MitchellC,
+    LanczosLobes,
+    EqaRadius,
 }
 
 #[derive(Default)]
@@ -27,6 +34,15 @@ const PLUGIN_DESCRIPTION: &str =
     "Scales layers with selectable interpolation modes and optional reciprocal scaling.";
 const MIN_SCALE_FACTOR: f32 = 0.001;
 const MAX_SCALE_FACTOR: f32 = 1_000_000.0;
+const OKLAB_AB_MAX: f32 = 0.5;
+const OKLCH_CHROMA_MAX: f32 = 0.4;
+const LAB_L_MAX: f32 = 100.0;
+const LAB_AB_MAX: f32 = 128.0;
+const YIQ_I_MAX: f32 = 0.5957;
+const YIQ_Q_MAX: f32 = 0.5226;
+const YUV_U_MAX: f32 = 0.436;
+const YUV_V_MAX: f32 = 0.615;
+const YCBCR_MAX: f32 = 255.0;
 
 #[derive(Clone, Copy, Debug)]
 enum ScaleMode {
@@ -51,7 +67,8 @@ enum InterpolationMode {
     Bilinear,
     Bicubic,
     Mitchell,
-    Lanczos3,
+    Lanczos,
+    EqaQuadratic,
 }
 
 impl InterpolationMode {
@@ -61,8 +78,42 @@ impl InterpolationMode {
             2 => Self::Bilinear,
             3 => Self::Bicubic,
             4 => Self::Mitchell,
-            5 => Self::Lanczos3,
+            5 => Self::Lanczos,
+            6 => Self::EqaQuadratic,
             _ => Self::Bilinear,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum InterpolationColorSpace {
+    LinearRgba,
+    Srgb,
+    Oklab,
+    Oklch,
+    Lab,
+    Yiq,
+    Yuv,
+    YCbCr,
+    Hsl,
+    Hsv,
+    Cmyk,
+}
+
+impl InterpolationColorSpace {
+    fn from_popup_value(value: i32) -> Self {
+        match value {
+            2 => Self::Srgb,
+            3 => Self::Oklab,
+            4 => Self::Oklch,
+            5 => Self::Lab,
+            6 => Self::Yiq,
+            7 => Self::Yuv,
+            8 => Self::YCbCr,
+            9 => Self::Hsl,
+            10 => Self::Hsv,
+            11 => Self::Cmyk,
+            _ => Self::LinearRgba,
         }
     }
 }
@@ -71,6 +122,80 @@ impl InterpolationMode {
 struct Settings {
     scale: f32,
     interpolation: InterpolationMode,
+    color_space: InterpolationColorSpace,
+    mitchell_b: f32,
+    mitchell_c: f32,
+    lanczos_lobes: f32,
+    eqa_radius: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct WorkingAccumulator {
+    sum: [f32; 4],
+    alpha_sum: f32,
+    weight_sum: f32,
+    hue_cos_sum: f32,
+    hue_sin_sum: f32,
+}
+
+impl WorkingAccumulator {
+    fn add_sample(&mut self, px: PixelF32, weight: f32, color_space: InterpolationColorSpace) {
+        if weight == 0.0 || !weight.is_finite() {
+            return;
+        }
+
+        let encoded =
+            convert_linear_to_working_pixel(color_space, [px.red, px.green, px.blue, px.alpha]);
+        self.sum[0] += encoded[0] * weight;
+        self.sum[1] += encoded[1] * weight;
+        self.sum[2] += encoded[2] * weight;
+        self.sum[3] += encoded[3] * weight;
+        self.alpha_sum += px.alpha * weight;
+        self.weight_sum += weight;
+
+        if is_hue_space(color_space) {
+            let angle = wrap01(encoded[0]) * std::f32::consts::TAU;
+            self.hue_cos_sum += angle.cos() * weight;
+            self.hue_sin_sum += angle.sin() * weight;
+        }
+    }
+
+    fn finish(self, color_space: InterpolationColorSpace, normalize: bool) -> PixelF32 {
+        if self.weight_sum.abs() <= 1.0e-8 {
+            return transparent_pixel();
+        }
+
+        let scale = if normalize {
+            1.0 / self.weight_sum
+        } else {
+            1.0
+        };
+        let mut working = [
+            self.sum[0] * scale,
+            self.sum[1] * scale,
+            self.sum[2] * scale,
+            self.sum[3] * scale,
+        ];
+        let alpha = clamp01(self.alpha_sum * scale);
+
+        if is_hue_space(color_space)
+            && (self.hue_cos_sum.abs() > 1.0e-8 || self.hue_sin_sum.abs() > 1.0e-8)
+        {
+            working[0] = wrap01(self.hue_sin_sum.atan2(self.hue_cos_sum) / std::f32::consts::TAU);
+        }
+
+        if !matches!(color_space, InterpolationColorSpace::Cmyk) {
+            working[3] = alpha;
+        }
+
+        let linear = convert_working_to_linear_pixel(color_space, working, alpha);
+        PixelF32 {
+            alpha,
+            red: clamp01(linear[0]),
+            green: clamp01(linear[1]),
+            blue: clamp01(linear[2]),
+        }
+    }
 }
 
 impl AdobePluginGlobal for Plugin {
@@ -80,17 +205,15 @@ impl AdobePluginGlobal for Plugin {
         _in_data: InData,
         _: OutData,
     ) -> Result<(), Error> {
-        params.add(
-            Params::ScalePercent,
-            "Scale (%)",
-            FloatSliderDef::setup(|d| {
-                d.set_valid_min(0.1);
-                d.set_valid_max(20000.0);
-                d.set_slider_min(1.0);
-                d.set_slider_max(20000.0);
-                d.set_default(100.0);
-                d.set_precision(2);
+        params.add_with_flags(
+            Params::ScaleMode,
+            "Scale Mode",
+            PopupDef::setup(|d| {
+                d.set_options(&["Linear", "Exp", "Power2"]);
+                d.set_default(1);
             }),
+            ae::ParamFlag::SUPERVISE,
+            ae::ParamUIFlags::empty(),
         )?;
 
         params.add_with_flags(
@@ -104,23 +227,16 @@ impl AdobePluginGlobal for Plugin {
         )?;
 
         params.add(
-            Params::Interpolation,
-            "Interpolation",
-            PopupDef::setup(|d| {
-                d.set_options(&["Nearest", "Bilinear", "Bicubic", "Mitchell", "Lanczos3"]);
-                d.set_default(2);
+            Params::ScalePercent,
+            "Scale (%)",
+            FloatSliderDef::setup(|d| {
+                d.set_valid_min(0.1);
+                d.set_valid_max(20000.0);
+                d.set_slider_min(1.0);
+                d.set_slider_max(20000.0);
+                d.set_default(100.0);
+                d.set_precision(2);
             }),
-        )?;
-
-        params.add_with_flags(
-            Params::ScaleMode,
-            "Scale Mode",
-            PopupDef::setup(|d| {
-                d.set_options(&["Linear", "Exp", "Power2"]);
-                d.set_default(1);
-            }),
-            ae::ParamFlag::SUPERVISE,
-            ae::ParamUIFlags::empty(),
         )?;
 
         params.add_with_flags(
@@ -147,6 +263,105 @@ impl AdobePluginGlobal for Plugin {
                 d.set_slider_min(1.0);
                 d.set_slider_max(20000.0);
                 d.set_default(100.0);
+                d.set_precision(2);
+            }),
+            ae::ParamFlag::empty(),
+            ae::ParamUIFlags::INVISIBLE,
+        )?;
+
+        params.add_with_flags(
+            Params::Interpolation,
+            "Interpolation",
+            PopupDef::setup(|d| {
+                d.set_options(&[
+                    "Nearest",
+                    "Bilinear",
+                    "Bicubic",
+                    "Mitchell",
+                    "Lanczos",
+                    "EQA Quadratic",
+                ]);
+                d.set_default(2);
+            }),
+            ae::ParamFlag::SUPERVISE,
+            ae::ParamUIFlags::empty(),
+        )?;
+
+        params.add(
+            Params::InterpolationColorSpace,
+            "Interpolation Color Space",
+            PopupDef::setup(|d| {
+                d.set_options(&[
+                    "Linear RGBA",
+                    "sRGB",
+                    "OKLAB",
+                    "OKLCH",
+                    "LAB",
+                    "YIQ",
+                    "YUV",
+                    "YCbCr",
+                    "HSL",
+                    "HSV",
+                    "CMYK",
+                ]);
+                d.set_default(1);
+            }),
+        )?;
+
+        params.add_with_flags(
+            Params::MitchellB,
+            "Mitchell B",
+            FloatSliderDef::setup(|d| {
+                d.set_valid_min(0.0);
+                d.set_valid_max(1.0);
+                d.set_slider_min(0.0);
+                d.set_slider_max(1.0);
+                d.set_default(1.0 / 3.0);
+                d.set_precision(3);
+            }),
+            ae::ParamFlag::empty(),
+            ae::ParamUIFlags::INVISIBLE,
+        )?;
+
+        params.add_with_flags(
+            Params::MitchellC,
+            "Mitchell C",
+            FloatSliderDef::setup(|d| {
+                d.set_valid_min(0.0);
+                d.set_valid_max(1.0);
+                d.set_slider_min(0.0);
+                d.set_slider_max(1.0);
+                d.set_default(1.0 / 3.0);
+                d.set_precision(3);
+            }),
+            ae::ParamFlag::empty(),
+            ae::ParamUIFlags::INVISIBLE,
+        )?;
+
+        params.add_with_flags(
+            Params::LanczosLobes,
+            "Lanczos Lobes",
+            FloatSliderDef::setup(|d| {
+                d.set_valid_min(1.0);
+                d.set_valid_max(8.0);
+                d.set_slider_min(1.0);
+                d.set_slider_max(6.0);
+                d.set_default(3.0);
+                d.set_precision(2);
+            }),
+            ae::ParamFlag::empty(),
+            ae::ParamUIFlags::INVISIBLE,
+        )?;
+
+        params.add_with_flags(
+            Params::EqaRadius,
+            "EQA Radius",
+            FloatSliderDef::setup(|d| {
+                d.set_valid_min(0.5);
+                d.set_valid_max(8.0);
+                d.set_slider_min(0.5);
+                d.set_slider_max(4.0);
+                d.set_default(2.0);
                 d.set_precision(2);
             }),
             ae::ParamFlag::empty(),
@@ -219,7 +434,10 @@ impl AdobePluginGlobal for Plugin {
             }
             ae::Command::UserChangedParam { param_index } => {
                 let t = params.type_at(param_index);
-                if t == Params::ScaleMode || t == Params::UseReciprocal {
+                if t == Params::ScaleMode
+                    || t == Params::UseReciprocal
+                    || t == Params::Interpolation
+                {
                     out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
             }
@@ -242,6 +460,9 @@ impl Plugin {
         let scale_mode =
             ScaleMode::from_popup_value(params.get(Params::ScaleMode)?.as_popup()?.value());
         let use_reciprocal = params.get(Params::UseReciprocal)?.as_checkbox()?.value();
+        let interpolation = InterpolationMode::from_popup_value(
+            params.get(Params::Interpolation)?.as_popup()?.value(),
+        );
 
         self.set_param_visible(
             in_data,
@@ -260,6 +481,30 @@ impl Plugin {
             params,
             Params::ScalePower2,
             matches!(scale_mode, ScaleMode::Power2),
+        )?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::MitchellB,
+            matches!(interpolation, InterpolationMode::Mitchell),
+        )?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::MitchellC,
+            matches!(interpolation, InterpolationMode::Mitchell),
+        )?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::LanczosLobes,
+            matches!(interpolation, InterpolationMode::Lanczos),
+        )?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::EqaRadius,
+            matches!(interpolation, InterpolationMode::EqaQuadratic),
         )?;
 
         let exp_name = if use_reciprocal {
@@ -357,8 +602,7 @@ impl Plugin {
         out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
             let src_x = (x as f32 - center_x) / settings.scale + center_x;
             let src_y = (y as f32 - center_y) / settings.scale + center_y;
-            let sampled =
-                sample_pixel(&source, width, height, src_x, src_y, settings.interpolation);
+            let sampled = sample_pixel(&source, width, height, src_x, src_y, &settings);
             write_output_pixel(&mut dst, sampled);
             Ok(())
         })?;
@@ -410,12 +654,31 @@ fn read_settings(params: &mut Parameters<Params>) -> Result<Settings, Error> {
     }
     .clamp(MIN_SCALE_FACTOR, MAX_SCALE_FACTOR);
 
-    let interpolation_value = params.get(Params::Interpolation)?.as_popup()?.value();
-    let interpolation = InterpolationMode::from_popup_value(interpolation_value);
+    let interpolation =
+        InterpolationMode::from_popup_value(params.get(Params::Interpolation)?.as_popup()?.value());
+    let color_space = InterpolationColorSpace::from_popup_value(
+        params
+            .get(Params::InterpolationColorSpace)?
+            .as_popup()?
+            .value(),
+    );
+    let mitchell_b =
+        (params.get(Params::MitchellB)?.as_float_slider()?.value() as f32).clamp(0.0, 1.0);
+    let mitchell_c =
+        (params.get(Params::MitchellC)?.as_float_slider()?.value() as f32).clamp(0.0, 1.0);
+    let lanczos_lobes =
+        (params.get(Params::LanczosLobes)?.as_float_slider()?.value() as f32).clamp(1.0, 8.0);
+    let eqa_radius =
+        (params.get(Params::EqaRadius)?.as_float_slider()?.value() as f32).clamp(0.5, 8.0);
 
     Ok(Settings {
         scale,
         interpolation,
+        color_space,
+        mitchell_b,
+        mitchell_c,
+        lanczos_lobes,
+        eqa_radius,
     })
 }
 
@@ -445,14 +708,44 @@ fn sample_pixel(
     height: usize,
     x: f32,
     y: f32,
-    mode: InterpolationMode,
+    settings: &Settings,
 ) -> PixelF32 {
-    match mode {
+    match settings.interpolation {
         InterpolationMode::Nearest => sample_nearest(src, width, height, x, y),
-        InterpolationMode::Bilinear => sample_bilinear(src, width, height, x, y),
-        InterpolationMode::Bicubic => sample_bicubic(src, width, height, x, y),
-        InterpolationMode::Mitchell => sample_mitchell(src, width, height, x, y),
-        InterpolationMode::Lanczos3 => sample_lanczos3(src, width, height, x, y),
+        InterpolationMode::Bilinear => {
+            sample_bilinear(src, width, height, x, y, settings.color_space)
+        }
+        InterpolationMode::Bicubic => {
+            sample_bicubic(src, width, height, x, y, settings.color_space)
+        }
+        InterpolationMode::Mitchell => sample_mitchell(
+            src,
+            width,
+            height,
+            x,
+            y,
+            settings.color_space,
+            settings.mitchell_b,
+            settings.mitchell_c,
+        ),
+        InterpolationMode::Lanczos => sample_lanczos(
+            src,
+            width,
+            height,
+            x,
+            y,
+            settings.color_space,
+            settings.lanczos_lobes,
+        ),
+        InterpolationMode::EqaQuadratic => sample_eqa_quadratic(
+            src,
+            width,
+            height,
+            x,
+            y,
+            settings.color_space,
+            settings.eqa_radius,
+        ),
     }
 }
 
@@ -462,7 +755,14 @@ fn sample_nearest(src: &[PixelF32], width: usize, height: usize, x: f32, y: f32)
     fetch_or_transparent(src, width, height, nx, ny)
 }
 
-fn sample_bilinear(src: &[PixelF32], width: usize, height: usize, x: f32, y: f32) -> PixelF32 {
+fn sample_bilinear(
+    src: &[PixelF32],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    color_space: InterpolationColorSpace,
+) -> PixelF32 {
     let x0 = x.floor() as isize;
     let y0 = y.floor() as isize;
     let x1 = x0 + 1;
@@ -476,142 +776,134 @@ fn sample_bilinear(src: &[PixelF32], width: usize, height: usize, x: f32, y: f32
     let p01 = fetch_or_transparent(src, width, height, x0, y1);
     let p11 = fetch_or_transparent(src, width, height, x1, y1);
 
-    let row0 = lerp_pixel(p00, p10, tx);
-    let row1 = lerp_pixel(p01, p11, tx);
-    lerp_pixel(row0, row1, ty)
+    let mut acc = WorkingAccumulator::default();
+    acc.add_sample(p00, (1.0 - tx) * (1.0 - ty), color_space);
+    acc.add_sample(p10, tx * (1.0 - ty), color_space);
+    acc.add_sample(p01, (1.0 - tx) * ty, color_space);
+    acc.add_sample(p11, tx * ty, color_space);
+    acc.finish(color_space, false)
 }
 
-fn sample_bicubic(src: &[PixelF32], width: usize, height: usize, x: f32, y: f32) -> PixelF32 {
-    let x_base = x.floor() as isize;
-    let y_base = y.floor() as isize;
+fn sample_bicubic(
+    src: &[PixelF32],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    color_space: InterpolationColorSpace,
+) -> PixelF32 {
+    sample_separable(src, width, height, x, y, color_space, 2.0, false, |d| {
+        cubic_weight(d, -0.5)
+    })
+}
 
-    let mut acc = PixelF32 {
-        alpha: 0.0,
-        red: 0.0,
-        green: 0.0,
-        blue: 0.0,
-    };
+fn sample_mitchell(
+    src: &[PixelF32],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    color_space: InterpolationColorSpace,
+    b: f32,
+    c: f32,
+) -> PixelF32 {
+    sample_separable(src, width, height, x, y, color_space, 2.0, false, |d| {
+        mitchell_weight(d, b, c)
+    })
+}
 
-    for my in -1..=2 {
-        let sy = y_base + my;
-        let wy = cubic_weight(y - sy as f32);
+fn sample_lanczos(
+    src: &[PixelF32],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    color_space: InterpolationColorSpace,
+    lobes: f32,
+) -> PixelF32 {
+    let lobes = lobes.max(1.0);
+    sample_separable(src, width, height, x, y, color_space, lobes, false, |d| {
+        lanczos_weight(d, lobes)
+    })
+}
+
+fn sample_eqa_quadratic(
+    src: &[PixelF32],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    color_space: InterpolationColorSpace,
+    radius: f32,
+) -> PixelF32 {
+    let radius = radius.max(0.5);
+    let radius_sq = radius * radius;
+    let min_y = (y - radius).floor() as isize;
+    let max_y = (y + radius).ceil() as isize;
+    let min_x = (x - radius).floor() as isize;
+    let max_x = (x + radius).ceil() as isize;
+
+    let mut acc = WorkingAccumulator::default();
+    for sy in min_y..=max_y {
+        let dy = y - sy as f32;
+        for sx in min_x..=max_x {
+            let dx = x - sx as f32;
+            let t = (dx * dx + dy * dy) / radius_sq;
+            if t >= 1.0 {
+                continue;
+            }
+
+            let w = (1.0 - t) * (1.0 - t);
+            let p = fetch_or_transparent(src, width, height, sx, sy);
+            acc.add_sample(p, w, color_space);
+        }
+    }
+
+    acc.finish(color_space, true)
+}
+
+fn sample_separable<F>(
+    src: &[PixelF32],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    color_space: InterpolationColorSpace,
+    radius: f32,
+    normalize: bool,
+    mut weight_fn: F,
+) -> PixelF32
+where
+    F: FnMut(f32) -> f32,
+{
+    let radius = radius.max(0.5);
+    let min_y = (y - radius).floor() as isize;
+    let max_y = (y + radius).ceil() as isize;
+    let min_x = (x - radius).floor() as isize;
+    let max_x = (x + radius).ceil() as isize;
+
+    let mut acc = WorkingAccumulator::default();
+    for sy in min_y..=max_y {
+        let wy = weight_fn(y - sy as f32);
         if wy == 0.0 {
             continue;
         }
 
-        for mx in -1..=2 {
-            let sx = x_base + mx;
-            let wx = cubic_weight(x - sx as f32);
+        for sx in min_x..=max_x {
+            let wx = weight_fn(x - sx as f32);
             if wx == 0.0 {
                 continue;
             }
 
-            let w = wx * wy;
             let p = fetch_or_transparent(src, width, height, sx, sy);
-
-            acc.alpha += p.alpha * w;
-            acc.red += p.red * w;
-            acc.green += p.green * w;
-            acc.blue += p.blue * w;
+            acc.add_sample(p, wx * wy, color_space);
         }
     }
 
-    PixelF32 {
-        alpha: clamp01(acc.alpha),
-        red: clamp01(acc.red),
-        green: clamp01(acc.green),
-        blue: clamp01(acc.blue),
-    }
+    acc.finish(color_space, normalize)
 }
 
-fn sample_mitchell(src: &[PixelF32], width: usize, height: usize, x: f32, y: f32) -> PixelF32 {
-    let x_base = x.floor() as isize;
-    let y_base = y.floor() as isize;
-
-    let mut acc = PixelF32 {
-        alpha: 0.0,
-        red: 0.0,
-        green: 0.0,
-        blue: 0.0,
-    };
-
-    for my in -1..=2 {
-        let sy = y_base + my;
-        let wy = mitchell_weight(y - sy as f32);
-        if wy == 0.0 {
-            continue;
-        }
-
-        for mx in -1..=2 {
-            let sx = x_base + mx;
-            let wx = mitchell_weight(x - sx as f32);
-            if wx == 0.0 {
-                continue;
-            }
-
-            let w = wx * wy;
-            let p = fetch_or_transparent(src, width, height, sx, sy);
-
-            acc.alpha += p.alpha * w;
-            acc.red += p.red * w;
-            acc.green += p.green * w;
-            acc.blue += p.blue * w;
-        }
-    }
-
-    PixelF32 {
-        alpha: clamp01(acc.alpha),
-        red: clamp01(acc.red),
-        green: clamp01(acc.green),
-        blue: clamp01(acc.blue),
-    }
-}
-
-fn sample_lanczos3(src: &[PixelF32], width: usize, height: usize, x: f32, y: f32) -> PixelF32 {
-    let x_base = x.floor() as isize;
-    let y_base = y.floor() as isize;
-
-    let mut acc = PixelF32 {
-        alpha: 0.0,
-        red: 0.0,
-        green: 0.0,
-        blue: 0.0,
-    };
-
-    for my in -2..=3 {
-        let sy = y_base + my;
-        let wy = lanczos_weight(y - sy as f32, 3.0);
-        if wy == 0.0 {
-            continue;
-        }
-
-        for mx in -2..=3 {
-            let sx = x_base + mx;
-            let wx = lanczos_weight(x - sx as f32, 3.0);
-            if wx == 0.0 {
-                continue;
-            }
-
-            let w = wx * wy;
-            let p = fetch_or_transparent(src, width, height, sx, sy);
-
-            acc.alpha += p.alpha * w;
-            acc.red += p.red * w;
-            acc.green += p.green * w;
-            acc.blue += p.blue * w;
-        }
-    }
-
-    PixelF32 {
-        alpha: clamp01(acc.alpha),
-        red: clamp01(acc.red),
-        green: clamp01(acc.green),
-        blue: clamp01(acc.blue),
-    }
-}
-
-fn cubic_weight(d: f32) -> f32 {
-    let a = -0.5;
+fn cubic_weight(d: f32, a: f32) -> f32 {
     let x = d.abs();
     if x <= 1.0 {
         (a + 2.0) * x * x * x - (a + 3.0) * x * x + 1.0
@@ -622,9 +914,7 @@ fn cubic_weight(d: f32) -> f32 {
     }
 }
 
-fn mitchell_weight(d: f32) -> f32 {
-    let b = 1.0 / 3.0;
-    let c = 1.0 / 3.0;
+fn mitchell_weight(d: f32, b: f32, c: f32) -> f32 {
     let x = d.abs();
 
     if x < 1.0 {
@@ -644,7 +934,7 @@ fn mitchell_weight(d: f32) -> f32 {
 }
 
 fn sinc(x: f32) -> f32 {
-    if x.abs() < 1e-6 {
+    if x.abs() < 1.0e-6 {
         1.0
     } else {
         let pix = std::f32::consts::PI * x;
@@ -679,17 +969,265 @@ fn transparent_pixel() -> PixelF32 {
     }
 }
 
-fn lerp(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
+fn is_hue_space(space: InterpolationColorSpace) -> bool {
+    matches!(
+        space,
+        InterpolationColorSpace::Oklch
+            | InterpolationColorSpace::Hsl
+            | InterpolationColorSpace::Hsv
+    )
 }
 
-fn lerp_pixel(a: PixelF32, b: PixelF32, t: f32) -> PixelF32 {
-    PixelF32 {
-        alpha: lerp(a.alpha, b.alpha, t),
-        red: lerp(a.red, b.red, t),
-        green: lerp(a.green, b.green, t),
-        blue: lerp(a.blue, b.blue, t),
+fn convert_linear_to_working_pixel(
+    space: InterpolationColorSpace,
+    linear_rgba: [f32; 4],
+) -> [f32; 4] {
+    let lin = LinSrgb::new(linear_rgba[0], linear_rgba[1], linear_rgba[2]);
+    match space {
+        InterpolationColorSpace::LinearRgba => linear_rgba,
+        InterpolationColorSpace::Srgb => {
+            let srgb: Srgb<f32> = Srgb::from_linear(lin);
+            [srgb.red, srgb.green, srgb.blue, linear_rgba[3]]
+        }
+        InterpolationColorSpace::Oklab => {
+            let c: Oklab<f32> = Oklab::from_color(lin);
+            [
+                encode_signed(c.a, OKLAB_AB_MAX),
+                encode_signed(c.b, OKLAB_AB_MAX),
+                c.l,
+                linear_rgba[3],
+            ]
+        }
+        InterpolationColorSpace::Oklch => {
+            let c: Oklch<f32> = Oklch::from_color(lin);
+            [
+                wrap01(c.hue.into_degrees() / 360.0),
+                encode_pos(c.chroma, OKLCH_CHROMA_MAX),
+                c.l,
+                linear_rgba[3],
+            ]
+        }
+        InterpolationColorSpace::Lab => {
+            let c = Lab::from_color(lin);
+            [
+                encode_signed(c.a, LAB_AB_MAX),
+                encode_signed(c.b, LAB_AB_MAX),
+                c.l / LAB_L_MAX,
+                linear_rgba[3],
+            ]
+        }
+        InterpolationColorSpace::Yiq => {
+            let srgb: Srgb<f32> = Srgb::from_linear(lin);
+            let r = srgb.red;
+            let g = srgb.green;
+            let b = srgb.blue;
+            let y = 0.299 * r + 0.587 * g + 0.114 * b;
+            let i = 0.595716 * r - 0.274453 * g - 0.321263 * b;
+            let q = 0.211456 * r - 0.522591 * g + 0.311135 * b;
+            [
+                encode_signed(i, YIQ_I_MAX),
+                encode_signed(q, YIQ_Q_MAX),
+                y,
+                linear_rgba[3],
+            ]
+        }
+        InterpolationColorSpace::Yuv => {
+            let srgb: Srgb<f32> = Srgb::from_linear(lin);
+            let r = srgb.red;
+            let g = srgb.green;
+            let b = srgb.blue;
+            let y = 0.299 * r + 0.587 * g + 0.114 * b;
+            let u = -0.14713 * r - 0.28886 * g + 0.436 * b;
+            let v = 0.615 * r - 0.51499 * g - 0.10001 * b;
+            [
+                encode_signed(u, YUV_U_MAX),
+                encode_signed(v, YUV_V_MAX),
+                y,
+                linear_rgba[3],
+            ]
+        }
+        InterpolationColorSpace::YCbCr => {
+            let srgb: Srgb<f32> = Srgb::from_linear(lin);
+            let r = srgb.red * 255.0;
+            let g = srgb.green * 255.0;
+            let b = srgb.blue * 255.0;
+            let y = 0.299 * r + 0.587 * g + 0.114 * b;
+            let cb = 128.0 - 0.168736 * r - 0.331264 * g + 0.5 * b;
+            let cr = 128.0 + 0.5 * r - 0.418688 * g - 0.081312 * b;
+            [
+                encode_pos(cb, YCBCR_MAX),
+                encode_pos(cr, YCBCR_MAX),
+                encode_pos(y, YCBCR_MAX),
+                linear_rgba[3],
+            ]
+        }
+        InterpolationColorSpace::Hsl => {
+            let c = Hsl::from_color(lin);
+            [
+                wrap01(c.hue.into_degrees() / 360.0),
+                c.saturation,
+                c.lightness,
+                linear_rgba[3],
+            ]
+        }
+        InterpolationColorSpace::Hsv => {
+            let c = Hsv::from_color(lin);
+            [
+                wrap01(c.hue.into_degrees() / 360.0),
+                c.saturation,
+                c.value,
+                linear_rgba[3],
+            ]
+        }
+        InterpolationColorSpace::Cmyk => {
+            let srgb: Srgb<f32> = Srgb::from_linear(lin);
+            let r = srgb.red;
+            let g = srgb.green;
+            let b = srgb.blue;
+            let k = 1.0 - r.max(g).max(b);
+            if k >= 1.0 - 1.0e-6 {
+                [0.0, 0.0, 0.0, 1.0]
+            } else {
+                let inv = 1.0 / (1.0 - k);
+                let c = (1.0 - r - k) * inv;
+                let m = (1.0 - g - k) * inv;
+                let y = (1.0 - b - k) * inv;
+                [c, m, y, k]
+            }
+        }
     }
+}
+
+fn convert_working_to_linear_pixel(
+    space: InterpolationColorSpace,
+    working_rgba: [f32; 4],
+    source_alpha: f32,
+) -> [f32; 4] {
+    match space {
+        InterpolationColorSpace::LinearRgba => [
+            working_rgba[0],
+            working_rgba[1],
+            working_rgba[2],
+            source_alpha,
+        ],
+        InterpolationColorSpace::Srgb => {
+            let lin = Srgb::new(
+                sanitize_unit(working_rgba[0]),
+                sanitize_unit(working_rgba[1]),
+                sanitize_unit(working_rgba[2]),
+            )
+            .into_linear();
+            [lin.red, lin.green, lin.blue, source_alpha]
+        }
+        InterpolationColorSpace::Oklab => {
+            let l = sanitize_unit(working_rgba[2]);
+            let a = decode_signed(sanitize_unit(working_rgba[0]), OKLAB_AB_MAX);
+            let b = decode_signed(sanitize_unit(working_rgba[1]), OKLAB_AB_MAX);
+            let lin = LinSrgb::from_color(Oklab::new(l, a, b));
+            [lin.red, lin.green, lin.blue, source_alpha]
+        }
+        InterpolationColorSpace::Oklch => {
+            let l = sanitize_unit(working_rgba[2]);
+            let chroma = decode_pos(sanitize_unit(working_rgba[1]), OKLCH_CHROMA_MAX);
+            let hue = wrap01(sanitize_unit(working_rgba[0])) * 360.0;
+            let lin = LinSrgb::from_color(Oklch::new(l, chroma, OklabHue::from_degrees(hue)));
+            [lin.red, lin.green, lin.blue, source_alpha]
+        }
+        InterpolationColorSpace::Lab => {
+            let l = sanitize_unit(working_rgba[2]) * LAB_L_MAX;
+            let a = decode_signed(sanitize_unit(working_rgba[0]), LAB_AB_MAX);
+            let b = decode_signed(sanitize_unit(working_rgba[1]), LAB_AB_MAX);
+            let lin = LinSrgb::from_color(Lab::new(l, a, b));
+            [lin.red, lin.green, lin.blue, source_alpha]
+        }
+        InterpolationColorSpace::Yiq => {
+            let y = sanitize_unit(working_rgba[2]);
+            let i = decode_signed(sanitize_unit(working_rgba[0]), YIQ_I_MAX);
+            let q = decode_signed(sanitize_unit(working_rgba[1]), YIQ_Q_MAX);
+            let sr = y + 0.9563 * i + 0.6210 * q;
+            let sg = y - 0.2721 * i - 0.6474 * q;
+            let sb = y - 1.1070 * i + 1.7046 * q;
+            let lin = Srgb::new(sr, sg, sb).into_linear();
+            [lin.red, lin.green, lin.blue, source_alpha]
+        }
+        InterpolationColorSpace::Yuv => {
+            let y = sanitize_unit(working_rgba[2]);
+            let u = decode_signed(sanitize_unit(working_rgba[0]), YUV_U_MAX);
+            let v = decode_signed(sanitize_unit(working_rgba[1]), YUV_V_MAX);
+            let sr = y + 1.13983 * v;
+            let sg = y - 0.39465 * u - 0.58060 * v;
+            let sb = y + 2.03211 * u;
+            let lin = Srgb::new(sr, sg, sb).into_linear();
+            [lin.red, lin.green, lin.blue, source_alpha]
+        }
+        InterpolationColorSpace::YCbCr => {
+            let y = decode_pos(sanitize_unit(working_rgba[2]), YCBCR_MAX);
+            let cb = decode_pos(sanitize_unit(working_rgba[0]), YCBCR_MAX);
+            let cr = decode_pos(sanitize_unit(working_rgba[1]), YCBCR_MAX);
+            let sr = (y + 1.402 * (cr - 128.0)) / 255.0;
+            let sg = (y - 0.344136 * (cb - 128.0) - 0.714136 * (cr - 128.0)) / 255.0;
+            let sb = (y + 1.772 * (cb - 128.0)) / 255.0;
+            let lin = Srgb::new(sr, sg, sb).into_linear();
+            [lin.red, lin.green, lin.blue, source_alpha]
+        }
+        InterpolationColorSpace::Hsl => {
+            let hue = wrap01(sanitize_unit(working_rgba[0])) * 360.0;
+            let saturation = sanitize_unit(working_rgba[1]);
+            let lightness = sanitize_unit(working_rgba[2]);
+            let lin =
+                LinSrgb::from_color(Hsl::new(RgbHue::from_degrees(hue), saturation, lightness));
+            [lin.red, lin.green, lin.blue, source_alpha]
+        }
+        InterpolationColorSpace::Hsv => {
+            let hue = wrap01(sanitize_unit(working_rgba[0])) * 360.0;
+            let saturation = sanitize_unit(working_rgba[1]);
+            let value = sanitize_unit(working_rgba[2]);
+            let lin = LinSrgb::from_color(Hsv::new(RgbHue::from_degrees(hue), saturation, value));
+            [lin.red, lin.green, lin.blue, source_alpha]
+        }
+        InterpolationColorSpace::Cmyk => {
+            let c = sanitize_unit(working_rgba[0]);
+            let m = sanitize_unit(working_rgba[1]);
+            let y = sanitize_unit(working_rgba[2]);
+            let k = sanitize_unit(working_rgba[3]);
+            let sr = (1.0 - c) * (1.0 - k);
+            let sg = (1.0 - m) * (1.0 - k);
+            let sb = (1.0 - y) * (1.0 - k);
+            let lin = Srgb::new(sr, sg, sb).into_linear();
+            [lin.red, lin.green, lin.blue, source_alpha]
+        }
+    }
+}
+
+fn wrap01(x: f32) -> f32 {
+    let mut v = x % 1.0;
+    if v < 0.0 {
+        v += 1.0;
+    }
+    v
+}
+
+fn encode_signed(value: f32, max_abs: f32) -> f32 {
+    (value / (2.0 * max_abs)) + 0.5
+}
+
+fn decode_signed(channel: f32, max_abs: f32) -> f32 {
+    (channel - 0.5) * (2.0 * max_abs)
+}
+
+fn encode_pos(value: f32, max: f32) -> f32 {
+    value / max
+}
+
+fn decode_pos(channel: f32, max: f32) -> f32 {
+    channel * max
+}
+
+fn sanitize_unit(mut v: f32) -> f32 {
+    if !v.is_finite() {
+        v = 0.0;
+    }
+    v.clamp(0.0, 1.0)
 }
 
 fn clamp01(v: f32) -> f32 {
