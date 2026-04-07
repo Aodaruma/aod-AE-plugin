@@ -13,6 +13,7 @@ catch-panics = []
 
 [dependencies]
 after-effects = { workspace = true }
+palette = "0.7.6"
 utils = { path = "../../crates/utils" }
 
 
