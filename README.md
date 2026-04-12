@@ -45,6 +45,8 @@ template.
   - Blender風のGaborテクスチャを生成します / Generates Blender-style Gabor texture maps.
 - AOD_DistanceGenerate
   - 色領域の輪郭から距離画像を生成します / Generates distance images from the contours of colored regions
+- AOD_EyedropperMask
+  - スポイトポイント周辺の連続色領域の不透明度を個別調整し、プリマルチ/ストレートを切替できます / Adjusts opacity of contiguous regions around eyedropper points with per-point controls and selectable premultiplied or straight workflows.
 - AOD_IFFT
   - 実部・虚部レイヤーから2D IFFTで画像を再構成します / Reconstructs an RGBA image from 2D FFT real and imaginary inputs.
 - AOD_ImageCalculate
