@@ -471,7 +471,6 @@ impl AdobePluginGlobal for Plugin {
             ae::Command::GlobalSetup => {
                 out_data.set_out_flag(OutFlags::SendUpdateParamsUi, true);
                 out_data.set_out_flag(OutFlags::CustomUi, true);
-                out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
                 if let Ok(suite) = ae::aegp::suites::Utility::new()
                     && let Ok(plugin_id) = suite.register_with_aegp("AOD_DatacodeEncode")
                 {
