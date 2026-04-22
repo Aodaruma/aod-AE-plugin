@@ -35,6 +35,10 @@ template.
   - RGBA各出力チャンネルを入力・定数・レイヤー由来で再割り当てします / Remaps RGBA channels from source channels, constants, and layers with selectable color spaces.
 - AOD_ContourGenerate
   - Canny法でレイヤーから輪郭線を抽出します / Extracts contour lines from a layer using the Canny method
+- AOD_DatacodeDecode
+  - 自動認識または領域指定で1D/2Dデータコードをデコードします / Decodes 1D and 2D data codes from layers with auto or region-based detection.
+- AOD_DatacodeEncode
+  - 動的UIとカスタムペイロードで1D/2Dデータコードをエンコードします / Encodes 1D and 2D data codes with dynamic UI and custom payload parameters.
 - AOD_DifferentialGenerate
   - レイヤーの画像勾配からRGBA微分マップを生成します / Generates RGBA differential maps from image gradients.
 - AOD_FFT
@@ -153,3 +157,4 @@ cargo generate --path templates/plugin --destination plugins
 ### Contribution
 
 Issues and pull requests are welcome. Please keep `cargo fmt` and `cargo clippy` clean when possible.
+
