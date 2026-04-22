@@ -11,10 +11,12 @@ use serde::{Deserialize, Serialize};
 use utils::ToPixel;
 
 mod codec;
+mod ecw_payload;
 mod overlay;
 mod settings;
 
 use codec::generate_code_matrix;
+use ecw_payload::{PAYLOAD_UI_HEIGHT, PAYLOAD_UI_WIDTH, handle_payload_event};
 use overlay::{
     composite_with_overlay, draw_error_overlay, placement_rect, render_matrix_to_overlay,
     transparent_pixel,
@@ -194,7 +196,7 @@ impl AdobePluginGlobal for Plugin {
     fn params_setup(
         &self,
         params: &mut ae::Parameters<Params>,
-        _in_data: InData,
+        in_data: InData,
         _: OutData,
     ) -> Result<(), Error> {
         params.add_with_flags(
@@ -231,14 +233,19 @@ impl AdobePluginGlobal for Plugin {
             ParamUIFlags::empty(),
         )?;
 
-        params.add_with_flags(
+        params.add_customized(
             Params::Payload,
             "Payload",
             ArbitraryDef::setup(|d| {
                 d.set_default(DataPayload::default()).unwrap();
             }),
-            ParamFlag::SUPERVISE,
-            ParamUIFlags::NO_ECW_UI,
+            |param| {
+                param.set_flags(ParamFlag::SUPERVISE);
+                param.set_ui_flags(ParamUIFlags::CONTROL);
+                param.set_ui_width(PAYLOAD_UI_WIDTH);
+                param.set_ui_height(PAYLOAD_UI_HEIGHT);
+                -1
+            },
         )?;
 
         params.add(
@@ -437,6 +444,9 @@ impl AdobePluginGlobal for Plugin {
             ParamFlag::SUPERVISE,
             ParamUIFlags::INVISIBLE,
         )?;
+        in_data
+            .interact()
+            .register_ui(CustomUIInfo::new().events(CustomEventFlags::EFFECT))?;
         Ok(())
     }
 
@@ -460,12 +470,16 @@ impl AdobePluginGlobal for Plugin {
             }
             ae::Command::GlobalSetup => {
                 out_data.set_out_flag(OutFlags::SendUpdateParamsUi, true);
+                out_data.set_out_flag(OutFlags::CustomUi, true);
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
                 if let Ok(suite) = ae::aegp::suites::Utility::new()
                     && let Ok(plugin_id) = suite.register_with_aegp("AOD_DatacodeEncode")
                 {
                     self.aegp_id = Some(plugin_id);
                 }
+            }
+            ae::Command::Event { mut extra } => {
+                let _ = handle_payload_event(&in_data, params, &mut extra)?;
             }
             ae::Command::Render {
                 in_layer,
