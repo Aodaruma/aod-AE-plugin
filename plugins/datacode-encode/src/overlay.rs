@@ -316,7 +316,7 @@ pub(crate) fn glyph_rows(ch: char) -> [u8; 7] {
 }
 
 pub(crate) fn composite_with_overlay(
-    in_layer: Layer,
+    in_layer: &Layer,
     out_layer: &mut Layer,
     overlay: &[PixelF32],
 ) -> Result<(), Error> {

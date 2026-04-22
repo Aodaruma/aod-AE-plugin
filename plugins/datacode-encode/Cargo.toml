@@ -1,6 +1,6 @@
 [package]
 name = "datacode_encode"
-description = "Encodes 1D and 2D data codes with dynamic UI and custom payload parameters."
+description = "Encodes 1D and 2D data codes from a Liquid template with dynamic UI parameters."
 version = "0.1.0"
 edition = "2024"
 
@@ -14,10 +14,10 @@ catch-panics = []
 [dependencies]
 after-effects = { workspace = true }
 utils = { path = "../../crates/utils" }
-rxing = "0.8.5"
+rxing = { version = "0.8.5", default-features = false, features = ["encoding_rs"] }
 qrqrpar = "0.1.7"
 serde = { version = "1.0.228", features = ["derive"] }
-
+liquid = "0.26.11"
 
 [dev-dependencies]
 pipl = { workspace = true }

@@ -7,16 +7,18 @@ use ae::pf::*;
 use qrqrpar::{Color as QrColor, EcLevel as QrEcLevel, QrCode, RmqrStrategy};
 use rxing::pdf417::encoder::Dimensions as Pdf417Dimensions;
 use rxing::{BarcodeFormat, EncodeHints, MultiFormatWriter, Writer};
-use serde::{Deserialize, Serialize};
 use utils::ToPixel;
 
 mod codec;
-mod ecw_payload;
+mod debug_log;
+mod dialog_editor;
+mod liquid_source;
 mod overlay;
 mod settings;
 
 use codec::generate_code_matrix;
-use ecw_payload::{PAYLOAD_UI_HEIGHT, PAYLOAD_UI_WIDTH, handle_payload_event};
+use debug_log as dlog;
+use dialog_editor::edit_liquid_template;
 use overlay::{
     composite_with_overlay, draw_error_overlay, placement_rect, render_matrix_to_overlay,
     transparent_pixel,
@@ -27,7 +29,7 @@ use settings::{read_code_type, read_settings};
 enum Params {
     DataCodeType,
     InputMode,
-    Payload,
+    EditLiquid,
     CellPixelSize,
     CellWidth,
     CellHeight,
@@ -53,35 +55,22 @@ struct Plugin {
     aegp_id: Option<ae::aegp::PluginId>,
 }
 
-ae::define_effect!(Plugin, (), Params);
-
-const PLUGIN_DESCRIPTION: &str =
-    "Encodes 1D and 2D data codes with dynamic UI and custom payload parameters.";
-
-#[derive(Serialize, Deserialize, Clone, PartialEq, PartialOrd)]
-struct DataPayload {
-    utf8: String,
-    hex: String,
+struct SequenceState {
+    liquid_template: String,
 }
 
-impl Default for DataPayload {
+impl Default for SequenceState {
     fn default() -> Self {
         Self {
-            utf8: "HELLO_AOD".into(),
-            hex: "48656C6C6F5F414F44".into(),
+            liquid_template: liquid_source::default_template().to_string(),
         }
     }
 }
 
-impl ae::ArbitraryData<DataPayload> for DataPayload {
-    fn interpolate(&self, other: &Self, value: f64) -> Self {
-        if value < 0.5 {
-            self.clone()
-        } else {
-            other.clone()
-        }
-    }
-}
+ae::define_effect!(Plugin, SequenceState, Params);
+
+const PLUGIN_DESCRIPTION: &str =
+    "Encodes 1D and 2D data codes from a Liquid template with dynamic UI parameters.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DataCodeType {
@@ -199,6 +188,13 @@ impl AdobePluginGlobal for Plugin {
         in_data: InData,
         _: OutData,
     ) -> Result<(), Error> {
+        dlog::log(format!(
+            "params_setup start app_id={:?} is_ae={} is_pr={}",
+            in_data.application_id(),
+            in_data.is_after_effects(),
+            in_data.is_premiere()
+        ));
+
         params.add_with_flags(
             Params::DataCodeType,
             "DataCode Type",
@@ -232,20 +228,14 @@ impl AdobePluginGlobal for Plugin {
             ParamFlag::SUPERVISE,
             ParamUIFlags::empty(),
         )?;
-
-        params.add_customized(
-            Params::Payload,
-            "Payload",
-            ArbitraryDef::setup(|d| {
-                d.set_default(DataPayload::default()).unwrap();
+        params.add_with_flags(
+            Params::EditLiquid,
+            "Edit Liquid",
+            ButtonDef::setup(|d| {
+                d.set_label("Edit...");
             }),
-            |param| {
-                param.set_flags(ParamFlag::SUPERVISE);
-                param.set_ui_flags(ParamUIFlags::CONTROL);
-                param.set_ui_width(PAYLOAD_UI_WIDTH);
-                param.set_ui_height(PAYLOAD_UI_HEIGHT);
-                -1
-            },
+            ParamFlag::SUPERVISE,
+            ParamUIFlags::empty(),
         )?;
 
         params.add(
@@ -444,9 +434,7 @@ impl AdobePluginGlobal for Plugin {
             ParamFlag::SUPERVISE,
             ParamUIFlags::INVISIBLE,
         )?;
-        in_data
-            .interact()
-            .register_ui(CustomUIInfo::new().events(CustomEventFlags::EFFECT))?;
+        dlog::log("params_setup end");
         Ok(())
     }
 
@@ -457,6 +445,7 @@ impl AdobePluginGlobal for Plugin {
         mut out_data: OutData,
         params: &mut ae::Parameters<Params>,
     ) -> Result<(), ae::Error> {
+        dlog::log(format!("handle_command {:?}", cmd));
         match cmd {
             ae::Command::About => {
                 out_data.set_return_msg(
@@ -469,59 +458,42 @@ impl AdobePluginGlobal for Plugin {
                 );
             }
             ae::Command::GlobalSetup => {
+                dlog::session_start();
+                dlog::log("GlobalSetup begin");
                 out_data.set_out_flag(OutFlags::SendUpdateParamsUi, true);
-                out_data.set_out_flag(OutFlags::CustomUi, true);
+                out_data.set_out_flag(OutFlags::WideTimeInput, true);
+                out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
+                out_data.set_out_flag2(OutFlags2::AutomaticWideTimeInput, true);
                 if let Ok(suite) = ae::aegp::suites::Utility::new()
                     && let Ok(plugin_id) = suite.register_with_aegp("AOD_DatacodeEncode")
                 {
                     self.aegp_id = Some(plugin_id);
                 }
-            }
-            ae::Command::Event { mut extra } => {
-                let _ = handle_payload_event(&in_data, params, &mut extra)?;
+                dlog::log("GlobalSetup end");
             }
             ae::Command::Render {
-                in_layer,
-                out_layer,
+                in_layer: _,
+                out_layer: _,
             } => {
-                self.do_render(in_layer, out_layer, params)?;
+                dlog::log("Render(global) delegated to sequence");
             }
-            ae::Command::SmartPreRender { mut extra } => {
-                let req = extra.output_request();
-                if let Ok(in_result) = extra.callbacks().checkout_layer(
-                    0,
-                    0,
-                    &req,
-                    in_data.current_time(),
-                    in_data.time_step(),
-                    in_data.time_scale(),
-                ) {
-                    let _ = extra.union_result_rect(in_result.result_rect.into());
-                    let _ = extra.union_max_result_rect(in_result.max_result_rect.into());
-                } else {
-                    return Err(Error::InterruptCancel);
-                }
+            ae::Command::SmartPreRender { extra: _ } => {
+                dlog::log("SmartPreRender(global) delegated to sequence");
             }
-            ae::Command::SmartRender { extra } => {
-                let cb = extra.callbacks();
-                let in_layer_opt = cb.checkout_layer_pixels(0)?;
-                let out_layer_opt = cb.checkout_output()?;
-                if let (Some(in_layer), Some(out_layer)) = (in_layer_opt, out_layer_opt) {
-                    self.do_render(in_layer, out_layer, params)?;
-                }
-                cb.checkin_layer_pixels(0)?;
-            }
-            ae::Command::ArbitraryCallback { mut extra } => {
-                extra.dispatch::<DataPayload, Params>(Params::Payload)?;
+            ae::Command::SmartRender { extra: _ } => {
+                dlog::log("SmartRender(global) delegated to sequence");
             }
             ae::Command::UserChangedParam { param_index } => {
-                if params.type_at(param_index) == Params::DataCodeType {
+                let changed = params.type_at(param_index);
+                if matches!(changed, Params::DataCodeType) {
                     out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
             }
             ae::Command::UpdateParamsUi => {
+                dlog::log("UpdateParamsUi begin");
                 let mut params_copy = params.cloned();
                 self.update_params_ui(in_data, &mut params_copy)?;
+                dlog::log("UpdateParamsUi end");
             }
             _ => {}
         }
@@ -615,28 +587,34 @@ impl Plugin {
 
     fn do_render(
         &self,
-        in_layer: Layer,
-        mut out_layer: Layer,
+        in_data: InData,
+        in_layer: &Layer,
+        out_layer: &mut Layer,
         params: &mut Parameters<Params>,
+        template_src: &str,
     ) -> Result<(), Error> {
+        dlog::log("do_render begin");
         let width = out_layer.width();
         let height = out_layer.height();
         if width == 0 || height == 0 {
+            dlog::log("do_render skipped: zero size");
             return Ok(());
         }
 
         let mut overlay = vec![transparent_pixel(); width * height];
-        let settings = match read_settings(params) {
+        let settings = match read_settings(in_data, params, template_src) {
             Ok(v) => v,
             Err(msg) => {
+                dlog::log(format!("do_render read_settings error: {msg}"));
                 draw_error_overlay(&mut overlay, width, height, (8, 8), 320, 120, &msg);
-                return composite_with_overlay(in_layer, &mut out_layer, &overlay);
+                return composite_with_overlay(in_layer, out_layer, &overlay);
             }
         };
 
         let matrix = match generate_code_matrix(&settings) {
             Ok(v) => v,
             Err(msg) => {
+                dlog::log(format!("do_render generate_code_matrix error: {msg}"));
                 let rect = placement_rect(&settings, settings.cell_width, settings.cell_height);
                 draw_error_overlay(
                     &mut overlay,
@@ -647,11 +625,12 @@ impl Plugin {
                     rect.3,
                     &msg,
                 );
-                return composite_with_overlay(in_layer, &mut out_layer, &overlay);
+                return composite_with_overlay(in_layer, out_layer, &overlay);
             }
         };
 
         if matrix.width > settings.cell_width || matrix.height > settings.cell_height {
+            dlog::log("do_render error: encoded matrix exceeds area");
             let rect = placement_rect(&settings, settings.cell_width, settings.cell_height);
             draw_error_overlay(
                 &mut overlay,
@@ -662,10 +641,127 @@ impl Plugin {
                 rect.3,
                 "ENCODED DATA EXCEEDS CELL AREA",
             );
-            return composite_with_overlay(in_layer, &mut out_layer, &overlay);
+            return composite_with_overlay(in_layer, out_layer, &overlay);
         }
 
         render_matrix_to_overlay(&settings, &matrix, width, height, &mut overlay);
-        composite_with_overlay(in_layer, &mut out_layer, &overlay)
+        dlog::log("do_render end");
+        composite_with_overlay(in_layer, out_layer, &overlay)
+    }
+}
+
+impl AdobePluginInstance for SequenceState {
+    fn flatten(&self) -> Result<(u16, Vec<u8>), Error> {
+        Ok((1, self.liquid_template.as_bytes().to_vec()))
+    }
+
+    fn unflatten(_version: u16, serialized: &[u8]) -> Result<Self, Error> {
+        let liquid_template = String::from_utf8(serialized.to_vec())
+            .unwrap_or_else(|_| liquid_source::default_template().to_string());
+        Ok(Self { liquid_template })
+    }
+
+    fn render(
+        &self,
+        plugin: &mut PluginState,
+        in_layer: &Layer,
+        out_layer: &mut Layer,
+    ) -> Result<(), ae::Error> {
+        plugin.global.do_render(
+            plugin.in_data,
+            in_layer,
+            out_layer,
+            plugin.params,
+            &self.liquid_template,
+        )
+    }
+
+    #[cfg(does_dialog)]
+    fn do_dialog(&mut self, plugin: &mut PluginState) -> Result<(), ae::Error> {
+        dlog::log("DoDialog(sequence) begin");
+        self.open_liquid_editor(plugin)?;
+        dlog::log("DoDialog(sequence) end");
+        Ok(())
+    }
+
+    fn handle_command(&mut self, plugin: &mut PluginState, cmd: Command) -> Result<(), Error> {
+        match cmd {
+            Command::UserChangedParam { param_index } => {
+                if plugin.params.type_at(param_index) == Params::EditLiquid {
+                    dlog::log("UserChangedParam(sequence): EditLiquid");
+                    self.open_liquid_editor(plugin)?;
+                }
+            }
+            Command::SmartPreRender { mut extra } => {
+                dlog::log("SmartPreRender(sequence) begin");
+                let req = extra.output_request();
+                if let Ok(in_result) = extra.callbacks().checkout_layer(
+                    0,
+                    0,
+                    &req,
+                    plugin.in_data.current_time(),
+                    plugin.in_data.time_step(),
+                    plugin.in_data.time_scale(),
+                ) {
+                    let _ = extra.union_result_rect(in_result.result_rect.into());
+                    let _ = extra.union_max_result_rect(in_result.max_result_rect.into());
+                } else {
+                    return Err(Error::InterruptCancel);
+                }
+                dlog::log("SmartPreRender(sequence) end");
+            }
+            Command::SmartRender { extra } => {
+                dlog::log("SmartRender(sequence) begin");
+                let cb = extra.callbacks();
+                let in_layer_opt = cb.checkout_layer_pixels(0)?;
+                let out_layer_opt = cb.checkout_output()?;
+                if let (Some(in_layer), Some(mut out_layer)) = (in_layer_opt, out_layer_opt) {
+                    plugin.global.do_render(
+                        plugin.in_data,
+                        &in_layer,
+                        &mut out_layer,
+                        plugin.params,
+                        &self.liquid_template,
+                    )?;
+                }
+                cb.checkin_layer_pixels(0)?;
+                dlog::log("SmartRender(sequence) end");
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+impl SequenceState {
+    fn open_liquid_editor(&mut self, plugin: &mut PluginState) -> Result<(), ae::Error> {
+        let Some(plugin_id) = plugin.global.aegp_id else {
+            let msg = "AEGP plugin id is not initialized.";
+            dlog::log(format!("open_liquid_editor error: {msg}"));
+            plugin.out_data.set_return_msg(msg);
+            return Ok(());
+        };
+
+        let edited = match edit_liquid_template(&self.liquid_template, plugin_id) {
+            Ok(v) => v,
+            Err(e) => {
+                dlog::log(format!("open_liquid_editor open error: {e}"));
+                plugin
+                    .out_data
+                    .set_return_msg(&format!("FAILED TO OPEN LIQUID DIALOG: {e}"));
+                return Ok(());
+            }
+        };
+
+        if let Some(new_template) = edited
+            && new_template != self.liquid_template
+        {
+            self.liquid_template = new_template.replace("\r\n", "\n");
+            plugin.out_data.set_out_flag(OutFlags::ForceRerender, true);
+            plugin.out_data.set_out_flag(OutFlags::RefreshUi, true);
+            plugin.out_data.set_return_msg("Liquid template updated.");
+            dlog::log("open_liquid_editor template updated");
+        }
+        Ok(())
     }
 }

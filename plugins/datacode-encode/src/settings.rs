@@ -1,5 +1,5 @@
 use super::*;
-use crate::codec::{bytes_to_hex_upper, parse_hex_binary};
+use crate::liquid_source::{TemplateTransformContext, render_payload_from_template};
 use crate::overlay::point_value_f32;
 
 pub(crate) fn read_code_type(params: &mut Parameters<Params>) -> Result<DataCodeType, Error> {
@@ -21,46 +21,25 @@ pub(crate) fn read_code_type(params: &mut Parameters<Params>) -> Result<DataCode
     )
 }
 
-pub(crate) fn read_settings(params: &mut Parameters<Params>) -> Result<RenderSettings, String> {
-    let code_type = read_code_type(params).map_err(|e| e.to_string())?;
-    let input_mode = if params
-        .get(Params::InputMode)
-        .map_err(|e| e.to_string())?
-        .as_popup()
-        .map_err(|e| e.to_string())?
-        .value()
-        == 2
-    {
+pub(crate) fn read_input_mode(params: &mut Parameters<Params>) -> Result<InputMode, Error> {
+    Ok(if params.get(Params::InputMode)?.as_popup()?.value() == 2 {
         InputMode::Hex
     } else {
         InputMode::Utf8
-    };
+    })
+}
 
-    let payload = params
-        .get(Params::Payload)
-        .map_err(|e| e.to_string())?
-        .as_arbitrary()
-        .map_err(|e| e.to_string())?
-        .value::<DataPayload>()
-        .map_err(|e| e.to_string())?;
-    let payload = (*payload).clone();
-    let payload_bytes = match input_mode {
-        InputMode::Utf8 => payload.utf8.as_bytes().to_vec(),
-        InputMode::Hex => parse_hex_binary(&payload.hex)?,
-    };
-    if payload_bytes.is_empty() {
-        return Err("PAYLOAD IS EMPTY".into());
-    }
-    let payload_text = if matches!(input_mode, InputMode::Utf8) {
-        payload.utf8
-    } else {
-        bytes_to_hex_upper(&payload_bytes)
-    };
-
+pub(crate) fn read_settings(
+    in_data: InData,
+    params: &mut Parameters<Params>,
+    template_src: &str,
+) -> Result<RenderSettings, String> {
+    let code_type = read_code_type(params).map_err(|e| e.to_string())?;
+    let input_mode = read_input_mode(params).map_err(|e| e.to_string())?;
     let point_param = params.get(Params::OriginPos).map_err(|e| e.to_string())?;
     let point = point_param.as_point().map_err(|e| e.to_string())?;
     let (ox, oy) = point_value_f32(&point);
-    let origin_direction = match params
+    let origin_direction_popup = match params
         .get(Params::OriginDirection)
         .map_err(|e| e.to_string())?
         .as_popup()
@@ -72,6 +51,33 @@ pub(crate) fn read_settings(params: &mut Parameters<Params>) -> Result<RenderSet
         4 => OriginDirection::LeftUp,
         _ => OriginDirection::RightDown,
     };
+    let origin_direction_name = match origin_direction_popup {
+        OriginDirection::RightDown => "right_down",
+        OriginDirection::LeftDown => "left_down",
+        OriginDirection::RightUp => "right_up",
+        OriginDirection::LeftUp => "left_up",
+    };
+    let cell_pixel_size = read_slider(params, Params::CellPixelSize, 1.0, 128.0)? as usize;
+    let cell_width = read_slider(params, Params::CellWidth, 1.0, 2048.0)? as usize;
+    let cell_height = read_slider(params, Params::CellHeight, 1.0, 2048.0)? as usize;
+    let origin_px = (ox.round() as i32, oy.round() as i32);
+
+    let template_transform = TemplateTransformContext {
+        origin_x: origin_px.0,
+        origin_y: origin_px.1,
+        origin_direction: origin_direction_name,
+        cell_pixel_size,
+        cell_width,
+        cell_height,
+    };
+    let (payload_bytes, payload_text) = render_payload_from_template(
+        input_mode,
+        template_src,
+        in_data.current_time(),
+        in_data.time_step(),
+        in_data.time_scale(),
+        &template_transform,
+    )?;
 
     let fg = params
         .get(Params::ForegroundColor)
@@ -138,14 +144,14 @@ pub(crate) fn read_settings(params: &mut Parameters<Params>) -> Result<RenderSet
 
     Ok(RenderSettings {
         code_type,
-        input_mode,
+        input_mode, // used for debug/error reporting
         payload_bytes,
         payload_text,
-        cell_pixel_size: read_slider(params, Params::CellPixelSize, 1.0, 128.0)? as usize,
-        cell_width: read_slider(params, Params::CellWidth, 1.0, 2048.0)? as usize,
-        cell_height: read_slider(params, Params::CellHeight, 1.0, 2048.0)? as usize,
-        origin_px: (ox.round() as i32, oy.round() as i32),
-        origin_direction,
+        cell_pixel_size,
+        cell_width,
+        cell_height,
+        origin_px,
+        origin_direction: origin_direction_popup,
         fg_color: [fg.red, fg.green, fg.blue],
         bg_color: [bg.red, bg.green, bg.blue],
         background_transparent: params

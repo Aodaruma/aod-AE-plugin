@@ -8,6 +8,8 @@ const PF_PLUG_IN_SUBVERS: u16 = 28;
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(does_dialog)");
     println!("cargo::rustc-check-cfg=cfg(threaded_rendering)");
+    println!("cargo::rustc-check-cfg=cfg(catch_panics)");
+    println!("cargo:rustc-cfg=catch_panics");
 
     let current_year = chrono::Local::now().year();
     println!("cargo:rustc-env=BUILD_YEAR={}", current_year);
@@ -61,7 +63,7 @@ fn main() {
             OutFlags::PixIndependent
             | OutFlags::UseOutputExtent
             | OutFlags::DeepColorAware
-            | OutFlags::CustomUI
+            | OutFlags::WideTimeInput
             | OutFlags::SendUpdateParamsUI
             ,
         ),
