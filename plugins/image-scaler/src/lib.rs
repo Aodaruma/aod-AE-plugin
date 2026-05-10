@@ -508,14 +508,14 @@ impl Plugin {
         )?;
 
         let exp_name = if use_reciprocal {
-            "Scale (Log e)"
+            "Scale (1/Exp)"
         } else {
             "Scale (Exp)"
         };
         Self::set_param_name(params, Params::ScaleExp, exp_name)?;
 
         let power2_name = if use_reciprocal {
-            "Scale (Log 2)"
+            "Scale (1/Power2)"
         } else {
             "Scale (Power2)"
         };
@@ -629,19 +629,21 @@ fn read_settings(params: &mut Parameters<Params>) -> Result<Settings, Error> {
         ScaleMode::Exp => {
             let scale_percent = params.get(Params::ScaleExp)?.as_float_slider()?.value() as f32;
             let base_scale = (scale_percent / 100.0).max(MIN_SCALE_FACTOR);
+            let exp_scale = base_scale.exp();
             if use_reciprocal {
-                base_scale.ln()
+                1.0 / exp_scale
             } else {
-                base_scale.exp()
+                exp_scale
             }
         }
         ScaleMode::Power2 => {
             let scale_percent = params.get(Params::ScalePower2)?.as_float_slider()?.value() as f32;
             let base_scale = (scale_percent / 100.0).max(MIN_SCALE_FACTOR);
+            let power2_scale = 2.0_f32.powf(base_scale);
             if use_reciprocal {
-                base_scale.log2()
+                1.0 / power2_scale
             } else {
-                2.0_f32.powf(base_scale)
+                power2_scale
             }
         }
     };
