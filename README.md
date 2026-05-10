@@ -37,6 +37,10 @@ template.
   - Canny法でレイヤーから輪郭線を抽出します / Extracts contour lines from a layer using the Canny method
 - AOD_DifferentialGenerate
   - レイヤーの画像勾配からRGBA微分マップを生成します / Generates RGBA differential maps from image gradients.
+- AOD_GradientBlur
+  - 輝度/RGB勾配または色相/彩度ベクトル方向に沿って方向性ブラーを適用します / Applies directional blur along lightness/RGB gradients or hue-saturation vectors.
+- AOD_GradientDisplace
+  - 輝度/RGB勾配または色相/彩度ベクトル方向に沿って変位を適用します / Applies directional displacement along lightness/RGB gradients or hue-saturation vectors.
 - AOD_FFT
   - レイヤーに2D FFTを適用し、実部または虚部を出力します / Performs 2D FFT on RGBA channels and outputs real or imaginary spectra.
 - AOD_FourierFilter
