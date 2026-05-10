@@ -1,0 +1,28 @@
+[package]
+name = "eyedropper_mask"
+description = "Adjusts opacity of contiguous regions around eyedropper points with per-point controls and selectable premultiplied or straight workflows."
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+seq-macro = "0.3.6"
+utils = { path = "../../crates/utils" }
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true

@@ -751,6 +751,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "eyedropper_mask"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "seq-macro",
+ "utils",
+]
+
+[[package]]
 name = "fast-srgb8"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
