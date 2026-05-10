@@ -35,6 +35,8 @@ template.
   - RGBA各出力チャンネルを入力・定数・レイヤー由来で再割り当てします / Remaps RGBA channels from source channels, constants, and layers with selectable color spaces.
 - AOD_ContourGenerate
   - Canny法でレイヤーから輪郭線を抽出します / Extracts contour lines from a layer using the Canny method
+- AOD_DepthFog
+  - 白黒depth mapをリアルな霧のFalloffへ変換します / Converts monochrome depth maps into realistic fog falloff maps.
 - AOD_DifferentialGenerate
   - レイヤーの画像勾配からRGBA微分マップを生成します / Generates RGBA differential maps from image gradients.
 - AOD_GradientBlur
