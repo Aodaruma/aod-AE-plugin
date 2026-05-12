@@ -19,6 +19,7 @@ rxing = "0.8.5"
 
 [dev-dependencies]
 pipl = { workspace = true }
+qrqrpar = "0.1.7"
 
 [build-dependencies]
 chrono.workspace = true
@@ -26,4 +27,3 @@ pipl.workspace = true
 
 [lints]
 workspace = true
-

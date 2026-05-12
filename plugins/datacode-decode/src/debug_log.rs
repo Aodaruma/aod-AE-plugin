@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) fn log(message: impl AsRef<str>) {
     let line = format!("[{}] {}", timestamp_secs(), message.as_ref());
-    output_debug_string(&format!("AOD_DatacodeEncode {line}"));
+    output_debug_string(&format!("AOD_DatacodeDecode {line}"));
 
     if let Ok(path) = log_file_path() {
         if let Some(parent) = path.parent() {
@@ -29,7 +29,7 @@ fn log_file_path() -> Result<PathBuf, String> {
         {
             return Ok(PathBuf::from(local_app_data)
                 .join("Aodaruma")
-                .join("DatacodeEncode")
+                .join("DatacodeDecode")
                 .join("debug.log"));
         }
     }
@@ -39,13 +39,13 @@ fn log_file_path() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(home)
             .join(".config")
             .join("aodaruma")
-            .join("datacode-encode")
+            .join("datacode-decode")
             .join("debug.log"));
     }
     std::env::current_dir()
         .map(|p| {
             p.join(".aodaruma")
-                .join("datacode-encode")
+                .join("datacode-decode")
                 .join("debug.log")
         })
         .map_err(|e| format!("FAILED TO RESOLVE LOG FILE PATH: {e}"))

@@ -55,7 +55,7 @@ fn main() {
             stage,
             build: 1,
         },
-        Property::AE_Effect_Info_Flags(0),
+        Property::AE_Effect_Info_Flags(3),
         Property::AE_Effect_Global_OutFlags(
             // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags.html
             OutFlags::PixIndependent
@@ -68,8 +68,6 @@ fn main() {
         Property::AE_Effect_Global_OutFlags_2( 
             // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags2.html
             OutFlags2::FloatColorAware
-            | OutFlags2::SupportsThreadedRendering
-            | OutFlags2::SupportsGetFlattenedSequenceData
             | OutFlags2::AutomaticWideTimeInput
             | OutFlags2::SupportsSmartRender
             // | OutFlags2::SupportsGpuRenderF32

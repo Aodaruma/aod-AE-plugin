@@ -11,13 +11,47 @@ pub(crate) fn build_luma8(layer: &Layer) -> Vec<u8> {
             let (r, g, b) = if px.alpha > 1.0e-6 {
                 (px.red / px.alpha, px.green / px.alpha, px.blue / px.alpha)
             } else {
-                (0.0, 0.0, 0.0)
+                (1.0, 1.0, 1.0)
             };
             let luma = (0.2126 * r + 0.7152 * g + 0.0722 * b).clamp(0.0, 1.0);
             out[y * w + x] = (luma * 255.0).round() as u8;
         }
     }
     out
+}
+
+pub(crate) fn bbox_from_dark_luma(
+    luma: &[u8],
+    width: u32,
+    height: u32,
+    offset: (i32, i32),
+) -> Option<(i32, i32, i32, i32)> {
+    let mut min_x = width;
+    let mut min_y = height;
+    let mut max_x = 0_u32;
+    let mut max_y = 0_u32;
+    let mut found = false;
+    for y in 0..height {
+        for x in 0..width {
+            let v = luma[(y * width + x) as usize];
+            if v < 96 {
+                found = true;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+    if !found {
+        return None;
+    }
+    Some((
+        offset.0 + min_x as i32,
+        offset.1 + min_y as i32,
+        (max_x - min_x + 1).max(8) as i32,
+        (max_y - min_y + 1).max(8) as i32,
+    ))
 }
 
 pub(crate) fn read_layer_pixel(

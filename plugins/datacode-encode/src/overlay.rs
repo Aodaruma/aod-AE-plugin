@@ -8,21 +8,27 @@ pub(crate) fn render_matrix_to_overlay(
     overlay: &mut [PixelF32],
 ) {
     let cell_px = settings.cell_pixel_size.max(1) as i32;
-    let (ox, oy) = settings.origin_px;
-    let (sx, sy) = direction_signs(settings.origin_direction);
+    let (x0, y0, _, _) = placement_rect(settings, matrix.width, matrix.height);
     for my in 0..matrix.height {
         for mx in 0..matrix.width {
-            let cell_rgb = matrix.get(mx, my);
+            let (src_x, src_y) = matrix_coords_for_direction(
+                settings.origin_direction,
+                mx,
+                my,
+                matrix.width,
+                matrix.height,
+            );
+            let cell_rgb = matrix.get(src_x, src_y);
             if settings.background_transparent && is_background_cell(cell_rgb) {
                 continue;
             }
             let rgb = map_cell_color(settings, cell_rgb);
-            let px0 = ox + sx * mx as i32 * cell_px;
-            let py0 = oy + sy * my as i32 * cell_px;
+            let px0 = x0 + mx as i32 * cell_px;
+            let py0 = y0 + my as i32 * cell_px;
             for dy in 0..cell_px {
-                let py = if sy >= 0 { py0 + dy } else { py0 - dy };
+                let py = py0 + dy;
                 for dx in 0..cell_px {
-                    let px = if sx >= 0 { px0 + dx } else { px0 - dx };
+                    let px = px0 + dx;
                     set_overlay_rgb(overlay, frame_w, frame_h, px, py, rgb, 1.0);
                 }
             }
@@ -38,16 +44,18 @@ pub(crate) fn placement_rect(
     let cell_px = settings.cell_pixel_size.max(1) as i32;
     let total_w = modules_w as i32 * cell_px;
     let total_h = modules_h as i32 * cell_px;
-    let (sx, sy) = direction_signs(settings.origin_direction);
-    let x0 = if sx >= 0 {
-        settings.origin_px.0
-    } else {
-        settings.origin_px.0 - total_w + 1
-    };
-    let y0 = if sy >= 0 {
-        settings.origin_px.1
-    } else {
-        settings.origin_px.1 - total_h + 1
+    let (x0, y0) = match settings.origin_direction {
+        OriginDirection::RightDown => (settings.origin_px.0, settings.origin_px.1),
+        OriginDirection::LeftDown => (settings.origin_px.0 - total_w + 1, settings.origin_px.1),
+        OriginDirection::RightUp => (settings.origin_px.0, settings.origin_px.1 - total_h + 1),
+        OriginDirection::LeftUp => (
+            settings.origin_px.0 - total_w + 1,
+            settings.origin_px.1 - total_h + 1,
+        ),
+        OriginDirection::Center => (
+            settings.origin_px.0 - total_w / 2,
+            settings.origin_px.1 - total_h / 2,
+        ),
     };
     (x0, y0, total_w, total_h)
 }
@@ -120,12 +128,18 @@ pub(crate) fn draw_text_wrapped(
     }
 }
 
-fn direction_signs(dir: OriginDirection) -> (i32, i32) {
+fn matrix_coords_for_direction(
+    dir: OriginDirection,
+    mx: usize,
+    my: usize,
+    matrix_w: usize,
+    matrix_h: usize,
+) -> (usize, usize) {
     match dir {
-        OriginDirection::RightDown => (1, 1),
-        OriginDirection::LeftDown => (-1, 1),
-        OriginDirection::RightUp => (1, -1),
-        OriginDirection::LeftUp => (-1, -1),
+        OriginDirection::RightDown | OriginDirection::Center => (mx, my),
+        OriginDirection::LeftDown => (matrix_w - 1 - mx, my),
+        OriginDirection::RightUp => (mx, matrix_h - 1 - my),
+        OriginDirection::LeftUp => (matrix_w - 1 - mx, matrix_h - 1 - my),
     }
 }
 

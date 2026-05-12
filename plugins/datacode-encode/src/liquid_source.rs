@@ -21,8 +21,6 @@ const DEFAULT_TEMPLATE: &str = concat!(
     "current_time={{ current_time }}\n",
     "time_seconds={{ time_seconds }}\n",
     "frame={{ frame }}\n",
-    "origin=({{ origin_x }}, {{ origin_y }})\n",
-    "origin_direction={{ origin_direction }}\n",
     "cell={{ cell_width }}x{{ cell_height }} modules @ {{ cell_pixel_size }}px\n",
     "{% endif %}\n"
 );

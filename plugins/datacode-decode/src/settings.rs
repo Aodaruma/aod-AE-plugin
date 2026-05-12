@@ -26,6 +26,25 @@ pub(crate) fn read_settings(params: &mut Parameters<Params>) -> Result<RenderSet
         render_decoded: params.get(Params::RenderDecoded)?.as_checkbox()?.value(),
         render_as_hex: params.get(Params::RenderAsHex)?.as_checkbox()?.value(),
         trim_zero_padding: params.get(Params::TrimZeroPadding)?.as_checkbox()?.value(),
+        mask_decoded_region: params
+            .get(Params::MaskDecodedRegion)?
+            .as_checkbox()?
+            .value(),
+        region_only_output: params.get(Params::RegionOnlyOutput)?.as_checkbox()?.value(),
+        mask_opacity: (read_slider(params, Params::MaskOpacity, 0.0, 100.0)? as f32 / 100.0)
+            .clamp(0.0, 1.0),
+        mask_color: {
+            let c = params
+                .get(Params::MaskColor)?
+                .as_color()?
+                .value()
+                .to_pixel32();
+            [c.red, c.green, c.blue]
+        },
+        custom_cell_pixel_size: read_slider(params, Params::CustomCellPixelSize, 1.0, 128.0)?
+            as usize,
+        custom_cell_width: read_slider(params, Params::CustomCellWidth, 1.0, 2048.0)? as usize,
+        custom_cell_height: read_slider(params, Params::CustomCellHeight, 1.0, 2048.0)? as usize,
     })
 }
 
@@ -51,6 +70,8 @@ pub(crate) fn read_format_hint(params: &mut Parameters<Params>) -> Result<Format
         5 => FormatHint::DataMatrix,
         6 => FormatHint::Pdf417,
         7 => FormatHint::Rmqr,
+        8 => FormatHint::ColorCode,
+        9 => FormatHint::JustEmbedding,
         _ => FormatHint::Any,
     })
 }
@@ -79,6 +100,7 @@ pub(crate) fn possible_formats(hint: FormatHint) -> Option<HashSet<BarcodeFormat
         FormatHint::DataMatrix => vec![BarcodeFormat::DATA_MATRIX],
         FormatHint::Pdf417 => vec![BarcodeFormat::PDF_417],
         FormatHint::Rmqr => vec![BarcodeFormat::RECTANGULAR_MICRO_QR_CODE],
+        FormatHint::ColorCode | FormatHint::JustEmbedding => return Some(HashSet::new()),
     };
     Some(set.into_iter().collect())
 }

@@ -4,12 +4,13 @@ pub(crate) fn generate_code_matrix(settings: &RenderSettings) -> Result<CodeMatr
     match settings.code_type {
         DataCodeType::JanEan => {
             let ean = normalize_ean13(&settings.payload_text)?;
-            encode_via_rxing(settings, BarcodeFormat::EAN_13, &ean, false)
+            encode_via_rxing(settings, BarcodeFormat::EAN_13, &ean, false, false)
         }
         DataCodeType::Code39 => encode_via_rxing(
             settings,
             BarcodeFormat::CODE_39,
             &payload_for_1d(settings),
+            false,
             false,
         ),
         DataCodeType::Code128 => encode_via_rxing(
@@ -17,6 +18,7 @@ pub(crate) fn generate_code_matrix(settings: &RenderSettings) -> Result<CodeMatr
             BarcodeFormat::CODE_128,
             &payload_for_1d(settings),
             true,
+            false,
         ),
         DataCodeType::Custom1d => encode_custom_1d(settings),
         DataCodeType::QrCode => encode_qr_like(settings, false),
@@ -25,14 +27,16 @@ pub(crate) fn generate_code_matrix(settings: &RenderSettings) -> Result<CodeMatr
             BarcodeFormat::DATA_MATRIX,
             &settings.payload_text,
             false,
+            true,
         ),
         DataCodeType::Pdf417 => encode_via_rxing(
             settings,
             BarcodeFormat::PDF_417,
             &settings.payload_text,
             false,
+            true,
         ),
-        DataCodeType::IqrFallback => encode_iqr_fallback(settings),
+        DataCodeType::Iqr => encode_iqr(settings),
         DataCodeType::Rmqr => encode_qr_like(settings, true),
         DataCodeType::ColorCode => encode_jab_like(settings),
         DataCodeType::JustEmbedding => encode_just_embedding(settings),
@@ -52,9 +56,12 @@ pub(crate) fn encode_via_rxing(
     format: BarcodeFormat,
     content: &str,
     code128: bool,
+    trim_white_border: bool,
 ) -> Result<CodeMatrix, String> {
-    let mut hints = EncodeHints::default();
-    hints.Margin = Some(settings.margin_modules.to_string());
+    let mut hints = EncodeHints {
+        Margin: Some(settings.margin_modules.to_string()),
+        ..Default::default()
+    };
     if matches!(format, BarcodeFormat::QR_CODE | BarcodeFormat::DATA_MATRIX) {
         hints.ErrorCorrection = Some(ec_level_text(settings.error_correction).into());
     }
@@ -76,7 +83,7 @@ pub(crate) fn encode_via_rxing(
         };
     }
 
-    let matrix = MultiFormatWriter::default()
+    let matrix = MultiFormatWriter
         .encode_with_hints(
             content,
             &format,
@@ -98,7 +105,11 @@ pub(crate) fn encode_via_rxing(
             }
         }
     }
-    Ok(out)
+    if trim_white_border {
+        Ok(trim_white_border_cells(&out))
+    } else {
+        Ok(out)
+    }
 }
 
 pub(crate) fn encode_qr_like(settings: &RenderSettings, rmqr: bool) -> Result<CodeMatrix, String> {
@@ -126,10 +137,8 @@ pub(crate) fn encode_qr_like(settings: &RenderSettings, rmqr: bool) -> Result<Co
     Ok(out)
 }
 
-pub(crate) fn encode_iqr_fallback(settings: &RenderSettings) -> Result<CodeMatrix, String> {
-    let rect = settings.cell_width > settings.cell_height * 2
-        || settings.cell_height > settings.cell_width * 2;
-    encode_qr_like(settings, rect)
+pub(crate) fn encode_iqr(_settings: &RenderSettings) -> Result<CodeMatrix, String> {
+    Err("IQR ENCODING IS NOT AVAILABLE IN THE CURRENT BACKEND".into())
 }
 
 pub(crate) fn encode_custom_1d(settings: &RenderSettings) -> Result<CodeMatrix, String> {
@@ -174,18 +183,19 @@ pub(crate) fn encode_jab_like(settings: &RenderSettings) -> Result<CodeMatrix, S
     if settings.cell_width < 12 || settings.cell_height < 12 {
         return Err("JAB-LIKE MODE REQUIRES CELL WIDTH/HEIGHT >= 12".into());
     }
-    let mut data = settings.payload_bytes.clone();
-    if settings.embed_recovery {
-        data = append_recovery(data);
-    }
-    let bits = bytes_to_bits(&data);
+    let data = custom_code::pack_payload(
+        &settings.payload_bytes,
+        custom_code::KIND_COLOR_CODE,
+        settings.embed_recovery,
+    );
+    let bits = custom_code::bytes_to_bits(&data);
     let mut out = CodeMatrix::new(settings.cell_width, settings.cell_height, [1.0, 1.0, 1.0]);
     draw_finder(&mut out, 0, 0);
     let out_w = out.width as i32;
     let out_h = out.height as i32;
     draw_finder(&mut out, out_w - 5, 0);
     draw_finder(&mut out, 0, out_h - 5);
-    let positions = jab_fill_positions(out.width, out.height);
+    let positions = custom_code::jab_fill_positions(out.width, out.height);
     let capacity = positions.len() * 3;
     if bits.len() > capacity {
         return Err("JAB-LIKE PAYLOAD EXCEEDS CAPACITY".into());
@@ -204,18 +214,19 @@ pub(crate) fn encode_jab_like(settings: &RenderSettings) -> Result<CodeMatrix, S
         out.set(
             *x,
             *y,
-            palette(((b0 as usize) << 2) | ((b1 as usize) << 1) | b2 as usize),
+            custom_code::palette(((b0 as usize) << 2) | ((b1 as usize) << 1) | b2 as usize),
         );
     }
     Ok(out)
 }
 
 pub(crate) fn encode_just_embedding(settings: &RenderSettings) -> Result<CodeMatrix, String> {
-    let mut data = settings.payload_bytes.clone();
-    if settings.embed_recovery {
-        data = append_recovery(data);
-    }
-    let bits = bytes_to_bits(&data);
+    let kind = match settings.embed_mode {
+        EmbedMode::Monochrome => custom_code::KIND_JUST_MONO,
+        EmbedMode::Color => custom_code::KIND_JUST_COLOR,
+    };
+    let data = custom_code::pack_payload(&settings.payload_bytes, kind, settings.embed_recovery);
+    let bits = custom_code::bytes_to_bits(&data);
     let mut out = CodeMatrix::new(settings.cell_width, settings.cell_height, [1.0, 1.0, 1.0]);
     match settings.embed_mode {
         EmbedMode::Monochrome => {
@@ -255,7 +266,7 @@ pub(crate) fn encode_just_embedding(settings: &RenderSettings) -> Result<CodeMat
                 out.set(
                     i % out.width,
                     i / out.width,
-                    palette(((b0 as usize) << 2) | ((b1 as usize) << 1) | b2 as usize),
+                    custom_code::palette(((b0 as usize) << 2) | ((b1 as usize) << 1) | b2 as usize),
                 );
             }
         }
@@ -305,7 +316,7 @@ pub(crate) fn parse_hex_binary(input: &str) -> Result<Vec<u8>, String> {
     if normalized.is_empty() {
         return Ok(Vec::new());
     }
-    if normalized.len() % 2 != 0 {
+    if !normalized.len().is_multiple_of(2) {
         return Err("HEX PAYLOAD MUST HAVE EVEN LENGTH".into());
     }
     let mut out = Vec::with_capacity(normalized.len() / 2);
@@ -373,27 +384,6 @@ pub(crate) fn append_recovery(mut v: Vec<u8>) -> Vec<u8> {
     v.push(l);
     v
 }
-pub(crate) fn bytes_to_bits(data: &[u8]) -> Vec<bool> {
-    let mut bits = Vec::with_capacity(data.len() * 8);
-    for b in data {
-        for shift in (0..8).rev() {
-            bits.push(((b >> shift) & 1) == 1);
-        }
-    }
-    bits
-}
-pub(crate) fn palette(idx: usize) -> [f32; 3] {
-    match idx & 7 {
-        0 => [0.0, 0.0, 0.0],
-        1 => [1.0, 0.0, 0.0],
-        2 => [0.0, 1.0, 0.0],
-        3 => [0.0, 0.0, 1.0],
-        4 => [1.0, 1.0, 0.0],
-        5 => [1.0, 0.0, 1.0],
-        6 => [0.0, 1.0, 1.0],
-        _ => [1.0, 1.0, 1.0],
-    }
-}
 pub(crate) fn draw_finder(matrix: &mut CodeMatrix, x0: i32, y0: i32) {
     for y in 0..5_i32 {
         for x in 0..5_i32 {
@@ -420,17 +410,42 @@ pub(crate) fn draw_finder(matrix: &mut CodeMatrix, x0: i32, y0: i32) {
         }
     }
 }
-pub(crate) fn jab_fill_positions(w: usize, h: usize) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    for y in 0..h {
-        for x in 0..w {
-            let tl = x < 5 && y < 5;
-            let tr = x + 5 > w && y < 5;
-            let bl = x < 5 && y + 5 > h;
-            if !(tl || tr || bl) {
-                out.push((x, y));
+
+fn trim_white_border_cells(matrix: &CodeMatrix) -> CodeMatrix {
+    let mut min_x = matrix.width;
+    let mut min_y = matrix.height;
+    let mut max_x = 0usize;
+    let mut max_y = 0usize;
+    let mut has_fg = false;
+
+    for y in 0..matrix.height {
+        for x in 0..matrix.width {
+            if is_foreground_cell(matrix.get(x, y)) {
+                has_fg = true;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
             }
         }
     }
+
+    if !has_fg {
+        return matrix.clone();
+    }
+
+    let out_w = max_x - min_x + 1;
+    let out_h = max_y - min_y + 1;
+    let mut out = CodeMatrix::new(out_w, out_h, [1.0, 1.0, 1.0]);
+    for y in 0..out_h {
+        for x in 0..out_w {
+            out.set(x, y, matrix.get(min_x + x, min_y + y));
+        }
+    }
     out
+}
+
+fn is_foreground_cell(rgb: [f32; 3]) -> bool {
+    const EPS: f32 = 1.0e-6;
+    rgb[0].abs() <= EPS && rgb[1].abs() <= EPS && rgb[2].abs() <= EPS
 }

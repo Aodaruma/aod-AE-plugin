@@ -1,4 +1,8 @@
-#![allow(clippy::drop_non_drop, clippy::question_mark)]
+#![allow(
+    clippy::drop_non_drop,
+    clippy::question_mark,
+    clippy::too_many_arguments
+)]
 
 use after_effects as ae;
 use std::env;
@@ -8,6 +12,7 @@ use qrqrpar::{Color as QrColor, EcLevel as QrEcLevel, QrCode, RmqrStrategy};
 use rxing::pdf417::encoder::Dimensions as Pdf417Dimensions;
 use rxing::{BarcodeFormat, EncodeHints, MultiFormatWriter, Writer};
 use utils::ToPixel;
+use utils::datacode_custom as custom_code;
 
 mod codec;
 mod debug_log;
@@ -81,7 +86,7 @@ enum DataCodeType {
     QrCode,
     DataMatrix,
     Pdf417,
-    IqrFallback,
+    Iqr,
     Rmqr,
     ColorCode,
     JustEmbedding,
@@ -128,6 +133,7 @@ enum OriginDirection {
     LeftDown,
     RightUp,
     LeftUp,
+    Center,
 }
 
 #[derive(Clone, Debug)]
@@ -207,7 +213,7 @@ impl AdobePluginGlobal for Plugin {
                     "QR Code",
                     "Data Matrix",
                     "PDF417",
-                    "iQR (Fallback)",
+                    "iQR",
                     "rMQR",
                     "Color Code (JAB-like)",
                     "Just Embedding",
@@ -278,15 +284,15 @@ impl AdobePluginGlobal for Plugin {
             Params::OriginPos,
             "Origin Pos",
             PointDef::setup(|p| {
-                p.set_default((10.0, 10.0));
+                p.set_default((50.0, 50.0));
             }),
         )?;
         params.add_with_flags(
             Params::OriginDirection,
             "Origin Direction",
             PopupDef::setup(|d| {
-                d.set_options(&["Right/Down", "Left/Down", "Right/Up", "Left/Up"]);
-                d.set_default(1);
+                d.set_options(&["Right/Down", "Left/Down", "Right/Up", "Left/Up", "Center"]);
+                d.set_default(5);
             }),
             ParamFlag::SUPERVISE,
             ParamUIFlags::empty(),
@@ -510,7 +516,7 @@ impl Plugin {
         let code_type = read_code_type(params)?;
         let show_code128 = matches!(code_type, DataCodeType::Code128);
         let show_pdf417 = matches!(code_type, DataCodeType::Pdf417);
-        let show_rmqr = matches!(code_type, DataCodeType::Rmqr | DataCodeType::IqrFallback);
+        let show_rmqr = matches!(code_type, DataCodeType::Rmqr);
         let show_embed = matches!(
             code_type,
             DataCodeType::ColorCode | DataCodeType::JustEmbedding | DataCodeType::Custom1d
@@ -525,7 +531,6 @@ impl Plugin {
             DataCodeType::QrCode
                 | DataCodeType::DataMatrix
                 | DataCodeType::Pdf417
-                | DataCodeType::IqrFallback
                 | DataCodeType::Rmqr
         );
 
@@ -686,11 +691,11 @@ impl AdobePluginInstance for SequenceState {
 
     fn handle_command(&mut self, plugin: &mut PluginState, cmd: Command) -> Result<(), Error> {
         match cmd {
-            Command::UserChangedParam { param_index } => {
-                if plugin.params.type_at(param_index) == Params::EditLiquid {
-                    dlog::log("UserChangedParam(sequence): EditLiquid");
-                    self.open_liquid_editor(plugin)?;
-                }
+            Command::UserChangedParam { param_index }
+                if plugin.params.type_at(param_index) == Params::EditLiquid =>
+            {
+                dlog::log("UserChangedParam(sequence): EditLiquid");
+                self.open_liquid_editor(plugin)?;
             }
             Command::SmartPreRender { mut extra } => {
                 dlog::log("SmartPreRender(sequence) begin");

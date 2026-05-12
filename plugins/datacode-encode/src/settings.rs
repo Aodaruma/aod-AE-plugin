@@ -12,7 +12,7 @@ pub(crate) fn read_code_type(params: &mut Parameters<Params>) -> Result<DataCode
             5 => DataCodeType::QrCode,
             6 => DataCodeType::DataMatrix,
             7 => DataCodeType::Pdf417,
-            8 => DataCodeType::IqrFallback,
+            8 => DataCodeType::Iqr,
             9 => DataCodeType::Rmqr,
             10 => DataCodeType::ColorCode,
             11 => DataCodeType::JustEmbedding,
@@ -49,6 +49,7 @@ pub(crate) fn read_settings(
         2 => OriginDirection::LeftDown,
         3 => OriginDirection::RightUp,
         4 => OriginDirection::LeftUp,
+        5 => OriginDirection::Center,
         _ => OriginDirection::RightDown,
     };
     let origin_direction_name = match origin_direction_popup {
@@ -56,6 +57,7 @@ pub(crate) fn read_settings(
         OriginDirection::LeftDown => "left_down",
         OriginDirection::RightUp => "right_up",
         OriginDirection::LeftUp => "left_up",
+        OriginDirection::Center => "center",
     };
     let cell_pixel_size = read_slider(params, Params::CellPixelSize, 1.0, 128.0)? as usize;
     let cell_width = read_slider(params, Params::CellWidth, 1.0, 2048.0)? as usize;

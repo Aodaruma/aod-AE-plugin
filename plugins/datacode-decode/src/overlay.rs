@@ -20,6 +20,24 @@ pub(crate) fn draw_rect_outline(
     }
 }
 
+pub(crate) fn draw_filled_rect(
+    overlay: &mut [PixelF32],
+    frame_w: usize,
+    frame_h: usize,
+    rect: (i32, i32, i32, i32),
+    rgb: [f32; 3],
+    alpha: f32,
+) {
+    let (x0, y0, w, h) = rect;
+    let x1 = x0 + w - 1;
+    let y1 = y0 + h - 1;
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            set_overlay_rgb(overlay, frame_w, frame_h, x, y, rgb, alpha);
+        }
+    }
+}
+
 pub(crate) fn draw_error_overlay(
     overlay: &mut [PixelF32],
     frame_w: usize,
@@ -253,24 +271,52 @@ pub(crate) fn composite_with_overlay(
     in_layer: Layer,
     out_layer: &mut Layer,
     overlay: &[PixelF32],
+    region_only_rect: Option<(i32, i32, i32, i32)>,
 ) -> Result<(), Error> {
     let width = out_layer.width();
     let height = out_layer.height();
     in_layer.iterate_with(out_layer, 0, height as i32, None, |x, y, src, mut dst| {
         let mut out = read_input_pixel(src);
+
+        if let Some(rect) = region_only_rect
+            && !point_in_rect(x, y, rect)
+        {
+            out = transparent_pixel();
+            write_output_pixel(&mut dst, out);
+            return Ok(());
+        }
+
         if x >= 0 && y >= 0 {
             let xu = x as usize;
             let yu = y as usize;
             if xu < width && yu < height {
                 let ov = overlay[yu * width + xu];
                 if ov.alpha > 0.0 {
-                    out = ov;
+                    out = blend_overlay_preserve_alpha(out, ov);
                 }
             }
         }
         write_output_pixel(&mut dst, out);
         Ok(())
     })
+}
+
+fn point_in_rect(x: i32, y: i32, rect: (i32, i32, i32, i32)) -> bool {
+    let (rx, ry, rw, rh) = rect;
+    if rw <= 0 || rh <= 0 {
+        return false;
+    }
+    x >= rx && y >= ry && x < rx + rw && y < ry + rh
+}
+
+fn blend_overlay_preserve_alpha(base: PixelF32, overlay: PixelF32) -> PixelF32 {
+    let a = overlay.alpha.clamp(0.0, 1.0);
+    PixelF32 {
+        alpha: base.alpha,
+        red: (base.red * (1.0 - a) + overlay.red * a).clamp(0.0, 1.0),
+        green: (base.green * (1.0 - a) + overlay.green * a).clamp(0.0, 1.0),
+        blue: (base.blue * (1.0 - a) + overlay.blue * a).clamp(0.0, 1.0),
+    }
 }
 
 pub(crate) fn set_overlay_rgb(
