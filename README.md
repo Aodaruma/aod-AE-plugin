@@ -69,6 +69,8 @@ template.
   - 不透明または色領域をランダム・位置・インデックスで色分けします / Colors connected regions with random, positional, or index-based schemes.
 - AOD_SingularValueDecompose
   - レイヤーに2D特異値分解を適用してLow-rank近似を再構成します / Performs 2D singular value decomposition and low-rank approximation on RGBA channels.
+- AOD_TextureStroke
+  - レイヤーのマスク輪郭からテクスチャ付きストロークを生成します / Generates textured strokes from layer mask contours.
 - AOD_VoronoiGenerate
   - ボロノイテクスチャマップを生成します / Generates Voronoi texture maps.
 
