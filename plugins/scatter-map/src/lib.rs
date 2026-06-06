@@ -56,6 +56,8 @@ enum Params {
     OutputGroupStart,
     Seed,
     EdgeMode,
+    BlendMode,
+    BlendOpacity,
     PreserveAlpha,
     Clamp32,
     OutputGroupEnd,
@@ -158,6 +160,17 @@ enum EdgeMode {
     Mirror,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OutputBlendMode {
+    None,
+    Normal,
+    Add,
+    Multiply,
+    Screen,
+    Overlay,
+    Difference,
+}
+
 #[derive(Clone, Copy)]
 struct RenderSettings {
     color_space: ScatterColorSpace,
@@ -186,6 +199,8 @@ struct RenderSettings {
     texture_influence: f32,
     seed: u32,
     edge_mode: EdgeMode,
+    blend_mode: OutputBlendMode,
+    blend_opacity: f32,
     preserve_alpha: bool,
     clamp_32: bool,
 }
@@ -336,7 +351,7 @@ impl AdobePluginGlobal for Plugin {
                 d.set_valid_max(4096.0);
                 d.set_slider_min(1.0);
                 d.set_slider_max(256.0);
-                d.set_default(8.0);
+                d.set_default(2.0);
                 d.set_precision(3);
             }),
         )?;
@@ -609,6 +624,38 @@ impl AdobePluginGlobal for Plugin {
                     }),
                 )?;
 
+                params.add_with_flags(
+                    Params::BlendMode,
+                    "Blend With Original",
+                    PopupDef::setup(|d| {
+                        d.set_options(&[
+                            "None",
+                            "Normal",
+                            "Add",
+                            "Multiply",
+                            "Screen",
+                            "Overlay",
+                            "Difference",
+                        ]);
+                        d.set_default(1);
+                    }),
+                    ae::ParamFlag::SUPERVISE,
+                    ae::ParamUIFlags::empty(),
+                )?;
+
+                params.add(
+                    Params::BlendOpacity,
+                    "Blend Opacity (%)",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(0.0);
+                        d.set_valid_max(100.0);
+                        d.set_slider_min(0.0);
+                        d.set_slider_max(100.0);
+                        d.set_default(100.0);
+                        d.set_precision(1);
+                    }),
+                )?;
+
                 params.add(
                     Params::PreserveAlpha,
                     "Preserve Alpha",
@@ -807,6 +854,15 @@ impl Plugin {
         )?;
         self.set_param_visible(in_data, params, Params::TextureInfluence, use_texture)?;
 
+        let blend_mode =
+            output_blend_mode_from_popup(params.get(Params::BlendMode)?.as_popup()?.value());
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::BlendOpacity,
+            !matches!(blend_mode, OutputBlendMode::None),
+        )?;
+
         Ok(())
     }
 
@@ -1004,6 +1060,8 @@ impl Plugin {
             {
                 out_px.alpha = center.alpha;
             }
+            out_px =
+                blend_with_original(out_px, center, settings.blend_mode, settings.blend_opacity);
             out_px = sanitize_pixel_for_output(out_px, out_is_f32, settings.clamp_32);
 
             match out_world_type {
@@ -1031,6 +1089,7 @@ fn param_affects_ui(param: Params) -> bool {
             | Params::AnisotropyMapMode
             | Params::TextureMode
             | Params::TextureMapMode
+            | Params::BlendMode
     )
 }
 
@@ -1115,6 +1174,12 @@ fn read_render_settings(params: &mut Parameters<Params>) -> Result<RenderSetting
             .clamp(0.0, 1.0),
         seed: params.get(Params::Seed)?.as_slider()?.value() as u32,
         edge_mode: edge_mode_from_popup(params.get(Params::EdgeMode)?.as_popup()?.value()),
+        blend_mode: output_blend_mode_from_popup(
+            params.get(Params::BlendMode)?.as_popup()?.value(),
+        ),
+        blend_opacity: (params.get(Params::BlendOpacity)?.as_float_slider()?.value() as f32
+            / 100.0)
+            .clamp(0.0, 1.0),
         preserve_alpha: params.get(Params::PreserveAlpha)?.as_checkbox()?.value(),
         clamp_32: params.get(Params::Clamp32)?.as_checkbox()?.value(),
     })
@@ -1211,6 +1276,18 @@ fn edge_mode_from_popup(value: i32) -> EdgeMode {
         3 => EdgeMode::Tile,
         4 => EdgeMode::Mirror,
         _ => EdgeMode::Repeat,
+    }
+}
+
+fn output_blend_mode_from_popup(value: i32) -> OutputBlendMode {
+    match value {
+        2 => OutputBlendMode::Normal,
+        3 => OutputBlendMode::Add,
+        4 => OutputBlendMode::Multiply,
+        5 => OutputBlendMode::Screen,
+        6 => OutputBlendMode::Overlay,
+        7 => OutputBlendMode::Difference,
+        _ => OutputBlendMode::None,
     }
 }
 
@@ -2063,6 +2140,50 @@ fn lerp_pixel(a: PixelF32, b: PixelF32, t: f32) -> PixelF32 {
         green: a.green + (b.green - a.green) * t,
         blue: a.blue + (b.blue - a.blue) * t,
         alpha: a.alpha + (b.alpha - a.alpha) * t,
+    }
+}
+
+fn blend_with_original(
+    scatter: PixelF32,
+    original: PixelF32,
+    mode: OutputBlendMode,
+    opacity: f32,
+) -> PixelF32 {
+    if matches!(mode, OutputBlendMode::None) {
+        return scatter;
+    }
+
+    let opacity = opacity.clamp(0.0, 1.0);
+    if opacity <= 0.0 {
+        return original;
+    }
+
+    let red = blend_channel(original.red, scatter.red, mode);
+    let green = blend_channel(original.green, scatter.green, mode);
+    let blue = blend_channel(original.blue, scatter.blue, mode);
+
+    PixelF32 {
+        red: lerp(original.red, red, opacity),
+        green: lerp(original.green, green, opacity),
+        blue: lerp(original.blue, blue, opacity),
+        alpha: lerp(original.alpha, scatter.alpha, opacity),
+    }
+}
+
+fn blend_channel(base: f32, source: f32, mode: OutputBlendMode) -> f32 {
+    match mode {
+        OutputBlendMode::None | OutputBlendMode::Normal => source,
+        OutputBlendMode::Add => base + source,
+        OutputBlendMode::Multiply => base * source,
+        OutputBlendMode::Screen => 1.0 - (1.0 - base) * (1.0 - source),
+        OutputBlendMode::Overlay => {
+            if base <= 0.5 {
+                2.0 * base * source
+            } else {
+                1.0 - 2.0 * (1.0 - base) * (1.0 - source)
+            }
+        }
+        OutputBlendMode::Difference => (base - source).abs(),
     }
 }
 

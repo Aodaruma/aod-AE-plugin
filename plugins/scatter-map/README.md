@@ -8,6 +8,8 @@ Scatter Algorithm defaults to fBM Vector displacement and also provides Cell Blo
 
 Sampling Distribution controls the radial displacement curve with Uniform, Gaussian, and Exponential modes.
 
+Output can optionally blend the scatter result back with the original layer using selectable blend modes and opacity.
+
 ## Building the Plugin
 
 See the [main README](../../README.md) for instructions on how to build the plugin.
