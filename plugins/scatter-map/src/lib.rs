@@ -26,20 +26,29 @@ enum Params {
     SamplingDistribution,
     DistributionShape,
     GrainSize,
+    NoiseOffset,
     Direction,
     Anisotropy,
     MapGroupStart,
     UseScatterMap,
+    ScatterMapInput,
     ScatterMapLayer,
     ScatterMapMode,
     ScatterMapChannel,
     UseGrainMap,
+    GrainMapInput,
     GrainMapLayer,
     GrainMapMode,
     GrainMapChannel,
+    UseNoiseOffsetMap,
+    NoiseOffsetMapInput,
+    NoiseOffsetMapLayer,
+    NoiseOffsetMapMode,
+    NoiseOffsetDisplacement,
     MapGroupEnd,
     AnisotropyGroupStart,
     UseAnisotropyMap,
+    AnisotropyMapInput,
     AnisotropyMapLayer,
     AnisotropyMapMode,
     UseAnisotropyDirection,
@@ -48,6 +57,7 @@ enum Params {
     AnisotropyGroupEnd,
     TextureGroupStart,
     TextureMode,
+    TextureInput,
     TextureLayer,
     TextureMapMode,
     TextureMapChannel,
@@ -55,6 +65,7 @@ enum Params {
     TextureGroupEnd,
     OutputGroupStart,
     Seed,
+    NoiseW,
     EdgeMode,
     BlendMode,
     BlendOpacity,
@@ -125,6 +136,12 @@ enum RgbaChannel {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum MapLayerSource {
+    LayerOrInput,
+    InputLayer,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum AnisotropyMapMode {
     HueSaturation,
     Uv,
@@ -179,25 +196,36 @@ struct RenderSettings {
     scatter_algorithm: ScatterAlgorithm,
     sampling_distribution: SamplingDistribution,
     distribution_shape: f32,
+    noise_offset_x: f32,
+    noise_offset_y: f32,
     use_scatter_map: bool,
+    scatter_map_input: MapLayerSource,
     scatter_map_mode: ScalarMapMode,
     scatter_map_channel: RgbaChannel,
     grain_size: f32,
     use_grain_map: bool,
+    grain_map_input: MapLayerSource,
     grain_map_mode: ScalarMapMode,
     grain_map_channel: RgbaChannel,
+    use_noise_offset_map: bool,
+    noise_offset_map_input: MapLayerSource,
+    noise_offset_map_mode: AnisotropyMapMode,
+    noise_offset_displacement: f32,
     direction: f32,
     anisotropy: f32,
     use_anisotropy_map: bool,
+    anisotropy_map_input: MapLayerSource,
     anisotropy_map_mode: AnisotropyMapMode,
     use_anisotropy_direction: bool,
     use_anisotropy_strength: bool,
     anisotropy_divergence_source: DivergenceSource,
     texture_mode: TextureMode,
+    texture_input: MapLayerSource,
     texture_map_mode: ScalarMapMode,
     texture_map_channel: RgbaChannel,
     texture_influence: f32,
     seed: u32,
+    noise_w: f32,
     edge_mode: EdgeMode,
     blend_mode: OutputBlendMode,
     blend_opacity: f32,
@@ -232,6 +260,9 @@ struct OutputCoord {
 struct ScatterSampleParams {
     center_x: f32,
     center_y: f32,
+    noise_x: f32,
+    noise_y: f32,
+    noise_w: f32,
     radius: f32,
     grain: f32,
     angle: f32,
@@ -357,6 +388,14 @@ impl AdobePluginGlobal for Plugin {
         )?;
 
         params.add(
+            Params::NoiseOffset,
+            "Noise Offset (XY)",
+            PointDef::setup(|d| {
+                d.set_default((0.0, 0.0));
+            }),
+        )?;
+
+        params.add(
             Params::Direction,
             "Direction (deg)",
             FloatSliderDef::setup(|d| {
@@ -398,6 +437,17 @@ impl AdobePluginGlobal for Plugin {
                     ae::ParamUIFlags::empty(),
                 )?;
 
+                params.add_with_flags(
+                    Params::ScatterMapInput,
+                    "Scatter Map Input",
+                    PopupDef::setup(|d| {
+                        d.set_options(&["Layer (None = Input)", "Input Layer (Effect & Mask)"]);
+                        d.set_default(1);
+                    }),
+                    ae::ParamFlag::SUPERVISE,
+                    ae::ParamUIFlags::empty(),
+                )?;
+
                 params.add(
                     Params::ScatterMapLayer,
                     "Scatter Map Layer",
@@ -434,6 +484,17 @@ impl AdobePluginGlobal for Plugin {
                     ae::ParamUIFlags::empty(),
                 )?;
 
+                params.add_with_flags(
+                    Params::GrainMapInput,
+                    "Grain Map Input",
+                    PopupDef::setup(|d| {
+                        d.set_options(&["Layer (None = Input)", "Input Layer (Effect & Mask)"]);
+                        d.set_default(1);
+                    }),
+                    ae::ParamFlag::SUPERVISE,
+                    ae::ParamUIFlags::empty(),
+                )?;
+
                 params.add(Params::GrainMapLayer, "Grain Map Layer", LayerDef::new())?;
 
                 params.add_with_flags(
@@ -456,6 +517,61 @@ impl AdobePluginGlobal for Plugin {
                     }),
                 )?;
 
+                params.add_with_flags(
+                    Params::UseNoiseOffsetMap,
+                    "Map Noise Offset",
+                    CheckBoxDef::setup(|d| {
+                        d.set_default(false);
+                    }),
+                    ae::ParamFlag::SUPERVISE,
+                    ae::ParamUIFlags::empty(),
+                )?;
+
+                params.add_with_flags(
+                    Params::NoiseOffsetMapInput,
+                    "Noise Offset Map Input",
+                    PopupDef::setup(|d| {
+                        d.set_options(&["Layer (None = Input)", "Input Layer (Effect & Mask)"]);
+                        d.set_default(1);
+                    }),
+                    ae::ParamFlag::SUPERVISE,
+                    ae::ParamUIFlags::empty(),
+                )?;
+
+                params.add(
+                    Params::NoiseOffsetMapLayer,
+                    "Noise Offset Map Layer",
+                    LayerDef::new(),
+                )?;
+
+                params.add(
+                    Params::NoiseOffsetMapMode,
+                    "Noise Offset Map Mode",
+                    PopupDef::setup(|d| {
+                        d.set_options(&[
+                            "Hue / Saturation",
+                            "UV (XY -> RG)",
+                            "Normal (RG)",
+                            "Divergence Direction",
+                            "Divergence Rotation",
+                        ]);
+                        d.set_default(2);
+                    }),
+                )?;
+
+                params.add(
+                    Params::NoiseOffsetDisplacement,
+                    "Noise Offset Displace (px)",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(0.0);
+                        d.set_valid_max(4096.0);
+                        d.set_slider_min(0.0);
+                        d.set_slider_max(256.0);
+                        d.set_default(0.0);
+                        d.set_precision(3);
+                    }),
+                )?;
+
                 Ok(())
             },
         )?;
@@ -471,6 +587,17 @@ impl AdobePluginGlobal for Plugin {
                     "Map Anisotropy",
                     CheckBoxDef::setup(|d| {
                         d.set_default(false);
+                    }),
+                    ae::ParamFlag::SUPERVISE,
+                    ae::ParamUIFlags::empty(),
+                )?;
+
+                params.add_with_flags(
+                    Params::AnisotropyMapInput,
+                    "Anisotropy Map Input",
+                    PopupDef::setup(|d| {
+                        d.set_options(&["Layer (None = Input)", "Input Layer (Effect & Mask)"]);
+                        d.set_default(1);
                     }),
                     ae::ParamFlag::SUPERVISE,
                     ae::ParamUIFlags::empty(),
@@ -558,6 +685,17 @@ impl AdobePluginGlobal for Plugin {
                     ae::ParamUIFlags::empty(),
                 )?;
 
+                params.add_with_flags(
+                    Params::TextureInput,
+                    "Texture Input",
+                    PopupDef::setup(|d| {
+                        d.set_options(&["Layer (None = Input)", "Input Layer (Effect & Mask)"]);
+                        d.set_default(1);
+                    }),
+                    ae::ParamFlag::SUPERVISE,
+                    ae::ParamUIFlags::empty(),
+                )?;
+
                 params.add(Params::TextureLayer, "Texture Layer", LayerDef::new())?;
 
                 params.add_with_flags(
@@ -612,6 +750,19 @@ impl AdobePluginGlobal for Plugin {
                         d.set_slider_min(0);
                         d.set_slider_max(10000);
                         d.set_default(0);
+                    }),
+                )?;
+
+                params.add(
+                    Params::NoiseW,
+                    "Noise W (Z)",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(-100000.0);
+                        d.set_valid_max(100000.0);
+                        d.set_slider_min(-100.0);
+                        d.set_slider_max(100.0);
+                        d.set_default(0.0);
+                        d.set_precision(3);
                     }),
                 )?;
 
@@ -776,9 +927,17 @@ impl Plugin {
         )?;
 
         let use_scatter_map = params.get(Params::UseScatterMap)?.as_checkbox()?.value();
+        let scatter_map_input =
+            map_layer_source_from_popup(params.get(Params::ScatterMapInput)?.as_popup()?.value());
         let scatter_map_mode =
             scalar_map_mode_from_popup(params.get(Params::ScatterMapMode)?.as_popup()?.value());
-        self.set_param_visible(in_data, params, Params::ScatterMapLayer, use_scatter_map)?;
+        self.set_param_visible(in_data, params, Params::ScatterMapInput, use_scatter_map)?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::ScatterMapLayer,
+            use_scatter_map && matches!(scatter_map_input, MapLayerSource::LayerOrInput),
+        )?;
         self.set_param_visible(in_data, params, Params::ScatterMapMode, use_scatter_map)?;
         self.set_param_visible(
             in_data,
@@ -788,9 +947,17 @@ impl Plugin {
         )?;
 
         let use_grain_map = params.get(Params::UseGrainMap)?.as_checkbox()?.value();
+        let grain_map_input =
+            map_layer_source_from_popup(params.get(Params::GrainMapInput)?.as_popup()?.value());
         let grain_map_mode =
             scalar_map_mode_from_popup(params.get(Params::GrainMapMode)?.as_popup()?.value());
-        self.set_param_visible(in_data, params, Params::GrainMapLayer, use_grain_map)?;
+        self.set_param_visible(in_data, params, Params::GrainMapInput, use_grain_map)?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::GrainMapLayer,
+            use_grain_map && matches!(grain_map_input, MapLayerSource::LayerOrInput),
+        )?;
         self.set_param_visible(in_data, params, Params::GrainMapMode, use_grain_map)?;
         self.set_param_visible(
             in_data,
@@ -799,7 +966,42 @@ impl Plugin {
             use_grain_map && matches!(grain_map_mode, ScalarMapMode::RgbaChannel),
         )?;
 
+        let use_noise_offset_map = params
+            .get(Params::UseNoiseOffsetMap)?
+            .as_checkbox()?
+            .value();
+        let noise_offset_map_input = map_layer_source_from_popup(
+            params.get(Params::NoiseOffsetMapInput)?.as_popup()?.value(),
+        );
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::NoiseOffsetMapInput,
+            use_noise_offset_map,
+        )?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::NoiseOffsetMapLayer,
+            use_noise_offset_map && matches!(noise_offset_map_input, MapLayerSource::LayerOrInput),
+        )?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::NoiseOffsetMapMode,
+            use_noise_offset_map,
+        )?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::NoiseOffsetDisplacement,
+            use_noise_offset_map,
+        )?;
+
         let use_anisotropy_map = params.get(Params::UseAnisotropyMap)?.as_checkbox()?.value();
+        let anisotropy_map_input = map_layer_source_from_popup(
+            params.get(Params::AnisotropyMapInput)?.as_popup()?.value(),
+        );
         let anisotropy_mode = anisotropy_map_mode_from_popup(
             params.get(Params::AnisotropyMapMode)?.as_popup()?.value(),
         );
@@ -811,8 +1013,14 @@ impl Plugin {
         self.set_param_visible(
             in_data,
             params,
-            Params::AnisotropyMapLayer,
+            Params::AnisotropyMapInput,
             use_anisotropy_map,
+        )?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::AnisotropyMapLayer,
+            use_anisotropy_map && matches!(anisotropy_map_input, MapLayerSource::LayerOrInput),
         )?;
         self.set_param_visible(
             in_data,
@@ -842,9 +1050,17 @@ impl Plugin {
         let texture_mode =
             texture_mode_from_popup(params.get(Params::TextureMode)?.as_popup()?.value());
         let use_texture = !matches!(texture_mode, TextureMode::Off);
+        let texture_input =
+            map_layer_source_from_popup(params.get(Params::TextureInput)?.as_popup()?.value());
         let texture_map_mode =
             scalar_map_mode_from_popup(params.get(Params::TextureMapMode)?.as_popup()?.value());
-        self.set_param_visible(in_data, params, Params::TextureLayer, use_texture)?;
+        self.set_param_visible(in_data, params, Params::TextureInput, use_texture)?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::TextureLayer,
+            use_texture && matches!(texture_input, MapLayerSource::LayerOrInput),
+        )?;
         self.set_param_visible(in_data, params, Params::TextureMapMode, use_texture)?;
         self.set_param_visible(
             in_data,
@@ -942,20 +1158,68 @@ impl Plugin {
         let settings = read_render_settings(params)?;
         let source = read_layer_buffer(&in_layer);
 
-        let scatter_map =
-            checkout_layer_buffer(params, Params::ScatterMapLayer, settings.use_scatter_map)?;
-        let grain_map =
-            checkout_layer_buffer(params, Params::GrainMapLayer, settings.use_grain_map)?;
-        let anisotropy_map = checkout_layer_buffer(
+        let scatter_map_layer = checkout_layer_buffer(
+            params,
+            Params::ScatterMapLayer,
+            should_checkout_map_layer(settings.use_scatter_map, settings.scatter_map_input),
+        )?;
+        let grain_map_layer = checkout_layer_buffer(
+            params,
+            Params::GrainMapLayer,
+            should_checkout_map_layer(settings.use_grain_map, settings.grain_map_input),
+        )?;
+        let noise_offset_map_layer = checkout_layer_buffer(
+            params,
+            Params::NoiseOffsetMapLayer,
+            should_checkout_map_layer(
+                settings.use_noise_offset_map,
+                settings.noise_offset_map_input,
+            ),
+        )?;
+        let anisotropy_map_layer = checkout_layer_buffer(
             params,
             Params::AnisotropyMapLayer,
-            settings.use_anisotropy_map,
+            should_checkout_map_layer(settings.use_anisotropy_map, settings.anisotropy_map_input),
         )?;
-        let texture = checkout_layer_buffer(
+        let texture_layer = checkout_layer_buffer(
             params,
             Params::TextureLayer,
-            !matches!(settings.texture_mode, TextureMode::Off),
+            should_checkout_map_layer(
+                !matches!(settings.texture_mode, TextureMode::Off),
+                settings.texture_input,
+            ),
         )?;
+
+        let scatter_map = map_buffer_ref(
+            scatter_map_layer.as_ref(),
+            &source,
+            settings.use_scatter_map,
+            settings.scatter_map_input,
+        );
+        let grain_map = map_buffer_ref(
+            grain_map_layer.as_ref(),
+            &source,
+            settings.use_grain_map,
+            settings.grain_map_input,
+        );
+        let noise_offset_map = map_buffer_ref(
+            noise_offset_map_layer.as_ref(),
+            &source,
+            settings.use_noise_offset_map,
+            settings.noise_offset_map_input,
+        );
+        let anisotropy_map = map_buffer_ref(
+            anisotropy_map_layer.as_ref(),
+            &source,
+            settings.use_anisotropy_map,
+            settings.anisotropy_map_input,
+        );
+        let texture = map_buffer_ref(
+            texture_layer.as_ref(),
+            &source,
+            !matches!(settings.texture_mode, TextureMode::Off),
+            settings.texture_input,
+        );
 
         let out_world_type = out_layer.world_type();
         let out_is_f32 = matches!(
@@ -977,21 +1241,21 @@ impl Plugin {
             let center = sample_bilinear(&source, center_x, center_y, EdgeMode::Repeat);
 
             let scatter_factor = scalar_map_value(
-                scatter_map.as_ref(),
+                scatter_map,
                 coord,
                 settings.scatter_map_mode,
                 settings.scatter_map_channel,
                 1.0,
             );
             let grain_factor = scalar_map_value(
-                grain_map.as_ref(),
+                grain_map,
                 coord,
                 settings.grain_map_mode,
                 settings.grain_map_channel,
                 1.0,
             );
             let texture_value = scalar_map_value(
-                texture.as_ref(),
+                texture,
                 coord,
                 settings.texture_map_mode,
                 settings.texture_map_channel,
@@ -1017,7 +1281,7 @@ impl Plugin {
             let mut anisotropy = settings.anisotropy;
             if settings.use_anisotropy_map {
                 let flow = anisotropy_flow_at(
-                    anisotropy_map.as_ref(),
+                    anisotropy_map,
                     coord,
                     settings.anisotropy_map_mode,
                     settings.anisotropy_divergence_source,
@@ -1036,9 +1300,27 @@ impl Plugin {
                 center
             } else {
                 let grain = (settings.grain_size * grain_factor.max(0.0)).max(1.0);
+                let mut noise_offset_x = settings.noise_offset_x;
+                let mut noise_offset_y = settings.noise_offset_y;
+                if settings.use_noise_offset_map {
+                    let flow = anisotropy_flow_at(
+                        noise_offset_map,
+                        coord,
+                        settings.noise_offset_map_mode,
+                        DivergenceSource::Gray,
+                    );
+                    if flow.valid {
+                        let displacement = settings.noise_offset_displacement * flow.strength;
+                        noise_offset_x += flow.dir_x * displacement;
+                        noise_offset_y += flow.dir_y * displacement;
+                    }
+                }
                 let sample_params = ScatterSampleParams {
                     center_x,
                     center_y,
+                    noise_x: center_x - noise_offset_x,
+                    noise_y: center_y - noise_offset_y,
+                    noise_w: settings.noise_w,
                     radius,
                     grain,
                     angle,
@@ -1082,18 +1364,27 @@ fn param_affects_ui(param: Params) -> bool {
         param,
         Params::ScatterAlgorithm
             | Params::UseScatterMap
+            | Params::ScatterMapInput
             | Params::ScatterMapMode
             | Params::UseGrainMap
+            | Params::GrainMapInput
             | Params::GrainMapMode
+            | Params::UseNoiseOffsetMap
+            | Params::NoiseOffsetMapInput
             | Params::UseAnisotropyMap
+            | Params::AnisotropyMapInput
             | Params::AnisotropyMapMode
             | Params::TextureMode
+            | Params::TextureInput
             | Params::TextureMapMode
             | Params::BlendMode
     )
 }
 
 fn read_render_settings(params: &mut Parameters<Params>) -> Result<RenderSettings, Error> {
+    let noise_offset = params.get(Params::NoiseOffset)?;
+    let (noise_offset_x, noise_offset_y) = point_value_f32(&noise_offset.as_point()?);
+
     Ok(RenderSettings {
         color_space: color_space_from_popup(params.get(Params::ColorSpace)?.as_popup()?.value()),
         scatter_radius: params
@@ -1120,7 +1411,12 @@ fn read_render_settings(params: &mut Parameters<Params>) -> Result<RenderSetting
             .as_float_slider()?
             .value() as f32)
             .clamp(0.0, 32.0),
+        noise_offset_x,
+        noise_offset_y,
         use_scatter_map: params.get(Params::UseScatterMap)?.as_checkbox()?.value(),
+        scatter_map_input: map_layer_source_from_popup(
+            params.get(Params::ScatterMapInput)?.as_popup()?.value(),
+        ),
         scatter_map_mode: scalar_map_mode_from_popup(
             params.get(Params::ScatterMapMode)?.as_popup()?.value(),
         ),
@@ -1133,16 +1429,37 @@ fn read_render_settings(params: &mut Parameters<Params>) -> Result<RenderSetting
             .value()
             .max(1.0) as f32,
         use_grain_map: params.get(Params::UseGrainMap)?.as_checkbox()?.value(),
+        grain_map_input: map_layer_source_from_popup(
+            params.get(Params::GrainMapInput)?.as_popup()?.value(),
+        ),
         grain_map_mode: scalar_map_mode_from_popup(
             params.get(Params::GrainMapMode)?.as_popup()?.value(),
         ),
         grain_map_channel: rgba_channel_from_popup(
             params.get(Params::GrainMapChannel)?.as_popup()?.value(),
         ),
+        use_noise_offset_map: params
+            .get(Params::UseNoiseOffsetMap)?
+            .as_checkbox()?
+            .value(),
+        noise_offset_map_input: map_layer_source_from_popup(
+            params.get(Params::NoiseOffsetMapInput)?.as_popup()?.value(),
+        ),
+        noise_offset_map_mode: anisotropy_map_mode_from_popup(
+            params.get(Params::NoiseOffsetMapMode)?.as_popup()?.value(),
+        ),
+        noise_offset_displacement: (params
+            .get(Params::NoiseOffsetDisplacement)?
+            .as_float_slider()?
+            .value() as f32)
+            .max(0.0),
         direction: (params.get(Params::Direction)?.as_float_slider()?.value() as f32).to_radians(),
         anisotropy: (params.get(Params::Anisotropy)?.as_float_slider()?.value() as f32)
             .clamp(0.0, 1.0),
         use_anisotropy_map: params.get(Params::UseAnisotropyMap)?.as_checkbox()?.value(),
+        anisotropy_map_input: map_layer_source_from_popup(
+            params.get(Params::AnisotropyMapInput)?.as_popup()?.value(),
+        ),
         anisotropy_map_mode: anisotropy_map_mode_from_popup(
             params.get(Params::AnisotropyMapMode)?.as_popup()?.value(),
         ),
@@ -1161,6 +1478,9 @@ fn read_render_settings(params: &mut Parameters<Params>) -> Result<RenderSetting
                 .value(),
         ),
         texture_mode: texture_mode_from_popup(params.get(Params::TextureMode)?.as_popup()?.value()),
+        texture_input: map_layer_source_from_popup(
+            params.get(Params::TextureInput)?.as_popup()?.value(),
+        ),
         texture_map_mode: scalar_map_mode_from_popup(
             params.get(Params::TextureMapMode)?.as_popup()?.value(),
         ),
@@ -1173,6 +1493,7 @@ fn read_render_settings(params: &mut Parameters<Params>) -> Result<RenderSetting
             .value() as f32)
             .clamp(0.0, 1.0),
         seed: params.get(Params::Seed)?.as_slider()?.value() as u32,
+        noise_w: params.get(Params::NoiseW)?.as_float_slider()?.value() as f32,
         edge_mode: edge_mode_from_popup(params.get(Params::EdgeMode)?.as_popup()?.value()),
         blend_mode: output_blend_mode_from_popup(
             params.get(Params::BlendMode)?.as_popup()?.value(),
@@ -1236,6 +1557,13 @@ fn rgba_channel_from_popup(value: i32) -> RgbaChannel {
         3 => RgbaChannel::Blue,
         4 => RgbaChannel::Alpha,
         _ => RgbaChannel::Red,
+    }
+}
+
+fn map_layer_source_from_popup(value: i32) -> MapLayerSource {
+    match value {
+        2 => MapLayerSource::InputLayer,
+        _ => MapLayerSource::LayerOrInput,
     }
 }
 
@@ -1305,6 +1633,33 @@ fn checkout_layer_buffer(
     Ok(layer.as_ref().map(read_layer_buffer))
 }
 
+fn should_checkout_map_layer(enabled: bool, input: MapLayerSource) -> bool {
+    enabled && matches!(input, MapLayerSource::LayerOrInput)
+}
+
+fn map_buffer_ref<'a>(
+    layer_map: Option<&'a LayerBuffer>,
+    input_layer: &'a LayerBuffer,
+    enabled: bool,
+    input: MapLayerSource,
+) -> Option<&'a LayerBuffer> {
+    if !enabled {
+        return None;
+    }
+
+    match input {
+        MapLayerSource::LayerOrInput => layer_map.or(Some(input_layer)),
+        MapLayerSource::InputLayer => Some(input_layer),
+    }
+}
+
+fn point_value_f32(point: &PointDef<'_>) -> (f32, f32) {
+    match point.float_value() {
+        Ok(p) => (p.x as f32, p.y as f32),
+        Err(_) => point.value(),
+    }
+}
+
 fn read_layer_buffer(layer: &Layer) -> LayerBuffer {
     let width = layer.width();
     let height = layer.height();
@@ -1360,8 +1715,9 @@ fn displacement_vector(
     settings: &RenderSettings,
 ) -> (f32, f32) {
     let p = (
-        sample_params.center_x / sample_params.grain,
-        sample_params.center_y / sample_params.grain,
+        sample_params.noise_x / sample_params.grain,
+        sample_params.noise_y / sample_params.grain,
+        sample_params.noise_w,
     );
     let octaves = settings.samples.clamp(1, 8);
     let v = match settings.scatter_algorithm {
@@ -1404,34 +1760,55 @@ fn anisotropic_displacement(vx: f32, vy: f32, sample_params: ScatterSampleParams
     (dir_x * u + perp_x * v, dir_y * u + perp_y * v)
 }
 
-fn cell_block_displacement(p: (f32, f32), seed: u32) -> (f32, f32) {
-    hash_vector_2d(p.0.floor() as i32, p.1.floor() as i32, seed)
-}
-
-fn cell_smooth_displacement(p: (f32, f32), seed: u32) -> (f32, f32) {
-    let cell_x = p.0.floor() as i32;
-    let cell_y = p.1.floor() as i32;
-    let fx = smoothstep(p.0 - cell_x as f32);
-    let fy = smoothstep(p.1 - cell_y as f32);
-
-    let h00 = hash_vector_2d(cell_x, cell_y, seed);
-    let h10 = hash_vector_2d(cell_x + 1, cell_y, seed);
-    let h01 = hash_vector_2d(cell_x, cell_y + 1, seed);
-    let h11 = hash_vector_2d(cell_x + 1, cell_y + 1, seed);
-
-    let top = (lerp(h00.0, h10.0, fx), lerp(h00.1, h10.1, fx));
-    let bottom = (lerp(h01.0, h11.0, fx), lerp(h01.1, h11.1, fx));
-    (lerp(top.0, bottom.0, fy), lerp(top.1, bottom.1, fy))
-}
-
-fn noise_vector(p: (f32, f32), seed: u32) -> (f32, f32) {
-    (
-        value_noise_signed(p.0, p.1, seed, 0x21),
-        value_noise_signed(p.0 + 19.19, p.1 - 7.31, seed, 0x4D),
+fn cell_block_displacement(p: (f32, f32, f32), seed: u32) -> (f32, f32) {
+    hash_vector_3d(
+        p.0.floor() as i32,
+        p.1.floor() as i32,
+        p.2.floor() as i32,
+        seed,
     )
 }
 
-fn fbm_vector_displacement(p: (f32, f32), octaves: u32, seed: u32) -> (f32, f32) {
+fn cell_smooth_displacement(p: (f32, f32, f32), seed: u32) -> (f32, f32) {
+    let cell_x = p.0.floor() as i32;
+    let cell_y = p.1.floor() as i32;
+    let cell_z = p.2.floor() as i32;
+    let fx = smoothstep(p.0 - cell_x as f32);
+    let fy = smoothstep(p.1 - cell_y as f32);
+    let fz = smoothstep(p.2 - cell_z as f32);
+
+    let h000 = hash_vector_3d(cell_x, cell_y, cell_z, seed);
+    let h100 = hash_vector_3d(cell_x + 1, cell_y, cell_z, seed);
+    let h010 = hash_vector_3d(cell_x, cell_y + 1, cell_z, seed);
+    let h110 = hash_vector_3d(cell_x + 1, cell_y + 1, cell_z, seed);
+    let h001 = hash_vector_3d(cell_x, cell_y, cell_z + 1, seed);
+    let h101 = hash_vector_3d(cell_x + 1, cell_y, cell_z + 1, seed);
+    let h011 = hash_vector_3d(cell_x, cell_y + 1, cell_z + 1, seed);
+    let h111 = hash_vector_3d(cell_x + 1, cell_y + 1, cell_z + 1, seed);
+
+    let z0_top = (lerp(h000.0, h100.0, fx), lerp(h000.1, h100.1, fx));
+    let z0_bottom = (lerp(h010.0, h110.0, fx), lerp(h010.1, h110.1, fx));
+    let z1_top = (lerp(h001.0, h101.0, fx), lerp(h001.1, h101.1, fx));
+    let z1_bottom = (lerp(h011.0, h111.0, fx), lerp(h011.1, h111.1, fx));
+    let z0 = (
+        lerp(z0_top.0, z0_bottom.0, fy),
+        lerp(z0_top.1, z0_bottom.1, fy),
+    );
+    let z1 = (
+        lerp(z1_top.0, z1_bottom.0, fy),
+        lerp(z1_top.1, z1_bottom.1, fy),
+    );
+    (lerp(z0.0, z1.0, fz), lerp(z0.1, z1.1, fz))
+}
+
+fn noise_vector(p: (f32, f32, f32), seed: u32) -> (f32, f32) {
+    (
+        value_noise_signed(p.0, p.1, p.2, seed, 0x21),
+        value_noise_signed(p.0 + 19.19, p.1 - 7.31, p.2 + 11.13, seed, 0x4D),
+    )
+}
+
+fn fbm_vector_displacement(p: (f32, f32, f32), octaves: u32, seed: u32) -> (f32, f32) {
     let mut sum_x = 0.0;
     let mut sum_y = 0.0;
     let mut amp = 1.0;
@@ -1439,7 +1816,7 @@ fn fbm_vector_displacement(p: (f32, f32), octaves: u32, seed: u32) -> (f32, f32)
     let mut freq = 1.0;
     for octave in 0..octaves {
         let octave_seed = seed ^ octave.wrapping_mul(0x9E37_79B9);
-        let (nx, ny) = noise_vector((p.0 * freq, p.1 * freq), octave_seed);
+        let (nx, ny) = noise_vector((p.0 * freq, p.1 * freq, p.2 * freq), octave_seed);
         sum_x += nx * amp;
         sum_y += ny * amp;
         total_amp += amp;
@@ -1454,40 +1831,40 @@ fn fbm_vector_displacement(p: (f32, f32), octaves: u32, seed: u32) -> (f32, f32)
     }
 }
 
-fn domain_warp_fbm_displacement(p: (f32, f32), octaves: u32, seed: u32) -> (f32, f32) {
+fn domain_warp_fbm_displacement(p: (f32, f32, f32), octaves: u32, seed: u32) -> (f32, f32) {
     let q = fbm_vector_displacement(p, octaves, seed ^ 0xA53A_9D13);
     let r = fbm_vector_displacement(
-        (p.0 + q.0 * 2.0 + 1.7, p.1 + q.1 * 2.0 + 9.2),
+        (p.0 + q.0 * 2.0 + 1.7, p.1 + q.1 * 2.0 + 9.2, p.2 + 4.1),
         octaves,
         seed ^ 0xC2B2_AE35,
     );
     let s = fbm_vector_displacement(
-        (p.0 + r.0 * 2.0 + 8.3, p.1 + r.1 * 2.0 + 2.8),
+        (p.0 + r.0 * 2.0 + 8.3, p.1 + r.1 * 2.0 + 2.8, p.2 + 8.6),
         octaves,
         seed ^ 0x27D4_EB2F,
     );
     (s.0, s.1)
 }
 
-fn curl_fbm_displacement(p: (f32, f32), octaves: u32, seed: u32) -> (f32, f32) {
+fn curl_fbm_displacement(p: (f32, f32, f32), octaves: u32, seed: u32) -> (f32, f32) {
     let eps = 0.5;
-    let px1 = scalar_fbm((p.0 + eps, p.1), octaves, seed);
-    let px0 = scalar_fbm((p.0 - eps, p.1), octaves, seed);
-    let py1 = scalar_fbm((p.0, p.1 + eps), octaves, seed);
-    let py0 = scalar_fbm((p.0, p.1 - eps), octaves, seed);
+    let px1 = scalar_fbm((p.0 + eps, p.1, p.2), octaves, seed);
+    let px0 = scalar_fbm((p.0 - eps, p.1, p.2), octaves, seed);
+    let py1 = scalar_fbm((p.0, p.1 + eps, p.2), octaves, seed);
+    let py0 = scalar_fbm((p.0, p.1 - eps, p.2), octaves, seed);
     let dx = (px1 - px0) / (2.0 * eps);
     let dy = (py1 - py0) / (2.0 * eps);
     (dy * 2.0, -dx * 2.0)
 }
 
-fn scalar_fbm(p: (f32, f32), octaves: u32, seed: u32) -> f32 {
+fn scalar_fbm(p: (f32, f32, f32), octaves: u32, seed: u32) -> f32 {
     let mut sum = 0.0;
     let mut amp = 1.0;
     let mut total_amp = 0.0;
     let mut freq = 1.0;
     for octave in 0..octaves {
         let octave_seed = seed ^ octave.wrapping_mul(0x85EB_CA6B);
-        sum += value_noise_signed(p.0 * freq, p.1 * freq, octave_seed, 0x77) * amp;
+        sum += value_noise_signed(p.0 * freq, p.1 * freq, p.2 * freq, octave_seed, 0x77) * amp;
         total_amp += amp;
         amp *= 0.5;
         freq *= 2.0;
@@ -1500,31 +1877,41 @@ fn scalar_fbm(p: (f32, f32), octaves: u32, seed: u32) -> f32 {
     }
 }
 
-fn value_noise_signed(x: f32, y: f32, seed: u32, channel: u32) -> f32 {
+fn value_noise_signed(x: f32, y: f32, z: f32, seed: u32, channel: u32) -> f32 {
     let cell_x = x.floor() as i32;
     let cell_y = y.floor() as i32;
+    let cell_z = z.floor() as i32;
     let fx = smoothstep(x - cell_x as f32);
     let fy = smoothstep(y - cell_y as f32);
+    let fz = smoothstep(z - cell_z as f32);
 
-    let h00 = hash_signed_2d(cell_x, cell_y, seed, channel);
-    let h10 = hash_signed_2d(cell_x + 1, cell_y, seed, channel);
-    let h01 = hash_signed_2d(cell_x, cell_y + 1, seed, channel);
-    let h11 = hash_signed_2d(cell_x + 1, cell_y + 1, seed, channel);
+    let h000 = hash_signed_3d(cell_x, cell_y, cell_z, seed, channel);
+    let h100 = hash_signed_3d(cell_x + 1, cell_y, cell_z, seed, channel);
+    let h010 = hash_signed_3d(cell_x, cell_y + 1, cell_z, seed, channel);
+    let h110 = hash_signed_3d(cell_x + 1, cell_y + 1, cell_z, seed, channel);
+    let h001 = hash_signed_3d(cell_x, cell_y, cell_z + 1, seed, channel);
+    let h101 = hash_signed_3d(cell_x + 1, cell_y, cell_z + 1, seed, channel);
+    let h011 = hash_signed_3d(cell_x, cell_y + 1, cell_z + 1, seed, channel);
+    let h111 = hash_signed_3d(cell_x + 1, cell_y + 1, cell_z + 1, seed, channel);
 
-    let top = lerp(h00, h10, fx);
-    let bottom = lerp(h01, h11, fx);
-    lerp(top, bottom, fy).clamp(-1.0, 1.0)
+    let z0_top = lerp(h000, h100, fx);
+    let z0_bottom = lerp(h010, h110, fx);
+    let z1_top = lerp(h001, h101, fx);
+    let z1_bottom = lerp(h011, h111, fx);
+    let z0 = lerp(z0_top, z0_bottom, fy);
+    let z1 = lerp(z1_top, z1_bottom, fy);
+    lerp(z0, z1, fz).clamp(-1.0, 1.0)
 }
 
-fn hash_vector_2d(cell_x: i32, cell_y: i32, seed: u32) -> (f32, f32) {
+fn hash_vector_3d(cell_x: i32, cell_y: i32, cell_z: i32, seed: u32) -> (f32, f32) {
     (
-        hash_signed_2d(cell_x, cell_y, seed, 0),
-        hash_signed_2d(cell_x, cell_y, seed, 1),
+        hash_signed_3d(cell_x, cell_y, cell_z, seed, 0),
+        hash_signed_3d(cell_x, cell_y, cell_z, seed, 1),
     )
 }
 
-fn hash_signed_2d(cell_x: i32, cell_y: i32, seed: u32, channel: u32) -> f32 {
-    rand01(hash_3d(cell_x, cell_y, 0, channel, seed)) * 2.0 - 1.0
+fn hash_signed_3d(cell_x: i32, cell_y: i32, cell_z: i32, seed: u32, channel: u32) -> f32 {
+    rand01(hash_3d(cell_x, cell_y, cell_z, channel, seed)) * 2.0 - 1.0
 }
 
 fn limit_vector(v: (f32, f32)) -> (f32, f32) {
@@ -1587,8 +1974,8 @@ fn square_cell_offset(
     tap: u32,
     settings: &RenderSettings,
 ) -> (f32, f32) {
-    let (cell_x, cell_y) = grain_cell(sample_params);
-    random_disk_offset(cell_x, cell_y, tap, settings)
+    let (cell_x, cell_y, cell_z) = grain_cell(sample_params);
+    random_disk_offset(cell_x, cell_y, cell_z, tap, settings)
 }
 
 fn smooth_grid_offset(
@@ -1596,17 +1983,18 @@ fn smooth_grid_offset(
     tap: u32,
     settings: &RenderSettings,
 ) -> (f32, f32) {
-    let grid_x = sample_params.center_x / sample_params.grain;
-    let grid_y = sample_params.center_y / sample_params.grain;
+    let grid_x = sample_params.noise_x / sample_params.grain;
+    let grid_y = sample_params.noise_y / sample_params.grain;
     let cell_x = grid_x.floor() as i32;
     let cell_y = grid_y.floor() as i32;
+    let cell_z = sample_params.noise_w.floor() as i32;
     let fx = smoothstep(grid_x - cell_x as f32);
     let fy = smoothstep(grid_y - cell_y as f32);
 
-    let p00 = random_disk_offset(cell_x, cell_y, tap, settings);
-    let p10 = random_disk_offset(cell_x + 1, cell_y, tap, settings);
-    let p01 = random_disk_offset(cell_x, cell_y + 1, tap, settings);
-    let p11 = random_disk_offset(cell_x + 1, cell_y + 1, tap, settings);
+    let p00 = random_disk_offset(cell_x, cell_y, cell_z, tap, settings);
+    let p10 = random_disk_offset(cell_x + 1, cell_y, cell_z, tap, settings);
+    let p01 = random_disk_offset(cell_x, cell_y + 1, cell_z, tap, settings);
+    let p11 = random_disk_offset(cell_x + 1, cell_y + 1, cell_z, tap, settings);
 
     let top = (lerp(p00.0, p10.0, fx), lerp(p00.1, p10.1, fx));
     let bottom = (lerp(p01.0, p11.0, fx), lerp(p01.1, p11.1, fx));
@@ -1618,10 +2006,11 @@ fn voronoi_cell_offset(
     tap: u32,
     settings: &RenderSettings,
 ) -> (f32, f32) {
-    let grid_x = sample_params.center_x / sample_params.grain;
-    let grid_y = sample_params.center_y / sample_params.grain;
+    let grid_x = sample_params.noise_x / sample_params.grain;
+    let grid_y = sample_params.noise_y / sample_params.grain;
     let base_x = grid_x.floor() as i32;
     let base_y = grid_y.floor() as i32;
+    let cell_z = sample_params.noise_w.floor() as i32;
     let seed = settings.seed;
 
     let mut best_x = base_x;
@@ -1632,9 +2021,9 @@ fn voronoi_cell_offset(
             let cell_x = base_x + x;
             let cell_y = base_y + y;
             let feature_x =
-                cell_x as f32 + rand01(hash_3d(cell_x, cell_y, -1, 9, seed ^ 0x7A37_9B1D));
+                cell_x as f32 + rand01(hash_3d(cell_x, cell_y, cell_z, 9, seed ^ 0x7A37_9B1D));
             let feature_y =
-                cell_y as f32 + rand01(hash_3d(cell_x, cell_y, -1, 10, seed ^ 0x7A37_9B1D));
+                cell_y as f32 + rand01(hash_3d(cell_x, cell_y, cell_z, 10, seed ^ 0x7A37_9B1D));
             let dx = grid_x - feature_x;
             let dy = grid_y - feature_y;
             let d2 = dx * dx + dy * dy;
@@ -1650,7 +2039,7 @@ fn voronoi_cell_offset(
         seed: seed ^ 0x517C_C1B7,
         ..*settings
     };
-    random_disk_offset(best_x, best_y, tap, &shifted_settings)
+    random_disk_offset(best_x, best_y, cell_z, tap, &shifted_settings)
 }
 
 fn blue_noise_offset(
@@ -1659,13 +2048,20 @@ fn blue_noise_offset(
     settings: &RenderSettings,
 ) -> (f32, f32) {
     let phase_scale = (sample_params.grain / 8.0).max(1.0);
-    let cell_x = (sample_params.center_x / phase_scale).floor() as i32;
-    let cell_y = (sample_params.center_y / phase_scale).floor() as i32;
+    let cell_x = (sample_params.noise_x / phase_scale).floor() as i32;
+    let cell_y = (sample_params.noise_y / phase_scale).floor() as i32;
+    let cell_z = sample_params.noise_w.floor() as i32;
     let mask_x = cell_x.rem_euclid(8) as usize;
     let mask_y = cell_y.rem_euclid(8) as usize;
     let mask = (BLUE_NOISE_8X8[mask_y * 8 + mask_x] as f32 + 0.5) / 64.0;
-    let phase = rand01(hash_3d(cell_x, cell_y, 0, 11, settings.seed));
-    let jitter = rand01(hash_3d(cell_x, cell_y, tap as i32, 12, settings.seed));
+    let phase = rand01(hash_3d(cell_x, cell_y, cell_z, 11, settings.seed));
+    let jitter = rand01(hash_3d(
+        cell_x,
+        cell_y,
+        cell_z.wrapping_add(tap as i32),
+        12,
+        settings.seed,
+    ));
     let sample_count = settings.samples.max(1) as f32;
     let radial_index = (tap as f32 + 0.5 + (jitter - 0.5) * 0.5).clamp(0.0, sample_count);
     let radius = sample_radius(
@@ -1678,9 +2074,16 @@ fn blue_noise_offset(
     (angle.cos() * radius, angle.sin() * radius)
 }
 
-fn random_disk_offset(cell_x: i32, cell_y: i32, tap: u32, settings: &RenderSettings) -> (f32, f32) {
-    let angle = rand01(hash_3d(cell_x, cell_y, tap as i32, 0, settings.seed)) * TAU;
-    let radius_u = rand01(hash_3d(cell_x, cell_y, tap as i32, 1, settings.seed));
+fn random_disk_offset(
+    cell_x: i32,
+    cell_y: i32,
+    cell_z: i32,
+    tap: u32,
+    settings: &RenderSettings,
+) -> (f32, f32) {
+    let z = cell_z.wrapping_add(tap as i32);
+    let angle = rand01(hash_3d(cell_x, cell_y, z, 0, settings.seed)) * TAU;
+    let radius_u = rand01(hash_3d(cell_x, cell_y, z, 1, settings.seed));
     let radius = sample_radius(
         radius_u,
         settings.sampling_distribution,
@@ -1707,10 +2110,11 @@ fn sample_radius(u: f32, distribution: SamplingDistribution, shape: f32) -> f32 
     }
 }
 
-fn grain_cell(sample_params: ScatterSampleParams) -> (i32, i32) {
+fn grain_cell(sample_params: ScatterSampleParams) -> (i32, i32, i32) {
     (
-        (sample_params.center_x / sample_params.grain).floor() as i32,
-        (sample_params.center_y / sample_params.grain).floor() as i32,
+        (sample_params.noise_x / sample_params.grain).floor() as i32,
+        (sample_params.noise_y / sample_params.grain).floor() as i32,
+        sample_params.noise_w.floor() as i32,
     )
 }
 
