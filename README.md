@@ -58,7 +58,7 @@ template.
 - AOD_ImageCalculate
   - 1つまたは2つのレイヤーにBlender風の数式演算を適用します / Applies Blender-style math operations to one or two input layers.
 - AOD_ImageScaler
-  - レイヤーを補間方式指定で拡大・縮小します / Scales layers with selectable interpolation modes and optional reciprocal scaling.
+  - アンカーと外側ピクセル処理を指定してレイヤーを補間方式指定で拡大・縮小し、XY別スケールにも対応します / Scales layers with selectable interpolation modes, anchor point, edge handling, and optional reciprocal or separate X/Y scaling.
 - AOD_LineRepaint
   - 主線色に一致する画素を近傍色の伝播で塗り替えます / Repaints line-colored pixels by propagating neighboring colors.
 - AOD_MobiusTransform
