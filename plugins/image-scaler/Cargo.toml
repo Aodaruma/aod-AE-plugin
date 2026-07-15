@@ -1,6 +1,6 @@
 [package]
 name = "image_scaler"
-description = "Scales layers with selectable interpolation modes and optional reciprocal scaling."
+description = "Scales layers with selectable interpolation modes, anchor point, edge handling, and optional reciprocal or separate X/Y scaling."
 version = "0.1.0"
 edition = "2024"
 
