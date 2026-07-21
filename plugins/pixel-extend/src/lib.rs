@@ -241,6 +241,69 @@ struct SourceImage<'a> {
     height: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DirectionBasis {
+    x: f32,
+    y: f32,
+}
+
+impl DirectionBasis {
+    fn from_angle(angle: f32) -> Self {
+        Self {
+            x: angle.cos(),
+            y: angle.sin(),
+        }
+    }
+
+    fn offset_point(self, x: f32, y: f32, local_x: f32, local_y: f32) -> (f32, f32) {
+        (
+            x + self.x * local_x - self.y * local_y,
+            y + self.y * local_x + self.x * local_y,
+        )
+    }
+}
+
+#[derive(Debug)]
+enum DirectionField {
+    Constant(DirectionBasis),
+    PerPixel(Vec<DirectionBasis>),
+}
+
+impl DirectionField {
+    fn at(&self, index: usize) -> DirectionBasis {
+        match self {
+            Self::Constant(direction) => *direction,
+            Self::PerPixel(directions) => directions[index],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PathStep {
+    source_offset_x: f32,
+    source_offset_y: f32,
+    expansion_radius: f32,
+    falloff: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ExpansionSample {
+    radius_scale: f32,
+    edge_weight: f32,
+}
+
+#[derive(Debug)]
+struct DirectionPath {
+    steps: Vec<PathStep>,
+    normal_sign: f32,
+}
+
+#[derive(Debug)]
+struct RenderPlan {
+    paths: Vec<DirectionPath>,
+    expansion_samples: Vec<ExpansionSample>,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct WeightedPixel {
     red: f32,
@@ -880,13 +943,17 @@ impl Plugin {
         let source = capture_source(&in_layer);
         let masks = build_mask_map(&source, &settings);
         let has_extension_source = masks.iter().any(|&mask| mask > EPSILON);
+        let should_render_extension = has_extension_source
+            && settings.opacity > EPSILON
+            && settings.extend_count > 0
+            && settings.step_size > EPSILON;
         let source_image = SourceImage {
             pixels: &source,
             masks: &masks,
             width,
             height,
         };
-        let map_checkout = if settings.use_direction_map {
+        let map_checkout = if settings.use_direction_map && should_render_extension {
             Some(params.checkout_at(Params::DirectionMapLayer, None, None, None)?)
         } else {
             None
@@ -906,22 +973,26 @@ impl Plugin {
             }
             _ => None,
         };
+        let render_context = should_render_extension.then(|| {
+            (
+                build_direction_field(width, height, &settings, direction_map.as_ref()),
+                build_render_plan(&settings),
+            )
+        });
         let progress_final = out_layer.height() as i32;
-        let should_render_extension = has_extension_source
-            && settings.opacity > EPSILON
-            && settings.extend_count > 0
-            && settings.step_size > EPSILON;
 
         out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
-            let source_px = source[y as usize * width + x as usize];
-            let extend_px = if should_render_extension {
+            let pixel_index = y as usize * width + x as usize;
+            let source_px = source[pixel_index];
+            let extend_px = if let Some((direction_field, render_plan)) = &render_context {
                 scale_pixel_opacity(
                     extend_pixel(
                         &source_image,
                         x as f32,
                         y as f32,
                         &settings,
-                        direction_map.as_ref(),
+                        direction_field.at(pixel_index),
+                        render_plan,
                     ),
                     settings.opacity,
                 )
@@ -1044,27 +1115,27 @@ fn extend_pixel(
     x: f32,
     y: f32,
     settings: &Settings,
-    direction_map: Option<&DirectionMapData<'_>>,
+    direction: DirectionBasis,
+    render_plan: &RenderPlan,
 ) -> PixelF32 {
     if settings.extend_count == 0 || settings.step_size <= EPSILON {
         return transparent_pixel();
     }
 
-    let direction_rad =
-        mapped_direction_rad(x, y, source.width, source.height, settings, direction_map);
-
-    match settings.extend_direction {
-        ExtendDirection::Forward => {
-            extend_pixel_one_direction(source, x, y, settings, direction_rad, 1.0)
-        }
-        ExtendDirection::Backward => {
-            extend_pixel_one_direction(source, x, y, settings, direction_rad, -1.0)
-        }
-        ExtendDirection::Both => alpha_over(
-            extend_pixel_one_direction(source, x, y, settings, direction_rad, 1.0),
-            extend_pixel_one_direction(source, x, y, settings, direction_rad, -1.0),
-        ),
+    let mut out = transparent_pixel();
+    for path in &render_plan.paths {
+        let direction_px = extend_pixel_one_direction(
+            source,
+            x,
+            y,
+            settings,
+            direction,
+            path,
+            &render_plan.expansion_samples,
+        );
+        out = alpha_over(out, direction_px);
     }
+    out
 }
 
 fn extend_pixel_one_direction(
@@ -1072,40 +1143,25 @@ fn extend_pixel_one_direction(
     x: f32,
     y: f32,
     settings: &Settings,
-    direction_rad: f32,
-    direction_sign: f32,
+    direction: DirectionBasis,
+    path: &DirectionPath,
+    expansion_samples: &[ExpansionSample],
 ) -> PixelF32 {
     let mut out = transparent_pixel();
-    let base_angle = direction_rad
-        + if direction_sign < 0.0 {
-            std::f32::consts::PI
-        } else {
-            0.0
-        };
-    let mut path_x = base_angle.cos() * settings.offset;
-    let mut path_y = base_angle.sin() * settings.offset;
-    let mut falloff = 1.0f32;
 
-    for step in 0..=settings.extend_count {
-        let t = if settings.extend_count == 0 {
-            0.0
-        } else {
-            step as f32 / settings.extend_count as f32
-        };
-        let sx = x - path_x;
-        let sy = y - path_y;
-        let expansion_radius = step as f32 * settings.expansion_per_step;
-        let step_px = if expansion_radius <= EPSILON || settings.expansion_samples <= 1 {
-            sample_extension_point(source, sx, sy, settings, falloff)
+    for step in &path.steps {
+        let step_px = if step.expansion_radius <= EPSILON || expansion_samples.len() <= 1 {
+            let (sx, sy) = direction.offset_point(x, y, step.source_offset_x, step.source_offset_y);
+            sample_extension_point(source, sx, sy, settings, step.falloff)
         } else {
             sample_expanded_extension(
                 source,
-                sx,
-                sy,
-                base_angle,
-                expansion_radius,
+                (x, y),
+                direction,
+                path.normal_sign,
+                step,
+                expansion_samples,
                 settings,
-                falloff,
             )
         };
 
@@ -1114,14 +1170,6 @@ fn extend_pixel_one_direction(
             if out.alpha >= 0.999 {
                 break;
             }
-        }
-
-        let angle = base_angle + settings.angle_change_rad * t * direction_sign;
-        path_x += angle.cos() * settings.step_size;
-        path_y += angle.sin() * settings.step_size;
-        falloff *= settings.decay;
-        if falloff <= EPSILON && settings.decay < 1.0 {
-            break;
         }
     }
 
@@ -1149,34 +1197,21 @@ fn sample_extension_point(
 
 fn sample_expanded_extension(
     source: &SourceImage<'_>,
-    x: f32,
-    y: f32,
-    angle: f32,
-    radius: f32,
+    output: (f32, f32),
+    direction: DirectionBasis,
+    normal_sign: f32,
+    step: &PathStep,
+    expansion_samples: &[ExpansionSample],
     settings: &Settings,
-    falloff: f32,
 ) -> PixelF32 {
-    let sample_count = settings.expansion_samples.max(1);
-    let denom = sample_count.saturating_sub(1).max(1) as f32;
-    let normal_x = -angle.sin();
-    let normal_y = angle.cos();
     let mut out = transparent_pixel();
 
-    for sample in 0..sample_count {
-        let u = if sample_count == 1 {
-            0.0
-        } else {
-            (sample as f32 / denom) * 2.0 - 1.0
-        };
-        let offset = u * radius;
-        let edge_weight = 1.0 - u.abs() * 0.5;
-        let px = sample_extension_point(
-            source,
-            x + normal_x * offset,
-            y + normal_y * offset,
-            settings,
-            falloff * edge_weight,
-        );
+    for sample in expansion_samples {
+        let local_y =
+            step.source_offset_y + normal_sign * sample.radius_scale * step.expansion_radius;
+        let (sx, sy) = direction.offset_point(output.0, output.1, step.source_offset_x, local_y);
+        let px =
+            sample_extension_point(source, sx, sy, settings, step.falloff * sample.edge_weight);
         out = alpha_over(out, px);
         if out.alpha >= 0.999 {
             break;
@@ -1184,6 +1219,78 @@ fn sample_expanded_extension(
     }
 
     out
+}
+
+fn build_render_plan(settings: &Settings) -> RenderPlan {
+    let mut paths = Vec::with_capacity(match settings.extend_direction {
+        ExtendDirection::Both => 2,
+        _ => 1,
+    });
+    match settings.extend_direction {
+        ExtendDirection::Forward => paths.push(build_direction_path(settings, 1.0)),
+        ExtendDirection::Backward => paths.push(build_direction_path(settings, -1.0)),
+        ExtendDirection::Both => {
+            paths.push(build_direction_path(settings, 1.0));
+            paths.push(build_direction_path(settings, -1.0));
+        }
+    }
+
+    RenderPlan {
+        paths,
+        expansion_samples: build_expansion_samples(settings.expansion_samples),
+    }
+}
+
+fn build_direction_path(settings: &Settings, direction_sign: f32) -> DirectionPath {
+    let mut steps = Vec::with_capacity(settings.extend_count.saturating_add(1));
+    let mut path_x = direction_sign * settings.offset;
+    let mut path_y = 0.0f32;
+    let mut falloff = 1.0f32;
+
+    for step in 0..=settings.extend_count {
+        steps.push(PathStep {
+            source_offset_x: -path_x,
+            source_offset_y: -path_y,
+            expansion_radius: step as f32 * settings.expansion_per_step,
+            falloff,
+        });
+
+        let t = if settings.extend_count == 0 {
+            0.0
+        } else {
+            step as f32 / settings.extend_count as f32
+        };
+        let angle_delta = settings.angle_change_rad * t;
+        path_x += direction_sign * angle_delta.cos() * settings.step_size;
+        path_y += angle_delta.sin() * settings.step_size;
+        falloff *= settings.decay;
+        if falloff <= EPSILON && settings.decay < 1.0 {
+            break;
+        }
+    }
+
+    DirectionPath {
+        steps,
+        normal_sign: direction_sign,
+    }
+}
+
+fn build_expansion_samples(sample_count: usize) -> Vec<ExpansionSample> {
+    let sample_count = sample_count.max(1);
+    let denom = sample_count.saturating_sub(1).max(1) as f32;
+    (0..sample_count)
+        .map(|sample| {
+            let radius_scale = if sample_count == 1 {
+                0.0
+            } else {
+                (sample as f32 / denom) * 2.0 - 1.0
+            };
+            ExpansionSample {
+                radius_scale,
+                edge_weight: 1.0 - radius_scale.abs() * 0.5,
+            }
+        })
+        .collect()
 }
 
 fn odd_sample_count(count: usize) -> usize {
@@ -1195,38 +1302,43 @@ fn odd_sample_count(count: usize) -> usize {
     }
 }
 
-fn mapped_direction_rad(
-    x: f32,
-    y: f32,
-    out_width: usize,
-    out_height: usize,
+fn build_direction_field(
+    width: usize,
+    height: usize,
     settings: &Settings,
     direction_map: Option<&DirectionMapData<'_>>,
-) -> f32 {
+) -> DirectionField {
+    let base = DirectionBasis::from_angle(settings.direction_rad);
     if !settings.use_direction_map || settings.map_influence <= EPSILON {
-        return settings.direction_rad;
+        return DirectionField::Constant(base);
     }
 
     let Some(map) = direction_map else {
-        return settings.direction_rad;
+        return DirectionField::Constant(base);
     };
 
-    let map_x = remap_axis_to_map(x, out_width, map.width);
-    let map_y = remap_axis_to_map(y, out_height, map.height);
-    let Some((map_dx, map_dy)) = direction_map_vector(map, map_x, map_y, settings) else {
-        return settings.direction_rad;
-    };
-
-    let base_x = settings.direction_rad.cos();
-    let base_y = settings.direction_rad.sin();
-    let influence = settings.map_influence;
-    let dir_x = base_x * (1.0 - influence) + map_dx * influence;
-    let dir_y = base_y * (1.0 - influence) + map_dy * influence;
-    if dir_x.abs() <= EPSILON && dir_y.abs() <= EPSILON {
-        settings.direction_rad
-    } else {
-        dir_y.atan2(dir_x)
+    let mut directions = Vec::with_capacity(width.saturating_mul(height));
+    for y in 0..height {
+        for x in 0..width {
+            let map_x = remap_axis_to_map(x as f32, width, map.width);
+            let map_y = remap_axis_to_map(y as f32, height, map.height);
+            let direction = direction_map_vector(map, map_x, map_y, settings)
+                .and_then(|(map_dx, map_dy)| {
+                    let influence = settings.map_influence;
+                    let dir_x = base.x * (1.0 - influence) + map_dx * influence;
+                    let dir_y = base.y * (1.0 - influence) + map_dy * influence;
+                    let len = (dir_x * dir_x + dir_y * dir_y).sqrt();
+                    (len.is_finite() && len > EPSILON).then_some(DirectionBasis {
+                        x: dir_x / len,
+                        y: dir_y / len,
+                    })
+                })
+                .unwrap_or(base);
+            directions.push(direction);
+        }
     }
+
+    DirectionField::PerPixel(directions)
 }
 
 fn direction_map_vector(
@@ -1806,5 +1918,109 @@ fn write_output_pixel(dst: &mut GenericPixelMut<'_>, px: PixelF32) {
             p.greenF = px.green as _;
             p.blueF = px.blue as _;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_settings() -> Settings {
+        Settings {
+            direction_rad: 0.37,
+            extend_count: 8,
+            extend_direction: ExtendDirection::Both,
+            step_size: 1.25,
+            offset: 2.5,
+            use_direction_map: false,
+            map_channel: MapChannel::Red,
+            map_vector_mode: MapVectorMode::Gradient,
+            map_influence: 0.0,
+            decay: 0.9,
+            angle_change_rad: 0.7,
+            expansion_per_step: 0.4,
+            expansion_samples: 5,
+            basis: SourceBasis::Alpha,
+            select_mode: SelectMode::Above,
+            invert_detection: false,
+            threshold: 0.5,
+            softness: 0.0,
+            target_color: transparent_pixel(),
+            interpolation: InterpolationMode::Bilinear,
+            mitchell_b: 1.0 / 3.0,
+            mitchell_c: 1.0 / 3.0,
+            blend_mode: BlendMode::Normal,
+            opacity: 1.0,
+            show_source: true,
+        }
+    }
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= 1.0e-5,
+            "actual={actual}, expected={expected}"
+        );
+    }
+
+    fn assert_path_matches_incremental_geometry(settings: &Settings, direction_sign: f32) {
+        let path = build_direction_path(settings, direction_sign);
+        let base_angle = if direction_sign < 0.0 {
+            std::f32::consts::PI
+        } else {
+            0.0
+        };
+        let mut path_x = base_angle.cos() * settings.offset;
+        let mut path_y = base_angle.sin() * settings.offset;
+        let mut falloff = 1.0f32;
+
+        for (step, planned) in path.steps.iter().enumerate() {
+            assert_close(planned.source_offset_x, -path_x);
+            assert_close(planned.source_offset_y, -path_y);
+            assert_close(
+                planned.expansion_radius,
+                step as f32 * settings.expansion_per_step,
+            );
+            assert_close(planned.falloff, falloff);
+
+            let t = step as f32 / settings.extend_count as f32;
+            let angle = base_angle + settings.angle_change_rad * t * direction_sign;
+            path_x += angle.cos() * settings.step_size;
+            path_y += angle.sin() * settings.step_size;
+            falloff *= settings.decay;
+        }
+    }
+
+    #[test]
+    fn precomputed_paths_match_incremental_geometry() {
+        let settings = test_settings();
+        assert_path_matches_incremental_geometry(&settings, 1.0);
+        assert_path_matches_incremental_geometry(&settings, -1.0);
+    }
+
+    #[test]
+    fn precomputed_expansion_samples_keep_order_and_weights() {
+        let samples = build_expansion_samples(5);
+        let expected = [
+            (-1.0, 0.5),
+            (-0.5, 0.75),
+            (0.0, 1.0),
+            (0.5, 0.75),
+            (1.0, 0.5),
+        ];
+        for (sample, (radius_scale, edge_weight)) in samples.iter().zip(expected) {
+            assert_close(sample.radius_scale, radius_scale);
+            assert_close(sample.edge_weight, edge_weight);
+        }
+    }
+
+    #[test]
+    fn constant_direction_field_avoids_per_pixel_storage() {
+        let settings = test_settings();
+        let field = build_direction_field(1920, 1080, &settings, None);
+        let DirectionField::Constant(direction) = field else {
+            panic!("expected a constant direction field");
+        };
+        assert_close(direction.x, settings.direction_rad.cos());
+        assert_close(direction.y, settings.direction_rad.sin());
     }
 }
