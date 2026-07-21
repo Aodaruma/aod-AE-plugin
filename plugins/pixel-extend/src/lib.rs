@@ -304,6 +304,147 @@ struct RenderPlan {
     expansion_samples: Vec<ExpansionSample>,
 }
 
+trait InterpolationKernel {
+    const IS_NEAREST: bool = false;
+
+    fn sample_mask(
+        source: &[f32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        settings: &Settings,
+    ) -> f32;
+
+    fn sample_pixel(
+        source: &[PixelF32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        settings: &Settings,
+    ) -> PixelF32;
+}
+
+struct NearestKernel;
+struct BilinearKernel;
+struct BicubicKernel;
+struct MitchellKernel;
+
+impl InterpolationKernel for NearestKernel {
+    const IS_NEAREST: bool = true;
+
+    fn sample_mask(
+        source: &[f32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        _settings: &Settings,
+    ) -> f32 {
+        sample_mask_nearest(source, width, height, x, y)
+    }
+
+    fn sample_pixel(
+        source: &[PixelF32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        _settings: &Settings,
+    ) -> PixelF32 {
+        sample_nearest(source, width, height, x, y)
+    }
+}
+
+impl InterpolationKernel for BilinearKernel {
+    fn sample_mask(
+        source: &[f32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        _settings: &Settings,
+    ) -> f32 {
+        sample_mask_bilinear(source, width, height, x, y)
+    }
+
+    fn sample_pixel(
+        source: &[PixelF32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        _settings: &Settings,
+    ) -> PixelF32 {
+        sample_bilinear(source, width, height, x, y)
+    }
+}
+
+impl InterpolationKernel for BicubicKernel {
+    fn sample_mask(
+        source: &[f32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        _settings: &Settings,
+    ) -> f32 {
+        sample_mask_bicubic(source, width, height, x, y)
+    }
+
+    fn sample_pixel(
+        source: &[PixelF32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        _settings: &Settings,
+    ) -> PixelF32 {
+        sample_bicubic(source, width, height, x, y)
+    }
+}
+
+impl InterpolationKernel for MitchellKernel {
+    fn sample_mask(
+        source: &[f32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        settings: &Settings,
+    ) -> f32 {
+        sample_mask_mitchell(
+            source,
+            width,
+            height,
+            x,
+            y,
+            settings.mitchell_b,
+            settings.mitchell_c,
+        )
+    }
+
+    fn sample_pixel(
+        source: &[PixelF32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        settings: &Settings,
+    ) -> PixelF32 {
+        sample_mitchell(
+            source,
+            width,
+            height,
+            x,
+            y,
+            settings.mitchell_b,
+            settings.mitchell_c,
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct WeightedPixel {
     red: f32,
@@ -979,38 +1120,78 @@ impl Plugin {
                 build_render_plan(&settings),
             )
         });
-        let progress_final = out_layer.height() as i32;
-
-        out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
-            let pixel_index = y as usize * width + x as usize;
-            let source_px = source[pixel_index];
-            let extend_px = if let Some((direction_field, render_plan)) = &render_context {
-                scale_pixel_opacity(
-                    extend_pixel(
-                        &source_image,
-                        x as f32,
-                        y as f32,
-                        &settings,
-                        direction_field.at(pixel_index),
-                        render_plan,
-                    ),
-                    settings.opacity,
-                )
-            } else {
-                transparent_pixel()
-            };
-            let out_px = if settings.show_source {
-                blend_behind_source(source_px, extend_px, settings.blend_mode)
-            } else {
-                extend_px
-            };
-
-            write_output_pixel(&mut dst, sanitize_pixel(out_px));
-            Ok(())
-        })?;
+        match settings.interpolation {
+            InterpolationMode::Nearest => render_output::<NearestKernel>(
+                &mut out_layer,
+                &source,
+                &source_image,
+                &settings,
+                render_context.as_ref(),
+            )?,
+            InterpolationMode::Bilinear => render_output::<BilinearKernel>(
+                &mut out_layer,
+                &source,
+                &source_image,
+                &settings,
+                render_context.as_ref(),
+            )?,
+            InterpolationMode::Bicubic => render_output::<BicubicKernel>(
+                &mut out_layer,
+                &source,
+                &source_image,
+                &settings,
+                render_context.as_ref(),
+            )?,
+            InterpolationMode::Mitchell => render_output::<MitchellKernel>(
+                &mut out_layer,
+                &source,
+                &source_image,
+                &settings,
+                render_context.as_ref(),
+            )?,
+        }
 
         Ok(())
     }
+}
+
+fn render_output<K: InterpolationKernel>(
+    out_layer: &mut Layer,
+    source: &[PixelF32],
+    source_image: &SourceImage<'_>,
+    settings: &Settings,
+    render_context: Option<&(DirectionField, RenderPlan)>,
+) -> Result<(), Error> {
+    let width = source_image.width;
+    let progress_final = out_layer.height() as i32;
+    out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
+        let pixel_index = y as usize * width + x as usize;
+        let source_px = source[pixel_index];
+        let extend_px = if let Some((direction_field, render_plan)) = render_context {
+            scale_pixel_opacity(
+                extend_pixel::<K>(
+                    source_image,
+                    x as f32,
+                    y as f32,
+                    settings,
+                    direction_field.at(pixel_index),
+                    render_plan,
+                ),
+                settings.opacity,
+            )
+        } else {
+            transparent_pixel()
+        };
+        let out_px = if settings.show_source {
+            blend_behind_source(source_px, extend_px, settings.blend_mode)
+        } else {
+            extend_px
+        };
+
+        write_output_pixel(&mut dst, sanitize_pixel(out_px));
+        Ok(())
+    })?;
+    Ok(())
 }
 
 fn read_settings(in_data: InData, params: &mut Parameters<Params>) -> Result<Settings, Error> {
@@ -1110,7 +1291,7 @@ fn angle_degrees(
     Ok(params.get(id)?.as_angle()?.float_value()? as f32)
 }
 
-fn extend_pixel(
+fn extend_pixel<K: InterpolationKernel>(
     source: &SourceImage<'_>,
     x: f32,
     y: f32,
@@ -1124,7 +1305,7 @@ fn extend_pixel(
 
     let mut out = transparent_pixel();
     for path in &render_plan.paths {
-        let direction_px = extend_pixel_one_direction(
+        let direction_px = extend_pixel_one_direction::<K>(
             source,
             x,
             y,
@@ -1138,7 +1319,7 @@ fn extend_pixel(
     out
 }
 
-fn extend_pixel_one_direction(
+fn extend_pixel_one_direction<K: InterpolationKernel>(
     source: &SourceImage<'_>,
     x: f32,
     y: f32,
@@ -1152,9 +1333,9 @@ fn extend_pixel_one_direction(
     for step in &path.steps {
         let step_px = if step.expansion_radius <= EPSILON || expansion_samples.len() <= 1 {
             let (sx, sy) = direction.offset_point(x, y, step.source_offset_x, step.source_offset_y);
-            sample_extension_point(source, sx, sy, settings, step.falloff)
+            sample_extension_point::<K>(source, sx, sy, settings, step.falloff)
         } else {
-            sample_expanded_extension(
+            sample_expanded_extension::<K>(
                 source,
                 (x, y),
                 direction,
@@ -1176,26 +1357,31 @@ fn extend_pixel_one_direction(
     out
 }
 
-fn sample_extension_point(
+fn sample_extension_point<K: InterpolationKernel>(
     source: &SourceImage<'_>,
     x: f32,
     y: f32,
     settings: &Settings,
     falloff: f32,
 ) -> PixelF32 {
-    let mask = sample_mask(source.masks, source.width, source.height, x, y, settings);
+    if !x.is_finite() || !y.is_finite() {
+        return transparent_pixel();
+    }
+
+    let mask =
+        K::sample_mask(source.masks, source.width, source.height, x, y, settings).clamp(0.0, 1.0);
     let weight = mask * falloff;
     if weight <= EPSILON {
         return transparent_pixel();
     }
 
     scale_pixel_opacity(
-        sample_pixel(source.pixels, source.width, source.height, x, y, settings),
+        K::sample_pixel(source.pixels, source.width, source.height, x, y, settings),
         weight,
     )
 }
 
-fn sample_expanded_extension(
+fn sample_expanded_extension<K: InterpolationKernel>(
     source: &SourceImage<'_>,
     output: (f32, f32),
     direction: DirectionBasis,
@@ -1204,14 +1390,30 @@ fn sample_expanded_extension(
     expansion_samples: &[ExpansionSample],
     settings: &Settings,
 ) -> PixelF32 {
+    if K::IS_NEAREST {
+        return sample_expanded_nearest(
+            source,
+            output,
+            direction,
+            normal_sign,
+            step,
+            expansion_samples,
+        );
+    }
+
     let mut out = transparent_pixel();
 
     for sample in expansion_samples {
         let local_y =
             step.source_offset_y + normal_sign * sample.radius_scale * step.expansion_radius;
         let (sx, sy) = direction.offset_point(output.0, output.1, step.source_offset_x, local_y);
-        let px =
-            sample_extension_point(source, sx, sy, settings, step.falloff * sample.edge_weight);
+        let px = sample_extension_point::<K>(
+            source,
+            sx,
+            sy,
+            settings,
+            step.falloff * sample.edge_weight,
+        );
         out = alpha_over(out, px);
         if out.alpha >= 0.999 {
             break;
@@ -1219,6 +1421,85 @@ fn sample_expanded_extension(
     }
 
     out
+}
+
+fn sample_expanded_nearest(
+    source: &SourceImage<'_>,
+    output: (f32, f32),
+    direction: DirectionBasis,
+    normal_sign: f32,
+    step: &PathStep,
+    expansion_samples: &[ExpansionSample],
+) -> PixelF32 {
+    let mut out = transparent_pixel();
+    let mut cached_coord = None;
+    let mut cached_pixel = transparent_pixel();
+    let mut cached_weight = 0.0f32;
+    let mut run_alpha = 0.0f32;
+    let mut run_rgb_scale = 0.0f32;
+
+    for sample in expansion_samples {
+        let local_y =
+            step.source_offset_y + normal_sign * sample.radius_scale * step.expansion_radius;
+        let (sx, sy) = direction.offset_point(output.0, output.1, step.source_offset_x, local_y);
+        let coord = (sx.is_finite() && sy.is_finite())
+            .then_some((sx.round() as isize, sy.round() as isize));
+
+        if coord != cached_coord {
+            out = append_nearest_run(out, cached_pixel, run_alpha, run_rgb_scale);
+            cached_coord = coord;
+            cached_pixel = transparent_pixel();
+            cached_weight = 0.0;
+            run_alpha = 0.0;
+            run_rgb_scale = 0.0;
+
+            if let Some((ix, iy)) = coord {
+                cached_weight =
+                    fetch_mask_or_zero(source.masks, source.width, source.height, ix, iy)
+                        .clamp(0.0, 1.0)
+                        * step.falloff;
+                if cached_weight > EPSILON {
+                    cached_pixel =
+                        fetch_or_transparent(source.pixels, source.width, source.height, ix, iy);
+                }
+            }
+        }
+
+        let opacity = clamp01(cached_weight * sample.edge_weight);
+        if opacity <= EPSILON {
+            continue;
+        }
+        let remaining_alpha = 1.0 - run_alpha;
+        run_rgb_scale += opacity * remaining_alpha;
+        run_alpha += clamp01(cached_pixel.alpha * opacity) * remaining_alpha;
+
+        let combined_alpha = out.alpha + run_alpha * (1.0 - out.alpha);
+        if combined_alpha >= 0.999 {
+            return append_nearest_run(out, cached_pixel, run_alpha, run_rgb_scale);
+        }
+    }
+
+    append_nearest_run(out, cached_pixel, run_alpha, run_rgb_scale)
+}
+
+fn append_nearest_run(
+    out: PixelF32,
+    source: PixelF32,
+    run_alpha: f32,
+    run_rgb_scale: f32,
+) -> PixelF32 {
+    if run_rgb_scale <= EPSILON && run_alpha <= EPSILON {
+        return out;
+    }
+    alpha_over(
+        out,
+        PixelF32 {
+            alpha: run_alpha,
+            red: source.red * run_rgb_scale,
+            green: source.green * run_rgb_scale,
+            blue: source.blue * run_rgb_scale,
+        },
+    )
 }
 
 fn build_render_plan(settings: &Settings) -> RenderPlan {
@@ -1458,63 +1739,6 @@ fn smooth_threshold(distance: f32, softness: f32) -> f32 {
     }
 }
 
-fn sample_pixel(
-    source: &[PixelF32],
-    width: usize,
-    height: usize,
-    x: f32,
-    y: f32,
-    settings: &Settings,
-) -> PixelF32 {
-    if !x.is_finite() || !y.is_finite() {
-        return transparent_pixel();
-    }
-
-    match settings.interpolation {
-        InterpolationMode::Nearest => sample_nearest(source, width, height, x, y),
-        InterpolationMode::Bilinear => sample_bilinear(source, width, height, x, y),
-        InterpolationMode::Bicubic => sample_bicubic(source, width, height, x, y),
-        InterpolationMode::Mitchell => sample_mitchell(
-            source,
-            width,
-            height,
-            x,
-            y,
-            settings.mitchell_b,
-            settings.mitchell_c,
-        ),
-    }
-}
-
-fn sample_mask(
-    source: &[f32],
-    width: usize,
-    height: usize,
-    x: f32,
-    y: f32,
-    settings: &Settings,
-) -> f32 {
-    if !x.is_finite() || !y.is_finite() {
-        return 0.0;
-    }
-
-    match settings.interpolation {
-        InterpolationMode::Nearest => sample_mask_nearest(source, width, height, x, y),
-        InterpolationMode::Bilinear => sample_mask_bilinear(source, width, height, x, y),
-        InterpolationMode::Bicubic => sample_mask_bicubic(source, width, height, x, y),
-        InterpolationMode::Mitchell => sample_mask_mitchell(
-            source,
-            width,
-            height,
-            x,
-            y,
-            settings.mitchell_b,
-            settings.mitchell_c,
-        ),
-    }
-    .clamp(0.0, 1.0)
-}
-
 fn sample_mask_nearest(source: &[f32], width: usize, height: usize, x: f32, y: f32) -> f32 {
     fetch_mask_or_zero(
         source,
@@ -1543,7 +1767,7 @@ fn sample_mask_bilinear(source: &[f32], width: usize, height: usize, x: f32, y: 
 }
 
 fn sample_mask_bicubic(source: &[f32], width: usize, height: usize, x: f32, y: f32) -> f32 {
-    sample_mask_separable(source, width, height, x, y, 2.0, |d| cubic_weight(d, -0.5))
+    sample_mask_4x4(source, width, height, x, y, |d| cubic_weight(d, -0.5))
 }
 
 fn sample_mask_mitchell(
@@ -1555,42 +1779,29 @@ fn sample_mask_mitchell(
     b: f32,
     c: f32,
 ) -> f32 {
-    sample_mask_separable(source, width, height, x, y, 2.0, |d| {
-        mitchell_weight(d, b, c)
-    })
+    sample_mask_4x4(source, width, height, x, y, |d| mitchell_weight(d, b, c))
 }
 
-fn sample_mask_separable<F>(
+fn sample_mask_4x4<F>(
     source: &[f32],
     width: usize,
     height: usize,
     x: f32,
     y: f32,
-    radius: f32,
-    mut weight_fn: F,
+    weight_fn: F,
 ) -> f32
 where
-    F: FnMut(f32) -> f32,
+    F: Fn(f32) -> f32 + Copy,
 {
-    let min_y = (y - radius).floor() as isize;
-    let max_y = (y + radius).ceil() as isize;
-    let min_x = (x - radius).floor() as isize;
-    let max_x = (x + radius).ceil() as isize;
+    let (start_x, weights_x) = kernel_weights_4(x, weight_fn);
+    let (start_y, weights_y) = kernel_weights_4(y, weight_fn);
     let mut sum = 0.0;
     let mut weight_sum = 0.0;
 
-    for sy in min_y..=max_y {
-        let wy = weight_fn(y - sy as f32);
-        if wy == 0.0 {
-            continue;
-        }
-
-        for sx in min_x..=max_x {
-            let wx = weight_fn(x - sx as f32);
-            if wx == 0.0 {
-                continue;
-            }
-
+    for (y_offset, wy) in weights_y.into_iter().enumerate() {
+        let sy = start_y + y_offset as isize;
+        for (x_offset, wx) in weights_x.into_iter().enumerate() {
+            let sx = start_x + x_offset as isize;
             let weight = wx * wy;
             sum += fetch_mask_or_zero(source, width, height, sx, sy) * weight;
             weight_sum += weight;
@@ -1631,7 +1842,7 @@ fn sample_bilinear(source: &[PixelF32], width: usize, height: usize, x: f32, y: 
 }
 
 fn sample_bicubic(source: &[PixelF32], width: usize, height: usize, x: f32, y: f32) -> PixelF32 {
-    sample_separable(source, width, height, x, y, 2.0, |d| cubic_weight(d, -0.5))
+    sample_pixel_4x4(source, width, height, x, y, |d| cubic_weight(d, -0.5))
 }
 
 fn sample_mitchell(
@@ -1643,46 +1854,45 @@ fn sample_mitchell(
     b: f32,
     c: f32,
 ) -> PixelF32 {
-    sample_separable(source, width, height, x, y, 2.0, |d| {
-        mitchell_weight(d, b, c)
-    })
+    sample_pixel_4x4(source, width, height, x, y, |d| mitchell_weight(d, b, c))
 }
 
-fn sample_separable<F>(
+fn sample_pixel_4x4<F>(
     source: &[PixelF32],
     width: usize,
     height: usize,
     x: f32,
     y: f32,
-    radius: f32,
-    mut weight_fn: F,
+    weight_fn: F,
 ) -> PixelF32
 where
-    F: FnMut(f32) -> f32,
+    F: Fn(f32) -> f32 + Copy,
 {
-    let min_y = (y - radius).floor() as isize;
-    let max_y = (y + radius).ceil() as isize;
-    let min_x = (x - radius).floor() as isize;
-    let max_x = (x + radius).ceil() as isize;
+    let (start_x, weights_x) = kernel_weights_4(x, weight_fn);
+    let (start_y, weights_y) = kernel_weights_4(y, weight_fn);
     let mut acc = WeightedPixel::default();
 
-    for sy in min_y..=max_y {
-        let wy = weight_fn(y - sy as f32);
-        if wy == 0.0 {
-            continue;
-        }
-
-        for sx in min_x..=max_x {
-            let wx = weight_fn(x - sx as f32);
-            if wx == 0.0 {
-                continue;
-            }
-
+    for (y_offset, wy) in weights_y.into_iter().enumerate() {
+        let sy = start_y + y_offset as isize;
+        for (x_offset, wx) in weights_x.into_iter().enumerate() {
+            let sx = start_x + x_offset as isize;
             acc.add(fetch_or_transparent(source, width, height, sx, sy), wx * wy);
         }
     }
 
     acc.finish()
+}
+
+fn kernel_weights_4<F>(coord: f32, weight_fn: F) -> (isize, [f32; 4])
+where
+    F: Fn(f32) -> f32,
+{
+    let start = coord.floor() as isize - 1;
+    let mut weights = [0.0; 4];
+    for (offset, weight) in weights.iter_mut().enumerate() {
+        *weight = weight_fn(coord - (start + offset as isize) as f32);
+    }
+    (start, weights)
 }
 
 fn cubic_weight(d: f32, a: f32) -> f32 {
@@ -1962,6 +2172,52 @@ mod tests {
         );
     }
 
+    fn assert_pixel_close(actual: PixelF32, expected: PixelF32) {
+        assert_close(actual.alpha, expected.alpha);
+        assert_close(actual.red, expected.red);
+        assert_close(actual.green, expected.green);
+        assert_close(actual.blue, expected.blue);
+    }
+
+    fn legacy_mask_support_scan<F>(
+        source: &[f32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        mut weight_fn: F,
+    ) -> f32
+    where
+        F: FnMut(f32) -> f32,
+    {
+        let min_y = (y - 2.0).floor() as isize;
+        let max_y = (y + 2.0).ceil() as isize;
+        let min_x = (x - 2.0).floor() as isize;
+        let max_x = (x + 2.0).ceil() as isize;
+        let mut sum = 0.0;
+        let mut weight_sum = 0.0;
+        for sy in min_y..=max_y {
+            let wy = weight_fn(y - sy as f32);
+            if wy == 0.0 {
+                continue;
+            }
+            for sx in min_x..=max_x {
+                let wx = weight_fn(x - sx as f32);
+                if wx == 0.0 {
+                    continue;
+                }
+                let weight = wx * wy;
+                sum += fetch_mask_or_zero(source, width, height, sx, sy) * weight;
+                weight_sum += weight;
+            }
+        }
+        if weight_sum.abs() <= EPSILON {
+            0.0
+        } else {
+            sum / weight_sum
+        }
+    }
+
     fn assert_path_matches_incremental_geometry(settings: &Settings, direction_sign: f32) {
         let path = build_direction_path(settings, direction_sign);
         let base_angle = if direction_sign < 0.0 {
@@ -2022,5 +2278,78 @@ mod tests {
         };
         assert_close(direction.x, settings.direction_rad.cos());
         assert_close(direction.y, settings.direction_rad.sin());
+    }
+
+    #[test]
+    fn four_tap_kernels_match_legacy_support_scan() {
+        let source = [
+            0.0, 0.1, 0.2, 0.3, 0.4, 0.15, 0.25, 0.35, 0.45, 0.55, 0.3, 0.4, 0.5, 0.6, 0.7, 0.45,
+            0.55, 0.65, 0.75, 0.85,
+        ];
+        for (x, y) in [(-0.25, 0.4), (0.0, 0.0), (1.3, 2.7), (4.8, 3.2)] {
+            let cubic_expected =
+                legacy_mask_support_scan(&source, 5, 4, x, y, |d| cubic_weight(d, -0.5));
+            assert_close(sample_mask_bicubic(&source, 5, 4, x, y), cubic_expected);
+
+            let mitchell_expected = legacy_mask_support_scan(&source, 5, 4, x, y, |d| {
+                mitchell_weight(d, 1.0 / 3.0, 1.0 / 3.0)
+            });
+            assert_close(
+                sample_mask_mitchell(&source, 5, 4, x, y, 1.0 / 3.0, 1.0 / 3.0),
+                mitchell_expected,
+            );
+        }
+    }
+
+    #[test]
+    fn nearest_expansion_cache_preserves_compositing() {
+        let pixels = vec![
+            PixelF32 {
+                alpha: 0.4,
+                red: 0.3,
+                green: 0.2,
+                blue: 0.1,
+            };
+            9
+        ];
+        let masks = vec![0.8; 9];
+        let source = SourceImage {
+            pixels: &pixels,
+            masks: &masks,
+            width: 3,
+            height: 3,
+        };
+        let mut settings = test_settings();
+        settings.interpolation = InterpolationMode::Nearest;
+        let samples = build_expansion_samples(5);
+        let step = PathStep {
+            source_offset_x: 0.0,
+            source_offset_y: 0.0,
+            expansion_radius: 0.2,
+            falloff: 0.75,
+        };
+        let direction = DirectionBasis::from_angle(0.3);
+
+        let mut expected = transparent_pixel();
+        for sample in &samples {
+            let local_y = sample.radius_scale * step.expansion_radius;
+            let (sx, sy) = direction.offset_point(1.0, 1.0, 0.0, local_y);
+            expected = alpha_over(
+                expected,
+                sample_extension_point::<NearestKernel>(
+                    &source,
+                    sx,
+                    sy,
+                    &settings,
+                    step.falloff * sample.edge_weight,
+                ),
+            );
+            if expected.alpha >= 0.999 {
+                break;
+            }
+        }
+
+        let actual = sample_expanded_nearest(&source, (1.0, 1.0), direction, 1.0, &step, &samples);
+        assert_pixel_close(actual, expected);
     }
 }
