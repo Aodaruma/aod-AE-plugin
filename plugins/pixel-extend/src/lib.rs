@@ -266,15 +266,48 @@ impl DirectionBasis {
 #[derive(Debug)]
 enum DirectionField {
     Constant(DirectionBasis),
-    PerPixel(Vec<DirectionBasis>),
+    PerPixel {
+        directions: Vec<DirectionBasis>,
+        region: RenderRegion,
+    },
 }
 
 impl DirectionField {
-    fn at(&self, index: usize) -> DirectionBasis {
+    fn at(&self, x: usize, y: usize) -> DirectionBasis {
         match self {
             Self::Constant(direction) => *direction,
-            Self::PerPixel(directions) => directions[index],
+            Self::PerPixel { directions, region } => {
+                directions[(y - region.min_y) * region.width() + (x - region.min_x)]
+            }
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RenderRegion {
+    min_x: usize,
+    min_y: usize,
+    max_x: usize,
+    max_y: usize,
+}
+
+#[derive(Debug)]
+struct MaskMap {
+    values: Vec<f32>,
+    region: Option<RenderRegion>,
+}
+
+impl RenderRegion {
+    fn width(self) -> usize {
+        self.max_x.saturating_sub(self.min_x)
+    }
+
+    fn height(self) -> usize {
+        self.max_y.saturating_sub(self.min_y)
+    }
+
+    fn contains(self, x: usize, y: usize) -> bool {
+        x >= self.min_x && x < self.max_x && y >= self.min_y && y < self.max_y
     }
 }
 
@@ -302,6 +335,13 @@ struct DirectionPath {
 struct RenderPlan {
     paths: Vec<DirectionPath>,
     expansion_samples: Vec<ExpansionSample>,
+}
+
+#[derive(Debug)]
+struct RenderContext {
+    direction_field: DirectionField,
+    plan: RenderPlan,
+    region: RenderRegion,
 }
 
 trait InterpolationKernel {
@@ -1082,15 +1122,15 @@ impl Plugin {
 
         let settings = read_settings(in_data, params)?;
         let source = capture_source(&in_layer);
-        let masks = build_mask_map(&source, &settings);
-        let has_extension_source = masks.iter().any(|&mask| mask > EPSILON);
-        let should_render_extension = has_extension_source
+        let mask_map = build_mask_map(&source, width, height, &settings);
+        let mask_region = mask_map.region;
+        let should_render_extension = mask_region.is_some()
             && settings.opacity > EPSILON
             && settings.extend_count > 0
             && settings.step_size > EPSILON;
         let source_image = SourceImage {
             pixels: &source,
-            masks: &masks,
+            masks: &mask_map.values,
             width,
             height,
         };
@@ -1115,10 +1155,29 @@ impl Plugin {
             _ => None,
         };
         let render_context = should_render_extension.then(|| {
-            (
-                build_direction_field(width, height, &settings, direction_map.as_ref()),
-                build_render_plan(&settings),
-            )
+            let plan = build_render_plan(&settings);
+            let variable_direction = settings.use_direction_map
+                && settings.map_influence > EPSILON
+                && direction_map.is_some();
+            let region = build_extension_region(
+                mask_region.expect("extension source checked above"),
+                width,
+                height,
+                &settings,
+                &plan,
+                variable_direction,
+            );
+            RenderContext {
+                direction_field: build_direction_field(
+                    width,
+                    height,
+                    region,
+                    &settings,
+                    direction_map.as_ref(),
+                ),
+                plan,
+                region,
+            }
         });
         match settings.interpolation {
             InterpolationMode::Nearest => render_output::<NearestKernel>(
@@ -1160,22 +1219,24 @@ fn render_output<K: InterpolationKernel>(
     source: &[PixelF32],
     source_image: &SourceImage<'_>,
     settings: &Settings,
-    render_context: Option<&(DirectionField, RenderPlan)>,
+    render_context: Option<&RenderContext>,
 ) -> Result<(), Error> {
     let width = source_image.width;
     let progress_final = out_layer.height() as i32;
     out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
         let pixel_index = y as usize * width + x as usize;
         let source_px = source[pixel_index];
-        let extend_px = if let Some((direction_field, render_plan)) = render_context {
+        let extend_px = if let Some(context) = render_context
+            && context.region.contains(x as usize, y as usize)
+        {
             scale_pixel_opacity(
                 extend_pixel::<K>(
                     source_image,
                     x as f32,
                     y as f32,
                     settings,
-                    direction_field.at(pixel_index),
-                    render_plan,
+                    context.direction_field.at(x as usize, y as usize),
+                    &context.plan,
                 ),
                 settings.opacity,
             )
@@ -1574,6 +1635,117 @@ fn build_expansion_samples(sample_count: usize) -> Vec<ExpansionSample> {
         .collect()
 }
 
+#[cfg(test)]
+fn find_mask_region(masks: &[f32], width: usize, height: usize) -> Option<RenderRegion> {
+    let mut min_x = width;
+    let mut min_y = height;
+    let mut max_x = 0usize;
+    let mut max_y = 0usize;
+
+    for (index, &mask) in masks.iter().enumerate() {
+        if mask <= EPSILON {
+            continue;
+        }
+        let x = index % width;
+        let y = index / width;
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x + 1);
+        max_y = max_y.max(y + 1);
+    }
+
+    (min_x < max_x && min_y < max_y).then_some(RenderRegion {
+        min_x,
+        min_y,
+        max_x,
+        max_y,
+    })
+}
+
+fn build_extension_region(
+    mask_region: RenderRegion,
+    width: usize,
+    height: usize,
+    settings: &Settings,
+    plan: &RenderPlan,
+    variable_direction: bool,
+) -> RenderRegion {
+    let mut min_offset_x = f32::INFINITY;
+    let mut min_offset_y = f32::INFINITY;
+    let mut max_offset_x = f32::NEG_INFINITY;
+    let mut max_offset_y = f32::NEG_INFINITY;
+    let base_direction = DirectionBasis::from_angle(settings.direction_rad);
+
+    for_each_plan_offset(plan, |local_x, local_y| {
+        if variable_direction {
+            let radius = local_x.hypot(local_y);
+            min_offset_x = min_offset_x.min(-radius);
+            min_offset_y = min_offset_y.min(-radius);
+            max_offset_x = max_offset_x.max(radius);
+            max_offset_y = max_offset_y.max(radius);
+        } else {
+            let (world_x, world_y) = base_direction.offset_point(0.0, 0.0, local_x, local_y);
+            min_offset_x = min_offset_x.min(world_x);
+            min_offset_y = min_offset_y.min(world_y);
+            max_offset_x = max_offset_x.max(world_x);
+            max_offset_y = max_offset_y.max(world_y);
+        }
+    });
+
+    if !min_offset_x.is_finite() {
+        min_offset_x = 0.0;
+        min_offset_y = 0.0;
+        max_offset_x = 0.0;
+        max_offset_y = 0.0;
+    }
+
+    let support = match settings.interpolation {
+        InterpolationMode::Nearest => 0.5,
+        InterpolationMode::Bilinear => 1.0,
+        InterpolationMode::Bicubic | InterpolationMode::Mitchell => 2.0,
+    };
+    let source_min_x = mask_region.min_x as f32 - support;
+    let source_min_y = mask_region.min_y as f32 - support;
+    let source_max_x = mask_region.max_x.saturating_sub(1) as f32 + support;
+    let source_max_y = mask_region.max_y.saturating_sub(1) as f32 + support;
+
+    RenderRegion {
+        min_x: clamp_region_min(source_min_x - max_offset_x, width),
+        min_y: clamp_region_min(source_min_y - max_offset_y, height),
+        max_x: clamp_region_max(source_max_x - min_offset_x, width),
+        max_y: clamp_region_max(source_max_y - min_offset_y, height),
+    }
+}
+
+fn for_each_plan_offset<F>(plan: &RenderPlan, mut visit: F)
+where
+    F: FnMut(f32, f32),
+{
+    for path in &plan.paths {
+        for step in &path.steps {
+            if step.expansion_radius <= EPSILON || plan.expansion_samples.len() <= 1 {
+                visit(step.source_offset_x, step.source_offset_y);
+                continue;
+            }
+            for sample in &plan.expansion_samples {
+                visit(
+                    step.source_offset_x,
+                    step.source_offset_y
+                        + path.normal_sign * sample.radius_scale * step.expansion_radius,
+                );
+            }
+        }
+    }
+}
+
+fn clamp_region_min(value: f32, limit: usize) -> usize {
+    (value.floor() as isize).clamp(0, limit as isize) as usize
+}
+
+fn clamp_region_max(value: f32, limit: usize) -> usize {
+    ((value.ceil() as isize).saturating_add(1)).clamp(0, limit as isize) as usize
+}
+
 fn odd_sample_count(count: usize) -> usize {
     let count = count.clamp(1, 65);
     if count.is_multiple_of(2) {
@@ -1586,6 +1758,7 @@ fn odd_sample_count(count: usize) -> usize {
 fn build_direction_field(
     width: usize,
     height: usize,
+    region: RenderRegion,
     settings: &Settings,
     direction_map: Option<&DirectionMapData<'_>>,
 ) -> DirectionField {
@@ -1598,9 +1771,9 @@ fn build_direction_field(
         return DirectionField::Constant(base);
     };
 
-    let mut directions = Vec::with_capacity(width.saturating_mul(height));
-    for y in 0..height {
-        for x in 0..width {
+    let mut directions = Vec::with_capacity(region.width().saturating_mul(region.height()));
+    for y in region.min_y..region.max_y {
+        for x in region.min_x..region.max_x {
             let map_x = remap_axis_to_map(x as f32, width, map.width);
             let map_y = remap_axis_to_map(y as f32, height, map.height);
             let direction = direction_map_vector(map, map_x, map_y, settings)
@@ -1619,7 +1792,7 @@ fn build_direction_field(
         }
     }
 
-    DirectionField::PerPixel(directions)
+    DirectionField::PerPixel { directions, region }
 }
 
 fn direction_map_vector(
@@ -1692,8 +1865,41 @@ fn map_channel_value(px: PixelF32, channel: MapChannel) -> f32 {
     }
 }
 
-fn build_mask_map(source: &[PixelF32], settings: &Settings) -> Vec<f32> {
-    source.iter().map(|&px| source_mask(px, settings)).collect()
+fn build_mask_map(
+    source: &[PixelF32],
+    width: usize,
+    height: usize,
+    settings: &Settings,
+) -> MaskMap {
+    let mut values = Vec::with_capacity(source.len());
+    let mut min_x = width;
+    let mut min_y = height;
+    let mut max_x = 0usize;
+    let mut max_y = 0usize;
+
+    for (index, &pixel) in source.iter().enumerate() {
+        let mask = source_mask(pixel, settings);
+        values.push(mask);
+        if mask <= EPSILON {
+            continue;
+        }
+        let x = index % width;
+        let y = index / width;
+        min_x = min_x.min(x);
+        min_y = min_y.min(y);
+        max_x = max_x.max(x + 1);
+        max_y = max_y.max(y + 1);
+    }
+
+    MaskMap {
+        values,
+        region: (min_x < max_x && min_y < max_y).then_some(RenderRegion {
+            min_x,
+            min_y,
+            max_x,
+            max_y,
+        }),
+    }
 }
 
 fn source_mask(px: PixelF32, settings: &Settings) -> f32 {
@@ -2272,7 +2478,18 @@ mod tests {
     #[test]
     fn constant_direction_field_avoids_per_pixel_storage() {
         let settings = test_settings();
-        let field = build_direction_field(1920, 1080, &settings, None);
+        let field = build_direction_field(
+            1920,
+            1080,
+            RenderRegion {
+                min_x: 0,
+                min_y: 0,
+                max_x: 1920,
+                max_y: 1080,
+            },
+            &settings,
+            None,
+        );
         let DirectionField::Constant(direction) = field else {
             panic!("expected a constant direction field");
         };
@@ -2351,5 +2568,93 @@ mod tests {
 
         let actual = sample_expanded_nearest(&source, (1.0, 1.0), direction, 1.0, &step, &samples);
         assert_pixel_close(actual, expected);
+    }
+
+    #[test]
+    fn decay_limits_precomputed_hot_loop_steps() {
+        let mut settings = test_settings();
+        settings.extend_count = 100;
+        settings.decay = 0.1;
+        let path = build_direction_path(&settings, 1.0);
+        assert!(path.steps.len() < settings.extend_count + 1);
+        assert!(path.steps.iter().all(|step| step.falloff > EPSILON));
+    }
+
+    #[test]
+    fn mask_generation_tracks_nonzero_region_in_one_pass() {
+        let mut pixels = vec![transparent_pixel(); 12];
+        pixels[6] = PixelF32 {
+            alpha: 0.8,
+            red: 0.4,
+            green: 0.2,
+            blue: 0.1,
+        };
+        let settings = test_settings();
+        let mask_map = build_mask_map(&pixels, 4, 3, &settings);
+        assert_eq!(
+            mask_map.region,
+            Some(RenderRegion {
+                min_x: 2,
+                min_y: 1,
+                max_x: 3,
+                max_y: 2,
+            })
+        );
+        assert!(mask_map.values[6] > EPSILON);
+    }
+
+    #[test]
+    fn extension_region_contains_all_constant_direction_samples() {
+        assert_extension_region_contains_samples(false);
+    }
+
+    #[test]
+    fn extension_region_contains_all_variable_direction_samples() {
+        assert_extension_region_contains_samples(true);
+    }
+
+    fn assert_extension_region_contains_samples(variable_direction: bool) {
+        let width = 24;
+        let height = 20;
+        let mut masks = vec![0.0; width * height];
+        masks[9 * width + 11] = 1.0;
+        masks[10 * width + 12] = 0.5;
+        let mask_region = find_mask_region(&masks, width, height).unwrap();
+        let mut settings = test_settings();
+        settings.direction_rad = 0.43;
+        settings.extend_count = 9;
+        settings.offset = -1.2;
+        settings.angle_change_rad = 1.1;
+        settings.expansion_per_step = 0.35;
+        settings.expansion_samples = 7;
+        settings.interpolation = InterpolationMode::Nearest;
+        let plan = build_render_plan(&settings);
+        let region = build_extension_region(
+            mask_region,
+            width,
+            height,
+            &settings,
+            &plan,
+            variable_direction,
+        );
+
+        for y in 0..height {
+            for x in 0..width {
+                let direction = if variable_direction {
+                    DirectionBasis::from_angle((x + y * width) as f32 * 0.17)
+                } else {
+                    DirectionBasis::from_angle(settings.direction_rad)
+                };
+                let mut can_reach_mask = false;
+                for_each_plan_offset(&plan, |local_x, local_y| {
+                    let (sx, sy) = direction.offset_point(x as f32, y as f32, local_x, local_y);
+                    can_reach_mask |= sample_mask_nearest(&masks, width, height, sx, sy) > EPSILON;
+                });
+                assert!(
+                    !can_reach_mask || region.contains(x, y),
+                    "region {region:?} excludes reachable output ({x}, {y})"
+                );
+            }
+        }
     }
 }
