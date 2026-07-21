@@ -2014,9 +2014,13 @@ name = "pixel_extend"
 version = "0.1.0"
 dependencies = [
  "after-effects",
+ "bytemuck",
  "chrono",
+ "futures-intrusive",
  "pipl",
+ "pollster",
  "utils",
+ "wgpu",
 ]
 
 [[package]]

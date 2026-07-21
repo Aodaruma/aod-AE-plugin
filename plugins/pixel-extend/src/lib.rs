@@ -6,6 +6,8 @@ use std::env;
 use ae::pf::*;
 use utils::ToPixel;
 
+mod gpu;
+
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 enum Params {
     Direction,
@@ -1179,6 +1181,15 @@ impl Plugin {
                 region,
             }
         });
+        if let Some(context) = render_context.as_ref()
+            && gpu::should_render(context)
+            && let Ok(output) =
+                gpu::render(&source, &mask_map.values, width, height, &settings, context)
+        {
+            write_output_buffer(&mut out_layer, &output)?;
+            return Ok(());
+        }
+
         match settings.interpolation {
             InterpolationMode::Nearest => render_output::<NearestKernel>(
                 &mut out_layer,
@@ -2337,6 +2348,20 @@ fn write_output_pixel(dst: &mut GenericPixelMut<'_>, px: PixelF32) {
     }
 }
 
+fn write_output_buffer(out_layer: &mut Layer, pixels: &[PixelF32]) -> Result<(), Error> {
+    let width = out_layer.width();
+    let progress_final = out_layer.height() as i32;
+    out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
+        let pixel = pixels
+            .get(y as usize * width + x as usize)
+            .copied()
+            .ok_or(Error::BadCallbackParameter)?;
+        write_output_pixel(&mut dst, pixel);
+        Ok(())
+    })?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2383,6 +2408,66 @@ mod tests {
         assert_close(actual.red, expected.red);
         assert_close(actual.green, expected.green);
         assert_close(actual.blue, expected.blue);
+    }
+
+    fn render_cpu_pixels<K: InterpolationKernel>(
+        source: &[PixelF32],
+        masks: &[f32],
+        width: usize,
+        height: usize,
+        settings: &Settings,
+        context: &RenderContext,
+    ) -> Vec<PixelF32> {
+        let source_image = SourceImage {
+            pixels: source,
+            masks,
+            width,
+            height,
+        };
+        let mut output = Vec::with_capacity(source.len());
+        for y in 0..height {
+            for x in 0..width {
+                let extension = if context.region.contains(x, y) {
+                    scale_pixel_opacity(
+                        extend_pixel::<K>(
+                            &source_image,
+                            x as f32,
+                            y as f32,
+                            settings,
+                            context.direction_field.at(x, y),
+                            &context.plan,
+                        ),
+                        settings.opacity,
+                    )
+                } else {
+                    transparent_pixel()
+                };
+                let pixel = if settings.show_source {
+                    blend_behind_source(source[y * width + x], extension, settings.blend_mode)
+                } else {
+                    extension
+                };
+                output.push(sanitize_pixel(pixel));
+            }
+        }
+        output
+    }
+
+    fn assert_gpu_pixels_close(actual: &[PixelF32], expected: &[PixelF32]) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            for (channel, actual, expected) in [
+                ("alpha", actual.alpha, expected.alpha),
+                ("red", actual.red, expected.red),
+                ("green", actual.green, expected.green),
+                ("blue", actual.blue, expected.blue),
+            ] {
+                assert!(
+                    (actual - expected).abs() <= 2.0e-4,
+                    "pixel={index}, channel={channel}, actual={actual}, expected={expected}"
+                );
+            }
+        }
     }
 
     fn legacy_mask_support_scan<F>(
@@ -2611,6 +2696,108 @@ mod tests {
     #[test]
     fn extension_region_contains_all_variable_direction_samples() {
         assert_extension_region_contains_samples(true);
+    }
+
+    #[test]
+    fn gpu_render_matches_cpu_interpolation_paths() {
+        let width = 8;
+        let height = 7;
+        let mut source = vec![transparent_pixel(); width * height];
+        for y in 1..height - 1 {
+            for x in 1..width - 1 {
+                let alpha = 0.25 + (x + y) as f32 * 0.045;
+                source[y * width + x] = PixelF32 {
+                    alpha,
+                    red: alpha * x as f32 / width as f32,
+                    green: alpha * y as f32 / height as f32,
+                    blue: alpha * (x + y) as f32 / (width + height) as f32,
+                };
+            }
+        }
+
+        let mut settings = test_settings();
+        settings.extend_count = 4;
+        settings.step_size = 0.8;
+        settings.offset = -0.35;
+        settings.decay = 0.82;
+        settings.expansion_per_step = 0.45;
+        settings.expansion_samples = 5;
+        settings.opacity = 0.73;
+        settings.blend_mode = BlendMode::Screen;
+        let mask_map = build_mask_map(&source, width, height, &settings);
+        let plan = build_render_plan(&settings);
+        let region = RenderRegion {
+            min_x: 0,
+            min_y: 0,
+            max_x: width,
+            max_y: height,
+        };
+        let directions = (0..width * height)
+            .map(|index| DirectionBasis::from_angle(0.2 + index as f32 * 0.017))
+            .collect();
+        let context = RenderContext {
+            direction_field: DirectionField::PerPixel { directions, region },
+            plan,
+            region,
+        };
+
+        for mode in [
+            InterpolationMode::Nearest,
+            InterpolationMode::Bilinear,
+            InterpolationMode::Bicubic,
+            InterpolationMode::Mitchell,
+        ] {
+            settings.interpolation = mode;
+            let expected = match mode {
+                InterpolationMode::Nearest => render_cpu_pixels::<NearestKernel>(
+                    &source,
+                    &mask_map.values,
+                    width,
+                    height,
+                    &settings,
+                    &context,
+                ),
+                InterpolationMode::Bilinear => render_cpu_pixels::<BilinearKernel>(
+                    &source,
+                    &mask_map.values,
+                    width,
+                    height,
+                    &settings,
+                    &context,
+                ),
+                InterpolationMode::Bicubic => render_cpu_pixels::<BicubicKernel>(
+                    &source,
+                    &mask_map.values,
+                    width,
+                    height,
+                    &settings,
+                    &context,
+                ),
+                InterpolationMode::Mitchell => render_cpu_pixels::<MitchellKernel>(
+                    &source,
+                    &mask_map.values,
+                    width,
+                    height,
+                    &settings,
+                    &context,
+                ),
+            };
+            let actual = match gpu::render(
+                &source,
+                &mask_map.values,
+                width,
+                height,
+                &settings,
+                &context,
+            ) {
+                Ok(actual) => actual,
+                Err(error) => {
+                    eprintln!("Skipping GPU comparison because wgpu is unavailable: {error}");
+                    return;
+                }
+            };
+            assert_gpu_pixels_close(&actual, &expected);
+        }
     }
 
     fn assert_extension_region_contains_samples(variable_direction: bool) {
