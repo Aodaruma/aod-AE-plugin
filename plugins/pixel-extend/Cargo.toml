@@ -1,0 +1,31 @@
+[package]
+name = "pixel_extend"
+description = "Extends pixels in adjustable directions with selectable source masks and interpolation."
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+bytemuck = { workspace = true }
+futures-intrusive = { workspace = true }
+pollster = { workspace = true }
+utils = { path = "../../crates/utils" }
+wgpu = { workspace = true }
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true
