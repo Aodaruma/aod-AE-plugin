@@ -73,6 +73,8 @@ template.
   - 不透明または色領域をランダム・位置・インデックスで色分けします / Colors connected regions with random, positional, or index-based schemes.
 - AOD_ScatterMap
   - マップ制御の確率的な散乱をレイヤーに適用します / Applies map-driven stochastic scatter to layers.
+- AOD_ScatterMapNext
+  - マップ制御のGather／Swap方式で画素や粒を散乱します / Applies map-driven gather and swap scatter to layers.
 - AOD_SingularValueDecompose
   - レイヤーに2D特異値分解を適用してLow-rank近似を再構成します / Performs 2D singular value decomposition and low-rank approximation on RGBA channels.
 - AOD_VoronoiGenerate
