@@ -4,10 +4,24 @@ use pipl::*;
 const PF_PLUG_IN_VERSION: u16 = 13;
 const PF_PLUG_IN_SUBVERS: u16 = 28;
 
+#[cfg(target_os = "windows")]
+fn embed_binary_safe_pipl(pipl: &[u8]) {
+    // `pipl` 0.1.1 normally embeds arbitrary PiPL bytes in an RC string.
+    // On Windows, rc.exe can treat that payload as text and change its binary
+    // length. A raw file resource preserves the exact bytes from build_pipl.
+    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set"));
+    let pipl_path = out_dir.join("scatter_map_next.pipl");
+    std::fs::write(&pipl_path, pipl).expect("write binary PiPL resource");
+
+    let escaped_path = pipl_path.to_string_lossy().replace('\\', "\\\\");
+    let mut resource = winres::WindowsResource::new();
+    resource.append_rc_content(&format!("16000 PiPL DISCARDABLE \"{escaped_path}\""));
+    resource.compile().expect("compile binary PiPL resource");
+}
+
 #[rustfmt::skip]
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(does_dialog)");
-    println!("cargo::rustc-check-cfg=cfg(threaded_rendering)");
 
     let current_year = chrono::Local::now().year();
     println!("cargo:rustc-env=BUILD_YEAR={}", current_year);
@@ -32,9 +46,7 @@ fn main() {
     */
     let stage = Stage::Develop;
 
-    // --------------------------------------------------
-    // Build the plugin with PiPL
-    pipl::plugin_build(vec![
+    let properties = || vec![
         Property::Kind(PIPLType::AEEffect),
         Property::Name("AOD_ScatterMapNext"),
         Property::Category("Aodaruma"),
@@ -58,9 +70,7 @@ fn main() {
         Property::AE_Effect_Info_Flags(0),
         Property::AE_Effect_Global_OutFlags(
             // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags.html
-            OutFlags::PixIndependent
-            | OutFlags::UseOutputExtent
-            | OutFlags::DeepColorAware
+            OutFlags::DeepColorAware
             | OutFlags::SendUpdateParamsUI
             ,
         ),
@@ -68,8 +78,7 @@ fn main() {
             // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags2.html
             OutFlags2::FloatColorAware
             | OutFlags2::SupportsSmartRender
-            | OutFlags2::SupportsThreadedRendering
-            // | OutFlags2::SupportsGetFlattenedSequenceData // error occured in pipl == v0.1.1, so temporarily commented out
+            | OutFlags2::RevealsZeroAlpha
             | OutFlags2::ParamGroupStartCollapsedFlag
             // | OutFlags2::SupportsGpuRenderF32
             ,
@@ -77,5 +86,12 @@ fn main() {
         Property::AE_Effect_Match_Name("ScatterMapNext"),
         Property::AE_Reserved_Info(8),
         Property::AE_Effect_Support_URL("https://github.com/Aodaruma/aodaruma-ae-plugin"),
-    ])
+    ];
+
+    // --------------------------------------------------
+    // Build the plugin with PiPL. On Windows, overwrite the text-encoded
+    // resource emitted by pipl with a byte-for-byte binary-safe resource.
+    pipl::plugin_build(properties());
+    #[cfg(target_os = "windows")]
+    embed_binary_safe_pipl(&pipl::build_pipl(properties()).expect("build PiPL"));
 }

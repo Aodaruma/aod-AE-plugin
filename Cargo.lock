@@ -2494,6 +2494,7 @@ dependencies = [
  "chrono",
  "pipl",
  "utils",
+ "winres",
 ]
 
 [[package]]

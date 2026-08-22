@@ -22,6 +22,7 @@ pipl = { workspace = true }
 [build-dependencies]
 chrono.workspace = true
 pipl.workspace = true
+winres = "0.1.12"
 
 [lints]
 workspace = true
