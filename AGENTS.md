@@ -26,12 +26,12 @@
 - `plugins/<name>/Cargo.toml` の `description`
 - `plugins/<name>/src/lib.rs` の `PLUGIN_DESCRIPTION`
 - `plugins/<name>/README.md` の本文
-- ルート `README.md` の「Plugins / プラグイン説明」一覧
+- 対応する `docs/catalog/*.md` のエフェクト説明
 
 ルール:
 
 - 英語で 1 文の短い説明（例: “Generates distance images from contours of colored regions.”）
-- ルート README の一覧は「日本語 / English」のペアにする（既存スタイルに合わせる）
+- カタログには日本語の簡単な説明と主要パラメーターを記載する
 - 文末はピリオドで統一
 
 ## 新規プラグイン作成（cargo new-plugin）
@@ -44,7 +44,19 @@
    - `Cargo.toml` の `description`
    - `build.rs` の Name / Match Name（命名規則と一致しているか）
    - `src/lib.rs` の `PLUGIN_DESCRIPTION`
-3) ルート `README.md` のプラグイン一覧に追加
+3) 対応する `docs/catalog/*.md` に追加し、下記の「エフェクト一覧・カタログ画像の更新」に従って画像を更新
+
+## エフェクト一覧・カタログ画像の更新（必須）
+
+プラグインを追加した場合、または既存プラグインの描画結果・見た目に影響する変更を行った場合は、実際のAfter Effects上の出力に合わせて次を更新してください。
+
+- 対応する `docs/catalog/*.md` の説明、パラメーター、個別プレビュー
+- `docs/catalog/assets/previews/<plugin>.png`
+- 対応分類の一覧画像 `docs/catalog/assets/overview/<category>.png`
+- 全エフェクト一覧画像 `docs/catalog/assets/overview/all-effects.png`
+- 必要に応じて `docs/catalog/build-catalog.jsx` の分類、エフェクト一覧、プレビュー設定
+
+個別プレビューを更新した場合は、分類別一覧画像と全エフェクト一覧画像も同じ変更内で再生成し、ルート `README.md` と詳細カタログに古い描画結果を残さないでください。
 
 ### cargo-generate 非対話実行メモ（知見）
 
