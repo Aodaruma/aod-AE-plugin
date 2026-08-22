@@ -19,6 +19,8 @@ template.
 > リリース済みのプラグインは [Releases](https://github.com/Aodaruma/aod-AE-plugin/releases) からダウンロードできます。  
 > You can download released plugins from [Releases](https://github.com/Aodaruma/aod-AE-plugin/releases).
 
+- AOD_CheckerGenerate
+  - セルの大きさ、中心、エッジ処理、合成方法を調整できる2色のチェッカーボードパターンを生成します / Generates customizable two-color checkerboard patterns with adjustable geometry, edge treatment, and compositing.
 - AOD_ColorAjust
   - OKLCH/HSLで色相・彩度・明度を調整します / Adjusts hue, chroma, and lightness in OKLCH or HSL color spaces
 - AOD_ColorChange:
