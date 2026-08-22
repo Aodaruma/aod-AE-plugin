@@ -752,7 +752,7 @@ impl AdobePluginGlobal for Plugin {
             ae::Command::About => {
                 out_data.set_return_msg(
                     format!(
-                        "AOD_ScatterMapNext - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) 2026-{build_year} Aodaruma",
+                        "AOD_ScatterMap - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) 2026-{build_year} Aodaruma",
                         version = env!("CARGO_PKG_VERSION"),
                         build_year = env!("BUILD_YEAR")
                     )
@@ -767,7 +767,7 @@ impl AdobePluginGlobal for Plugin {
                 out_data.set_out_flag2(OutFlags2::RevealsZeroAlpha, true);
                 out_data.set_out_flag2(OutFlags2::ParamGroupStartCollapsedFlag, true);
                 if let Ok(suite) = ae::aegp::suites::Utility::new()
-                    && let Ok(plugin_id) = suite.register_with_aegp("AOD_ScatterMapNext")
+                    && let Ok(plugin_id) = suite.register_with_aegp("AOD_ScatterMap")
                 {
                     self.aegp_id = Some(plugin_id);
                 }
@@ -1606,7 +1606,7 @@ fn render_gather_layers(
     let total_grains = grains_per_layer.saturating_mul(layers.len());
     assert!(
         total_grains < u32::MAX as usize,
-        "ScatterMapNext image contains too many grains"
+        "ScatterMap image contains too many grains"
     );
 
     // A single owner id per pixel is enough because grain_front_priority is a
@@ -2021,7 +2021,7 @@ fn build_swap_partition<'a>(
     let total_grains = groups_per_layer.saturating_mul(layers.len());
     assert!(
         total_grains < u32::MAX as usize && width.saturating_mul(height) <= u32::MAX as usize,
-        "ScatterMapNext image contains too many pixels or grains"
+        "ScatterMap image contains too many pixels or grains"
     );
 
     if layers.len() == 1
@@ -2207,7 +2207,7 @@ fn render_swap(
     let pixel_count = source.width * source.height;
     assert!(
         pixel_count <= u32::MAX as usize,
-        "ScatterMapNext image contains too many pixels"
+        "ScatterMap image contains too many pixels"
     );
     let mut permutation: Vec<u32> = (0..pixel_count as u32).collect();
     let (partition, layers, columns, rows) =
@@ -2266,7 +2266,7 @@ fn build_swap_permutation(
 ) -> Vec<u32> {
     assert!(
         width.saturating_mul(height) <= u32::MAX as usize,
-        "ScatterMapNext image contains too many pixels"
+        "ScatterMap image contains too many pixels"
     );
     let mut permutation: Vec<u32> = (0..(width * height) as u32).collect();
     if width == 0 || height == 0 || settings.amount <= 0.0 || settings.radius <= 0 {
@@ -2476,7 +2476,7 @@ fn build_grain_partition(
     let group_count = columns * rows;
     assert!(
         group_count < u32::MAX as usize && width.saturating_mul(height) <= u32::MAX as usize,
-        "ScatterMapNext image contains too many pixels or grains"
+        "ScatterMap image contains too many pixels or grains"
     );
     let mut winners = vec![u32::MAX; width * height];
     for block_index in 0..group_count {

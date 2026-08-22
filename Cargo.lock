@@ -2488,7 +2488,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "scatter_map_next"
+name = "scatter_map"
 version = "0.1.0"
 dependencies = [
  "after-effects",

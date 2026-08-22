@@ -20,6 +20,6 @@ target/
 
 /target
 /tester
-/plugins/scatter-map-next/tests/ae_smoke_output/
+/plugins/scatter-map/tests/ae_smoke_output/
 
 /*.rcgu.o

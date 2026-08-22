@@ -1,5 +1,5 @@
 [package]
-name = "scatter_map_next"
+name = "scatter_map"
 description = "Applies map-driven gather and swap scatter to layers."
 version = "0.1.0"
 edition = "2024"

@@ -1,8 +1,10 @@
-# scatter-map-next ( AOD_ScatterMapNext )
+# scatter-map ( AOD_ScatterMap )
 
 Applies map-driven gather and swap scatter to layers.
 
-This is the After Effects plugin **AOD_ScatterMapNext**, which provides the **ScatterMapNext.aex** plugin file for Adobe After Effects.
+This is the After Effects plugin **AOD_ScatterMap**, which provides the **ScatterMap.aex** plugin file for Adobe After Effects.
+
+For compatibility with projects created with the comparison plugin, its internal After Effects match name remains `ScatterMapNext`.
 
 ## Modes
 

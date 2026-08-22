@@ -1,4 +1,4 @@
-(function scatterMapNextSmokeTest() {
+(function scatterMapSmokeTest() {
     var invocationFile = new File($.fileName);
     var outputBase = invocationFile.name === "ae_smoke_test.jsx"
         ? invocationFile.parent
@@ -9,7 +9,7 @@
     }
 
     var runId = String(new Date().getTime());
-    var logFile = new File(outputDir.fsName + "/scatter_map_next_" + runId + ".log");
+    var logFile = new File(outputDir.fsName + "/scatter_map_" + runId + ".log");
     logFile.encoding = "UTF-8";
     if (!logFile.open("w")) {
         throw new Error("Could not open log file: " + logFile.fsName);
@@ -55,7 +55,7 @@
     var sourceComp = null;
     var finalResult = "FAIL";
 
-    app.beginUndoGroup("ScatterMapNext smoke test");
+    app.beginUndoGroup("ScatterMap smoke test");
     try {
         var width = 640;
         var height = 360;
@@ -67,7 +67,7 @@
         var cellHeight = Math.ceil(height / rows);
 
         sourceComp = app.project.items.addComp(
-            "__ScatterMapNext_Source_" + runId,
+            "__ScatterMap_Source_" + runId,
             width,
             height,
             1,
@@ -98,7 +98,7 @@
         }
 
         testComp = app.project.items.addComp(
-            "__ScatterMapNext_Smoke_" + runId,
+            "__ScatterMap_Smoke_" + runId,
             width,
             height,
             1,
@@ -108,7 +108,7 @@
         var testLayer = testComp.layers.add(sourceComp);
         var mapLayer = testComp.layers.addSolid(
             [0.75, 0.5, 1],
-            "__ScatterMapNext_Map_" + runId,
+            "__ScatterMap_Map_" + runId,
             width,
             height,
             1,
@@ -119,7 +119,7 @@
         mapLayer.enabled = false;
         var effect = testLayer.property("ADBE Effect Parade").addProperty("ScatterMapNext");
         if (!effect) {
-            throw new Error("ScatterMapNext effect was not found");
+            throw new Error("ScatterMap effect was not found");
         }
 
         log("effect=" + effect.name + " matchName=" + effect.matchName);
@@ -161,7 +161,7 @@
             app.project.bitsPerChannel = depths[baselineDepth];
             var baselineOutput = new File(
                 outputDir.fsName +
-                "/scatter_map_next_baseline_" + depths[baselineDepth] + "bpc_" + runId + ".png"
+                "/scatter_map_baseline_" + depths[baselineDepth] + "bpc_" + runId + ".png"
             );
             var ignoredBaselineTimerValue = $.hiresTimer;
             sourceComp.saveFrameToPng(0, baselineOutput);
@@ -182,7 +182,7 @@
             app.project.bitsPerChannel = depths[passThroughDepth];
             var passThroughOutput = new File(
                 outputDir.fsName +
-                "/scatter_map_next_passthrough_" + depths[passThroughDepth] + "bpc_" + runId + ".png"
+                "/scatter_map_passthrough_" + depths[passThroughDepth] + "bpc_" + runId + ".png"
             );
             var ignoredPassThroughTimerValue = $.hiresTimer;
             testComp.saveFrameToPng(0, passThroughOutput);
@@ -206,7 +206,7 @@
                 setValue(effect, "Seed", 73 + m * 10);
                 var outputFile = new File(
                     outputDir.fsName +
-                    "/scatter_map_next_" + modes[m].name + "_" + depths[d] + "bpc_" + runId + ".png"
+                    "/scatter_map_" + modes[m].name + "_" + depths[d] + "bpc_" + runId + ".png"
                 );
                 var ignoredTimerValue = $.hiresTimer;
                 testComp.saveFrameToPng(0, outputFile);
@@ -230,7 +230,7 @@
         setValue(effect, "Kernel Texture (None = Input)", mapLayer.index);
         app.project.bitsPerChannel = 32;
         var textureOutput = new File(
-            outputDir.fsName + "/scatter_map_next_texture_32bpc_" + runId + ".png"
+            outputDir.fsName + "/scatter_map_texture_32bpc_" + runId + ".png"
         );
         var ignoredTextureTimerValue = $.hiresTimer;
         testComp.saveFrameToPng(0, textureOutput);
@@ -254,7 +254,7 @@
         for (var divergenceIndex = 0; divergenceIndex < divergenceModes.length; divergenceIndex += 1) {
             setValue(effect, "Anisotropy Map Mode", divergenceModes[divergenceIndex].value);
             var divergenceOutput = new File(
-                outputDir.fsName + "/scatter_map_next_" +
+                outputDir.fsName + "/scatter_map_" +
                 divergenceModes[divergenceIndex].name + "_32bpc_" + runId + ".png"
             );
             var ignoredDivergenceTimerValue = $.hiresTimer;

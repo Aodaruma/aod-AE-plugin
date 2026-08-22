@@ -10,7 +10,7 @@ fn embed_binary_safe_pipl(pipl: &[u8]) {
     // On Windows, rc.exe can treat that payload as text and change its binary
     // length. A raw file resource preserves the exact bytes from build_pipl.
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set"));
-    let pipl_path = out_dir.join("scatter_map_next.pipl");
+    let pipl_path = out_dir.join("scatter_map.pipl");
     std::fs::write(&pipl_path, pipl).expect("write binary PiPL resource");
 
     let escaped_path = pipl_path.to_string_lossy().replace('\\', "\\\\");
@@ -48,7 +48,7 @@ fn main() {
 
     let properties = || vec![
         Property::Kind(PIPLType::AEEffect),
-        Property::Name("AOD_ScatterMapNext"),
+        Property::Name("AOD_ScatterMap"),
         Property::Category("Aodaruma"),
 
         #[cfg(target_os = "windows")]
