@@ -13,82 +13,24 @@ This repository is a Cargo
 workspace that builds multiple AE effect plugins, plus shared utilities and a plugin
 template.
 
-## 1. Plugins / プラグイン説明
+## Plugin Catalog / エフェクトカタログ
 
-> [!TIP]
-> リリース済みのプラグインは [Releases](https://github.com/Aodaruma/aod-AE-plugin/releases) からダウンロードできます。  
-> You can download released plugins from [Releases](https://github.com/Aodaruma/aod-AE-plugin/releases).
+[![All Effects / 全エフェクト一覧](docs/catalog/assets/overview/all-effects.png)](docs/catalog/README.md)
 
-- AOD_CheckerGenerate
-  - セルの大きさ、中心、エッジ処理、合成方法を調整できる2色のチェッカーボードパターンを生成します / Generates customizable two-color checkerboard patterns with adjustable geometry, edge treatment, and compositing.
-- AOD_ColorAjust
-  - OKLCH/HSLで色相・彩度・明度を調整します / Adjusts hue, chroma, and lightness in OKLCH or HSL color spaces
-- AOD_ColorChange:
-  - 指定色を別の色に置換します / Changes a specific color to another color with tolerance
-- AOD_ColorComposite
-  - 複数色を選択した合成モードと不透明度で順次合成します / Sequentially composites multiple colors using selectable blend modes and opacities.
-- AOD_ColorConvert
-  - RGBと各色空間を相互変換します / Converts between RGB and multiple color spaces
-- AOD_ColorQuantize
-  - 画像の色をk-meansで減色します / Reduces image colors with k-means clustering.
-- AOD_ColorSelect
-  - 指定した複数色を透過（Key）または保持（Keep）します / Selects specified colors for keying or keeping with dynamic multi-color controls.
-- AOD_ChannelRemap
-  - RGBA各出力チャンネルを入力・定数・レイヤー由来で再割り当てします / Remaps RGBA channels from source channels, constants, and layers with selectable color spaces.
-- AOD_ContourGenerate
-  - Canny法でレイヤーから輪郭線を抽出します / Extracts contour lines from a layer using the Canny method
-- AOD_DepthFog
-  - 白黒depth mapをリアルな霧のFalloffへ変換します / Converts monochrome depth maps into realistic fog falloff maps.
-- AOD_DifferentialGenerate
-  - レイヤーの画像勾配からRGBA微分マップを生成します / Generates RGBA differential maps from image gradients.
-- AOD_DisplaceScatter
-  - 手続き的なベクトル場とマップでレイヤーを変位・散乱します / Displaces and scatters layers with procedural vector fields and maps.
-- AOD_GradientBlur
-  - 輝度/RGB勾配または色相/彩度ベクトル方向に沿って方向性ブラーを適用します / Applies directional blur along lightness/RGB gradients or hue-saturation vectors.
-- AOD_GradientDisplace
-  - 輝度/RGB勾配または色相/彩度ベクトル方向に沿って変位を適用します / Applies directional displacement along lightness/RGB gradients or hue-saturation vectors.
-- AOD_FFT
-  - レイヤーに2D FFTを適用し、実部または虚部を出力します / Performs 2D FFT on RGBA channels and outputs real or imaginary spectra.
-- AOD_FourierFilter
-  - FFT領域フィルタとマスク駆動のスペクトル整形を動的UIで適用します / Applies FFT-domain filters and mask-driven spectral shaping with dynamic controls.
-- AOD_GaborGenerate
-  - Blender風のGaborテクスチャを生成します / Generates Blender-style Gabor texture maps.
-- AOD_DistanceGenerate
-  - 色領域の輪郭から距離画像を生成します / Generates distance images from the contours of colored regions
-- AOD_EyedropperMask
-  - スポイトポイント周辺の連続色領域の不透明度を個別調整し、プリマルチ/ストレートを切替できます / Adjusts opacity of contiguous regions around eyedropper points with per-point controls and selectable premultiplied or straight workflows.
-- AOD_IFFT
-  - 実部・虚部レイヤーから2D IFFTで画像を再構成します / Reconstructs an RGBA image from 2D FFT real and imaginary inputs.
-- AOD_ImageCalculate
-  - 1つまたは2つのレイヤーにBlender風の数式演算を適用します / Applies Blender-style math operations to one or two input layers.
-- AOD_ImageScaler
-  - アンカーと外側ピクセル処理を指定してレイヤーを補間方式指定で拡大・縮小し、XY別スケールにも対応します / Scales layers with selectable interpolation modes, anchor point, edge handling, and optional reciprocal or separate X/Y scaling.
-- AOD_LineRepaint
-  - 主線色に一致する画素を近傍色の伝播で塗り替えます / Repaints line-colored pixels by propagating neighboring colors.
-- AOD_LightWrap
-  - 2Dキャラクターやシルエットにリムライト風のライトラップを追加します / Adds rim-light style light wrapping to alpha silhouettes using blur displacement or SDF masks.
-- AOD_MobiusTransform
-  - レイヤーにメビウス変換を適用します / Applies Mobius transformation to layers
-- AOD_NormalGenerate
-  - 色領域から法線マップを生成します / Generate a normal map from the color region.
-- AOD_PixelExtend
-  - 指定条件のピクセルを方向・減衰・補間指定で伸ばします / Extends pixels in adjustable directions with selectable source masks and interpolation.
-- AOD_RegionColorize
-  - 不透明または色領域をランダム・位置・インデックスで色分けします / Colors connected regions with random, positional, or index-based schemes.
-- AOD_ScatterMap
-  - マップ制御のGather／Swap方式で画素や粒を散乱します / Applies map-driven gather and swap scatter to layers.
-- AOD_SingularValueDecompose
-  - レイヤーに2D特異値分解を適用してLow-rank近似を再構成します / Performs 2D singular value decomposition and low-rank approximation on RGBA channels.
-- AOD_VoronoiGenerate
-  - ボロノイテクスチャマップを生成します / Generates Voronoi texture maps.
+- [Catalog Index / カタログ索引](docs/catalog/README.md)
+- [P: Photo / 一般写真・連続階調画像](docs/catalog/photo.md)
+- [A: Anime / アニメ素材](docs/catalog/anime.md)
+- [D: Data & Map / データ・マップ画像](docs/catalog/map-data.md)
+- [G: Generator / 生成用キャンバス](docs/catalog/generator.md)
+- [Releases / ダウンロード](https://github.com/Aodaruma/aod-AE-plugin/releases)
 
-## 2. Issue / バグ報告
+## 1. Issue / バグ報告
 
 もしバグを見つけた場合は、[Issues](https://github.com/Aodaruma/aod-AE-plugin/issues) ページで報告してください。
 
 If you find a bug, please report it on the [Issues](https://github.com/Aodaruma/aod-AE-plugin/issues).
 
-## 3. Support / 支援
+## 2. Support / 支援
 
 > [!NOTE]
 > もしこのプロジェクトが役に立ったら、GitHub Sponsors での支援をご検討ください。  
@@ -96,7 +38,7 @@ If you find a bug, please report it on the [Issues](https://github.com/Aodaruma/
 
 https://github.com/sponsors/Aodaruma
 
-## 4. License
+## 3. License
 
 ライセンスはMPL-2.0です。`LICENSE` ファイルを参照してください。
 
@@ -104,7 +46,7 @@ Licensed under the MPL-2.0. See `LICENSE`.
 
 ---
 
-## 5. For Developers / 開発者向け情報
+## 4. For Developers / 開発者向け情報
 
 > [!NOTE]
 > 以下は開発者向け情報です。利用のみの場合は上部のReleasesを参照してください（英語のみ）。
