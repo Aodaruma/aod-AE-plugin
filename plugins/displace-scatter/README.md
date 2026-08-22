@@ -1,8 +1,10 @@
-# scatter-map ( AOD_ScatterMap )
+# displace-scatter ( AOD_DisplaceScatter )
 
-Applies map-driven stochastic scatter to layers.
+Applies map-driven procedural displacement scatter to layers.
 
-This is the After Effects plugin **AOD_ScatterMap**, which provides the **ScatterMap.aex** plugin file for Adobe After Effects.
+This is the After Effects plugin **AOD_DisplaceScatter**, which provides the **DisplaceScatter.aex** plugin file for Adobe After Effects.
+
+For compatibility with projects created with the original plugin, its internal After Effects match name remains `ScatterMap`.
 
 Scatter Algorithm defaults to fBM Vector displacement and also provides Cell Block, Cell Smooth, Noise Vector, Domain Warp fBM, Curl fBM, and legacy multi-sample modes.
 

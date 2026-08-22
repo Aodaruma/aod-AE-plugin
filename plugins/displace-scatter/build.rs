@@ -4,6 +4,20 @@ use pipl::*;
 const PF_PLUG_IN_VERSION: u16 = 13;
 const PF_PLUG_IN_SUBVERS: u16 = 28;
 
+#[cfg(target_os = "windows")]
+fn embed_binary_safe_pipl(pipl: &[u8]) {
+    // Preserve the exact binary PiPL payload instead of passing it through an
+    // RC string, which can alter arbitrary bytes on Windows.
+    let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set"));
+    let pipl_path = out_dir.join("displace_scatter.pipl");
+    std::fs::write(&pipl_path, pipl).expect("write binary PiPL resource");
+
+    let escaped_path = pipl_path.to_string_lossy().replace('\\', "\\\\");
+    let mut resource = winres::WindowsResource::new();
+    resource.append_rc_content(&format!("16000 PiPL DISCARDABLE \"{escaped_path}\""));
+    resource.compile().expect("compile binary PiPL resource");
+}
+
 #[rustfmt::skip]
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(does_dialog)");
@@ -32,11 +46,9 @@ fn main() {
     */
     let stage = Stage::Develop; 
 
-    // --------------------------------------------------
-    // Build the plugin with PiPL
-    pipl::plugin_build(vec![
+    let properties = || vec![
         Property::Kind(PIPLType::AEEffect),
-        Property::Name("AOD_ScatterMap"),
+        Property::Name("AOD_DisplaceScatter"),
         Property::Category("Aodaruma"),
 
         #[cfg(target_os = "windows")]
@@ -79,5 +91,12 @@ fn main() {
         Property::AE_Effect_Match_Name("ScatterMap"),
         Property::AE_Reserved_Info(8),
         Property::AE_Effect_Support_URL("https://github.com/Aodaruma/aodaruma-ae-plugin"),
-    ])
+    ];
+
+    // --------------------------------------------------
+    // Build the plugin with PiPL. On Windows, overwrite the text-encoded
+    // resource emitted by pipl with a byte-for-byte binary-safe resource.
+    pipl::plugin_build(properties());
+    #[cfg(target_os = "windows")]
+    embed_binary_safe_pipl(&pipl::build_pipl(properties()).expect("build PiPL"));
 }

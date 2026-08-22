@@ -276,7 +276,7 @@ struct Plugin {
 
 ae::define_effect!(Plugin, (), Params);
 
-const PLUGIN_DESCRIPTION: &str = "Applies map-driven stochastic scatter to layers.";
+const PLUGIN_DESCRIPTION: &str = "Applies map-driven procedural displacement scatter to layers.";
 
 impl AdobePluginGlobal for Plugin {
     fn params_setup(
@@ -841,7 +841,7 @@ impl AdobePluginGlobal for Plugin {
             ae::Command::About => {
                 out_data.set_return_msg(
                     format!(
-                        "AOD_ScatterMap - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) 2026-{build_year} Aodaruma",
+                        "AOD_DisplaceScatter - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) 2026-{build_year} Aodaruma",
                         version = env!("CARGO_PKG_VERSION"),
                         build_year = env!("BUILD_YEAR")
                     )
@@ -853,7 +853,7 @@ impl AdobePluginGlobal for Plugin {
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
                 out_data.set_out_flag2(OutFlags2::ParamGroupStartCollapsedFlag, true);
                 if let Ok(suite) = ae::aegp::suites::Utility::new()
-                    && let Ok(plugin_id) = suite.register_with_aegp("AOD_ScatterMap")
+                    && let Ok(plugin_id) = suite.register_with_aegp("AOD_DisplaceScatter")
                 {
                     self.aegp_id = Some(plugin_id);
                 }

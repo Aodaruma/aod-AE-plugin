@@ -1,6 +1,6 @@
 [package]
-name = "scatter_map"
-description = "Applies map-driven stochastic scatter to layers."
+name = "displace_scatter"
+description = "Applies map-driven procedural displacement scatter to layers."
 version = "0.1.0"
 edition = "2024"
 
@@ -22,6 +22,7 @@ pipl = { workspace = true }
 [build-dependencies]
 chrono.workspace = true
 pipl.workspace = true
+winres = "0.1.12"
 
 [lints]
 workspace = true

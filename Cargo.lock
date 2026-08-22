@@ -695,6 +695,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "displace_scatter"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "palette",
+ "pipl",
+ "utils",
+ "winres",
+]
+
+[[package]]
 name = "distance_generate"
 version = "0.1.0"
 dependencies = [
@@ -2473,17 +2485,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
 dependencies = [
  "bytemuck",
-]
-
-[[package]]
-name = "scatter_map"
-version = "0.1.0"
-dependencies = [
- "after-effects",
- "chrono",
- "palette",
- "pipl",
- "utils",
 ]
 
 [[package]]
