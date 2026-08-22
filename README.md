@@ -13,7 +13,7 @@ This repository is a Cargo
 workspace that builds multiple AE effect plugins, plus shared utilities and a plugin
 template.
 
-## Plugin Catalog / エフェクトカタログ
+## Effect List / エフェクト一覧
 
 [![All Effects / 全エフェクト一覧](docs/catalog/assets/overview/all-effects.png)](docs/catalog/README.md)
 
