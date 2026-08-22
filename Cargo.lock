@@ -705,6 +705,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "displace_scatter"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "palette",
+ "pipl",
+ "utils",
+ "winres",
+]
+
+[[package]]
 name = "distance_generate"
 version = "0.1.0"
 dependencies = [
@@ -2491,9 +2503,9 @@ version = "0.1.0"
 dependencies = [
  "after-effects",
  "chrono",
- "palette",
  "pipl",
  "utils",
+ "winres",
 ]
 
 [[package]]

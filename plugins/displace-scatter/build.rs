@@ -6,11 +6,10 @@ const PF_PLUG_IN_SUBVERS: u16 = 28;
 
 #[cfg(target_os = "windows")]
 fn embed_binary_safe_pipl(pipl: &[u8]) {
-    // `pipl` 0.1.1 normally embeds arbitrary PiPL bytes in an RC string.
-    // On Windows, rc.exe can treat that payload as text and change its binary
-    // length. A raw file resource preserves the exact bytes from build_pipl.
+    // Preserve the exact binary PiPL payload instead of passing it through an
+    // RC string, which can alter arbitrary bytes on Windows.
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR is set"));
-    let pipl_path = out_dir.join("scatter_map.pipl");
+    let pipl_path = out_dir.join("displace_scatter.pipl");
     std::fs::write(&pipl_path, pipl).expect("write binary PiPL resource");
 
     let escaped_path = pipl_path.to_string_lossy().replace('\\', "\\\\");
@@ -22,6 +21,7 @@ fn embed_binary_safe_pipl(pipl: &[u8]) {
 #[rustfmt::skip]
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(does_dialog)");
+    println!("cargo::rustc-check-cfg=cfg(threaded_rendering)");
 
     let current_year = chrono::Local::now().year();
     println!("cargo:rustc-env=BUILD_YEAR={}", current_year);
@@ -44,11 +44,11 @@ fn main() {
         Stage::Release
     };
     */
-    let stage = Stage::Develop;
+    let stage = Stage::Develop; 
 
     let properties = || vec![
         Property::Kind(PIPLType::AEEffect),
-        Property::Name("AOD_ScatterMap"),
+        Property::Name("AOD_DisplaceScatter"),
         Property::Category("Aodaruma"),
 
         #[cfg(target_os = "windows")]
@@ -70,20 +70,25 @@ fn main() {
         Property::AE_Effect_Info_Flags(0),
         Property::AE_Effect_Global_OutFlags(
             // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags.html
-            OutFlags::DeepColorAware
+            OutFlags::PixIndependent
+            | OutFlags::UseOutputExtent
+            | OutFlags::DeepColorAware
+            | OutFlags::WideTimeInput
             | OutFlags::SendUpdateParamsUI
             ,
         ),
-        Property::AE_Effect_Global_OutFlags_2(
+        Property::AE_Effect_Global_OutFlags_2( 
             // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags2.html
             OutFlags2::FloatColorAware
+            | OutFlags2::SupportsThreadedRendering
+            // | OutFlags2::SupportsGetFlattenedSequenceData // error occured in pipl == v0.1.1, so temporarily commented out
+            | OutFlags2::AutomaticWideTimeInput
             | OutFlags2::SupportsSmartRender
-            | OutFlags2::RevealsZeroAlpha
             | OutFlags2::ParamGroupStartCollapsedFlag
             // | OutFlags2::SupportsGpuRenderF32
             ,
         ),
-        Property::AE_Effect_Match_Name("ScatterMapNext"),
+        Property::AE_Effect_Match_Name("ScatterMap"),
         Property::AE_Reserved_Info(8),
         Property::AE_Effect_Support_URL("https://github.com/Aodaruma/aodaruma-ae-plugin"),
     ];

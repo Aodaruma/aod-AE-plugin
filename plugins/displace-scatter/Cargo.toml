@@ -1,6 +1,6 @@
 [package]
-name = "scatter_map"
-description = "Applies map-driven gather and swap scatter to layers."
+name = "displace_scatter"
+description = "Applies map-driven procedural displacement scatter to layers."
 version = "0.1.0"
 edition = "2024"
 
@@ -13,8 +13,8 @@ catch-panics = []
 
 [dependencies]
 after-effects = { workspace = true }
+palette = "0.7.6"
 utils = { path = "../../crates/utils" }
-
 
 [dev-dependencies]
 pipl = { workspace = true }

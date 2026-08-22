@@ -1,71 +1,70 @@
 #![allow(clippy::drop_non_drop, clippy::question_mark)]
 
 use after_effects as ae;
-use palette::hues::{OklabHue, RgbHue};
-use palette::{FromColor, Hsl, Hsv, LinSrgb, Oklab, Oklch, Srgb};
 use std::env;
-use std::f32::consts::TAU;
 
 use ae::pf::*;
 use utils::ToPixel;
 
-const OKLCH_CHROMA_MAX: f32 = 0.4;
-const GOLDEN_ANGLE: f32 = 2.399_963_1;
-const BLUE_NOISE_8X8: [u8; 64] = [
-    0, 48, 12, 60, 3, 51, 15, 63, 32, 16, 44, 28, 35, 19, 47, 31, 8, 56, 4, 52, 11, 59, 7, 55, 40,
-    24, 36, 20, 43, 27, 39, 23, 2, 50, 14, 62, 1, 49, 13, 61, 34, 18, 46, 30, 33, 17, 45, 29, 10,
-    58, 6, 54, 9, 57, 5, 53, 42, 26, 38, 22, 41, 25, 37, 21,
-];
+const MAX_GATHER_ATTEMPTS: u32 = 24;
+const MAX_SWAP_ATTEMPTS: u32 = 64;
+const MAX_DISK_REJECTIONS: u32 = 32;
+const SMART_INPUT_ID: u32 = 0;
+const SMART_AMOUNT_MAP_ID: u32 = 1;
+const SMART_RADIUS_MAP_ID: u32 = 2;
+const SMART_GRAIN_SIZE_MAP_ID: u32 = 3;
+const SMART_ANISOTROPY_MAP_ID: u32 = 4;
+const SMART_KERNEL_TEXTURE_ID: u32 = 5;
+const SMART_QUERY_ID_BASE: i32 = 100;
+
+#[cfg(test)]
+std::thread_local! {
+    static GATHER_PIXEL_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 enum Params {
-    ColorSpace,
-    ScatterRadius,
-    ScatterSamples,
-    ScatterAlgorithm,
-    SamplingDistribution,
-    DistributionShape,
+    ScatterMode,
+    Amount,
+    Radius,
     GrainSize,
-    NoiseOffset,
+    GatherSamples,
     Direction,
     Anisotropy,
+    KernelGroupStart,
+    GrainShape,
+    GrainSizeRandomness,
+    GrainPositionRandomness,
+    GrainDensity,
+    KernelRandomness,
+    KernelTextureLayer,
+    KernelTextureChannel,
+    KernelThreshold,
+    GrainFillMode,
+    GrainFillOpacity,
+    KernelGroupEnd,
     MapGroupStart,
-    UseScatterMap,
-    ScatterMapInput,
-    ScatterMapLayer,
-    ScatterMapMode,
-    ScatterMapChannel,
-    UseGrainMap,
-    GrainMapInput,
-    GrainMapLayer,
-    GrainMapMode,
-    GrainMapChannel,
-    UseNoiseOffsetMap,
-    NoiseOffsetMapInput,
-    NoiseOffsetMapLayer,
-    NoiseOffsetMapMode,
-    NoiseOffsetDisplacement,
-    MapGroupEnd,
-    AnisotropyGroupStart,
+    UseAmountMap,
+    AmountMapLayer,
+    AmountMapChannel,
+    UseRadiusMap,
+    RadiusMapLayer,
+    RadiusMapChannel,
+    UseGrainSizeMap,
+    GrainSizeMin,
+    GrainSizeMapMax,
+    GrainSizeMapLayer,
+    GrainSizeMapChannel,
     UseAnisotropyMap,
-    AnisotropyMapInput,
     AnisotropyMapLayer,
     AnisotropyMapMode,
     UseAnisotropyDirection,
     UseAnisotropyStrength,
     AnisotropyDivergenceSource,
-    AnisotropyGroupEnd,
-    TextureGroupStart,
-    TextureMode,
-    TextureInput,
-    TextureLayer,
-    TextureMapMode,
-    TextureMapChannel,
-    TextureInfluence,
-    TextureGroupEnd,
+    MapGroupEnd,
     OutputGroupStart,
     Seed,
-    NoiseW,
+    TemporalMode,
     EdgeMode,
     BlendMode,
     BlendOpacity,
@@ -75,60 +74,14 @@ enum Params {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ScatterColorSpace {
-    LinearRgba,
-    LinearRgb,
-    Alpha,
-    Srgb,
-    Oklab,
-    Oklch,
-    Hsl,
-    Hsv,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ScatterAlgorithm {
-    FbmVector,
-    CellBlock,
-    CellSmooth,
-    NoiseVector,
-    DomainWarpFbm,
-    CurlFbm,
-    LegacySquareCell,
-    LegacySmoothGrid,
-    LegacyVoronoiCell,
-    LegacyBlueNoise,
-}
-
-impl ScatterAlgorithm {
-    fn is_legacy_sampling(self) -> bool {
-        matches!(
-            self,
-            ScatterAlgorithm::LegacySquareCell
-                | ScatterAlgorithm::LegacySmoothGrid
-                | ScatterAlgorithm::LegacyVoronoiCell
-                | ScatterAlgorithm::LegacyBlueNoise
-        )
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SamplingDistribution {
-    Uniform,
-    Gaussian,
-    Exponential,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ScalarMapMode {
-    Gray,
-    HsvValue,
-    HslLightness,
-    RgbaChannel,
+enum ScatterMode {
+    Gather,
+    Swap,
 }
 
 #[derive(Clone, Copy)]
-enum RgbaChannel {
+enum MapChannel {
+    Luma,
     Red,
     Green,
     Blue,
@@ -136,9 +89,18 @@ enum RgbaChannel {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum MapLayerSource {
-    LayerOrInput,
-    InputLayer,
+enum GrainShape {
+    Square,
+    Circle,
+    Texture,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GrainFillMode {
+    Texture,
+    Average,
+    Median,
+    Center,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -161,20 +123,19 @@ enum DivergenceSource {
     HslLightness,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TextureMode {
-    Off,
-    Amount,
-    Direction,
-    AmountAndDirection,
+#[derive(Clone, Copy)]
+enum TemporalMode {
+    Static,
+    Frame,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum EdgeMode {
-    None,
-    Repeat,
+    Reject,
+    Clamp,
     Tile,
     Mirror,
+    Transparent,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -190,42 +151,36 @@ enum OutputBlendMode {
 
 #[derive(Clone, Copy)]
 struct RenderSettings {
-    color_space: ScatterColorSpace,
-    scatter_radius: f32,
-    samples: u32,
-    scatter_algorithm: ScatterAlgorithm,
-    sampling_distribution: SamplingDistribution,
-    distribution_shape: f32,
-    noise_offset_x: f32,
-    noise_offset_y: f32,
-    use_scatter_map: bool,
-    scatter_map_input: MapLayerSource,
-    scatter_map_mode: ScalarMapMode,
-    scatter_map_channel: RgbaChannel,
-    grain_size: f32,
-    use_grain_map: bool,
-    grain_map_input: MapLayerSource,
-    grain_map_mode: ScalarMapMode,
-    grain_map_channel: RgbaChannel,
-    use_noise_offset_map: bool,
-    noise_offset_map_input: MapLayerSource,
-    noise_offset_map_mode: AnisotropyMapMode,
-    noise_offset_displacement: f32,
+    scatter_mode: ScatterMode,
+    amount: f32,
+    radius: i32,
+    grain_size: usize,
+    grain_size_min: usize,
+    gather_samples: u32,
     direction: f32,
     anisotropy: f32,
+    grain_shape: GrainShape,
+    grain_size_randomness: f32,
+    grain_position_randomness: f32,
+    grain_density: f32,
+    kernel_randomness: f32,
+    kernel_texture_channel: MapChannel,
+    kernel_threshold: f32,
+    grain_fill_mode: GrainFillMode,
+    grain_fill_opacity: f32,
+    use_amount_map: bool,
+    amount_map_channel: MapChannel,
+    use_radius_map: bool,
+    radius_map_channel: MapChannel,
+    use_grain_size_map: bool,
+    grain_size_map_channel: MapChannel,
     use_anisotropy_map: bool,
-    anisotropy_map_input: MapLayerSource,
     anisotropy_map_mode: AnisotropyMapMode,
     use_anisotropy_direction: bool,
     use_anisotropy_strength: bool,
     anisotropy_divergence_source: DivergenceSource,
-    texture_mode: TextureMode,
-    texture_input: MapLayerSource,
-    texture_map_mode: ScalarMapMode,
-    texture_map_channel: RgbaChannel,
-    texture_influence: f32,
     seed: u32,
-    noise_w: f32,
+    temporal_mode: TemporalMode,
     edge_mode: EdgeMode,
     blend_mode: OutputBlendMode,
     blend_opacity: f32,
@@ -233,7 +188,7 @@ struct RenderSettings {
     clamp_32: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct LayerBuffer {
     width: usize,
     height: usize,
@@ -241,32 +196,90 @@ struct LayerBuffer {
 }
 
 #[derive(Clone, Copy)]
-struct FlowVector {
-    dir_x: f32,
-    dir_y: f32,
-    strength: f32,
-    valid: bool,
+struct RenderMaps<'a> {
+    amount: Option<&'a LayerBuffer>,
+    radius: Option<&'a LayerBuffer>,
+    grain_size: Option<&'a LayerBuffer>,
+    anisotropy: Option<&'a LayerBuffer>,
+    kernel_texture: Option<&'a LayerBuffer>,
+}
+
+#[derive(Default)]
+struct OwnedRenderMaps {
+    amount: Option<LayerBuffer>,
+    radius: Option<LayerBuffer>,
+    grain_size: Option<LayerBuffer>,
+    anisotropy: Option<LayerBuffer>,
+    kernel_texture: Option<LayerBuffer>,
 }
 
 #[derive(Clone, Copy)]
-struct OutputCoord {
+struct KernelContext<'a> {
+    image_width: usize,
+    image_height: usize,
+    maps: RenderMaps<'a>,
+    settings: &'a RenderSettings,
+    seed: u32,
+    density_layer: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Block {
     x: usize,
     y: usize,
-    out_w: usize,
-    out_h: usize,
+    width: usize,
+    height: usize,
+    grid_x: usize,
+    grid_y: usize,
+}
+
+#[derive(Debug)]
+struct GrainPartition {
+    offsets: Vec<u32>,
+    indices: Vec<u32>,
+    columns: usize,
+    rows: usize,
+}
+
+impl GrainPartition {
+    fn group(&self, index: usize) -> &[u32] {
+        let start = self.offsets[index] as usize;
+        let end = self.offsets[index + 1] as usize;
+        &self.indices[start..end]
+    }
+
+    #[cfg(test)]
+    fn groups(&self) -> impl Iterator<Item = &[u32]> {
+        self.offsets.windows(2).map(|range| {
+            let start = range[0] as usize;
+            let end = range[1] as usize;
+            &self.indices[start..end]
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
-struct ScatterSampleParams {
+struct PreparedKernel {
+    block: Block,
     center_x: f32,
     center_y: f32,
-    noise_x: f32,
-    noise_y: f32,
-    noise_w: f32,
-    radius: f32,
-    grain: f32,
-    angle: f32,
-    anisotropy: f32,
+    radius_x: f32,
+    radius_y: f32,
+    #[cfg(test)]
+    front_priority: u32,
+}
+
+#[derive(Clone, Copy)]
+struct AnisotropyTransform {
+    cosine: f32,
+    sine: f32,
+    perpendicular_scale: f32,
+}
+
+#[derive(Clone, Copy)]
+struct GatherGrainState {
+    radius: i32,
+    transform: AnisotropyTransform,
 }
 
 #[derive(Default)]
@@ -276,7 +289,7 @@ struct Plugin {
 
 ae::define_effect!(Plugin, (), Params);
 
-const PLUGIN_DESCRIPTION: &str = "Applies map-driven stochastic scatter to layers.";
+const PLUGIN_DESCRIPTION: &str = "Applies map-driven gather and swap scatter to layers.";
 
 impl AdobePluginGlobal for Plugin {
     fn params_setup(
@@ -285,113 +298,59 @@ impl AdobePluginGlobal for Plugin {
         _in_data: InData,
         _: OutData,
     ) -> Result<(), Error> {
-        params.add(
-            Params::ColorSpace,
-            "Color Space",
+        params.add_with_flags(
+            Params::ScatterMode,
+            "Scatter Mode",
             PopupDef::setup(|d| {
-                d.set_options(&[
-                    "Linear RGBA",
-                    "Linear RGB",
-                    "Alpha",
-                    "sRGB",
-                    "OKLab",
-                    "OKLCH",
-                    "HSL",
-                    "HSV",
-                ]);
+                d.set_options(&["Gather", "Swap"]);
                 d.set_default(1);
             }),
+            ae::ParamFlag::SUPERVISE,
+            ae::ParamUIFlags::empty(),
         )?;
-
         params.add(
-            Params::ScatterRadius,
-            "Scatter Amount (px)",
+            Params::Amount,
+            "Amount (%)",
             FloatSliderDef::setup(|d| {
                 d.set_valid_min(0.0);
-                d.set_valid_max(4096.0);
+                d.set_valid_max(100.0);
                 d.set_slider_min(0.0);
-                d.set_slider_max(256.0);
-                d.set_default(24.0);
-                d.set_precision(3);
+                d.set_slider_max(100.0);
+                d.set_default(100.0);
+                d.set_precision(1);
             }),
         )?;
-
-        params.add_with_flags(
-            Params::ScatterSamples,
-            "Complexity",
+        params.add(
+            Params::Radius,
+            "Radius (px)",
             SliderDef::setup(|d| {
-                d.set_valid_min(1);
-                d.set_valid_max(128);
-                d.set_slider_min(1);
-                d.set_slider_max(32);
-                d.set_default(4);
-            }),
-            ae::ParamFlag::SUPERVISE,
-            ae::ParamUIFlags::empty(),
-        )?;
-
-        params.add_with_flags(
-            Params::ScatterAlgorithm,
-            "Scatter Algorithm",
-            PopupDef::setup(|d| {
-                d.set_options(&[
-                    "fBM Vector",
-                    "Cell Block",
-                    "Cell Smooth",
-                    "Noise Vector",
-                    "Domain Warp fBM",
-                    "Curl fBM",
-                    "Legacy Square Cell",
-                    "Legacy Smooth Grid",
-                    "Legacy Voronoi Cell",
-                    "Legacy Blue Noise",
-                ]);
-                d.set_default(1);
-            }),
-            ae::ParamFlag::SUPERVISE,
-            ae::ParamUIFlags::empty(),
-        )?;
-
-        params.add(
-            Params::SamplingDistribution,
-            "Sampling Distribution",
-            PopupDef::setup(|d| {
-                d.set_options(&["Uniform", "Gaussian", "Exponential"]);
-                d.set_default(1);
+                d.set_valid_min(0);
+                d.set_valid_max(4096);
+                d.set_slider_min(0);
+                d.set_slider_max(256);
+                d.set_default(8);
             }),
         )?;
-
-        params.add(
-            Params::DistributionShape,
-            "Distribution Shape",
-            FloatSliderDef::setup(|d| {
-                d.set_valid_min(0.0);
-                d.set_valid_max(32.0);
-                d.set_slider_min(0.0);
-                d.set_slider_max(8.0);
-                d.set_default(1.0);
-                d.set_precision(3);
-            }),
-        )?;
-
         params.add(
             Params::GrainSize,
             "Grain Size (px)",
-            FloatSliderDef::setup(|d| {
-                d.set_valid_min(1.0);
-                d.set_valid_max(4096.0);
-                d.set_slider_min(1.0);
-                d.set_slider_max(256.0);
-                d.set_default(2.0);
-                d.set_precision(3);
+            SliderDef::setup(|d| {
+                d.set_valid_min(1);
+                d.set_valid_max(1024);
+                d.set_slider_min(1);
+                d.set_slider_max(128);
+                d.set_default(1);
             }),
         )?;
-
         params.add(
-            Params::NoiseOffset,
-            "Noise Offset (XY)",
-            PointDef::setup(|d| {
-                d.set_default((0.0, 0.0));
+            Params::GatherSamples,
+            "Gather Samples",
+            SliderDef::setup(|d| {
+                d.set_valid_min(1);
+                d.set_valid_max(32);
+                d.set_slider_min(1);
+                d.set_slider_max(16);
+                d.set_default(1);
             }),
         )?;
 
@@ -407,75 +366,186 @@ impl AdobePluginGlobal for Plugin {
                 d.set_precision(2);
             }),
         )?;
-
         params.add(
             Params::Anisotropy,
-            "Anisotropy",
+            "Anisotropy (%)",
             FloatSliderDef::setup(|d| {
                 d.set_valid_min(0.0);
-                d.set_valid_max(1.0);
+                d.set_valid_max(100.0);
                 d.set_slider_min(0.0);
-                d.set_slider_max(1.0);
+                d.set_slider_max(100.0);
                 d.set_default(0.0);
-                d.set_precision(3);
+                d.set_precision(1);
             }),
+        )?;
+
+        params.add_group(
+            Params::KernelGroupStart,
+            Params::KernelGroupEnd,
+            "Grain Kernel",
+            false,
+            |params| {
+                params.add_with_flags(
+                    Params::GrainShape,
+                    "Shape",
+                    PopupDef::setup(|d| {
+                        d.set_options(&["Square", "Circle", "Custom Texture"]);
+                        d.set_default(1);
+                    }),
+                    ae::ParamFlag::SUPERVISE,
+                    ae::ParamUIFlags::empty(),
+                )?;
+                params.add(
+                    Params::GrainSizeRandomness,
+                    "Grain Size Randomness (%)",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(0.0);
+                        d.set_valid_max(100.0);
+                        d.set_slider_min(0.0);
+                        d.set_slider_max(100.0);
+                        d.set_default(0.0);
+                        d.set_precision(1);
+                    }),
+                )?;
+                params.add(
+                    Params::GrainPositionRandomness,
+                    "Position Randomness (%)",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(0.0);
+                        d.set_valid_max(100.0);
+                        d.set_slider_min(0.0);
+                        d.set_slider_max(100.0);
+                        d.set_default(0.0);
+                        d.set_precision(1);
+                    }),
+                )?;
+                params.add(
+                    Params::GrainDensity,
+                    "Grain Density (%)",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(100.0);
+                        d.set_valid_max(800.0);
+                        d.set_slider_min(100.0);
+                        d.set_slider_max(800.0);
+                        d.set_default(100.0);
+                        d.set_precision(1);
+                    }),
+                )?;
+                params.add(
+                    Params::KernelRandomness,
+                    "Shape Randomness (%)",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(0.0);
+                        d.set_valid_max(100.0);
+                        d.set_slider_min(0.0);
+                        d.set_slider_max(100.0);
+                        d.set_default(0.0);
+                        d.set_precision(1);
+                    }),
+                )?;
+                params.add(
+                    Params::KernelTextureLayer,
+                    "Kernel Texture (None = Input)",
+                    LayerDef::new(),
+                )?;
+                params.add(
+                    Params::KernelTextureChannel,
+                    "Kernel Texture Channel",
+                    PopupDef::setup(|d| {
+                        d.set_options(&["Luma", "Red", "Green", "Blue", "Alpha"]);
+                        d.set_default(5);
+                    }),
+                )?;
+                params.add(
+                    Params::KernelThreshold,
+                    "Kernel Threshold (%)",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(0.0);
+                        d.set_valid_max(100.0);
+                        d.set_slider_min(0.0);
+                        d.set_slider_max(100.0);
+                        d.set_default(50.0);
+                        d.set_precision(1);
+                    }),
+                )?;
+                params.add_with_flags(
+                    Params::GrainFillMode,
+                    "Fill",
+                    PopupDef::setup(|d| {
+                        d.set_options(&["Source Texture", "Average", "Median", "Center Pixel"]);
+                        d.set_default(1);
+                    }),
+                    ae::ParamFlag::SUPERVISE,
+                    ae::ParamUIFlags::empty(),
+                )?;
+                params.add(
+                    Params::GrainFillOpacity,
+                    "Fill Opacity (%)",
+                    FloatSliderDef::setup(|d| {
+                        d.set_valid_min(0.0);
+                        d.set_valid_max(100.0);
+                        d.set_slider_min(0.0);
+                        d.set_slider_max(100.0);
+                        d.set_default(100.0);
+                        d.set_precision(1);
+                    }),
+                )?;
+                Ok(())
+            },
         )?;
 
         params.add_group(
             Params::MapGroupStart,
             Params::MapGroupEnd,
             "Maps",
-            true,
+            false,
             |params| {
                 params.add_with_flags(
-                    Params::UseScatterMap,
-                    "Map Scatter Amount",
+                    Params::UseAmountMap,
+                    "Map Amount",
                     CheckBoxDef::setup(|d| {
                         d.set_default(false);
                     }),
                     ae::ParamFlag::SUPERVISE,
                     ae::ParamUIFlags::empty(),
                 )?;
-
-                params.add_with_flags(
-                    Params::ScatterMapInput,
-                    "Scatter Map Input",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["Layer (None = Input)", "Input Layer (Effect & Mask)"]);
-                        d.set_default(1);
-                    }),
-                    ae::ParamFlag::SUPERVISE,
-                    ae::ParamUIFlags::empty(),
-                )?;
-
                 params.add(
-                    Params::ScatterMapLayer,
-                    "Scatter Map Layer",
+                    Params::AmountMapLayer,
+                    "Amount Map Layer (None = Input)",
                     LayerDef::new(),
                 )?;
-
-                params.add_with_flags(
-                    Params::ScatterMapMode,
-                    "Scatter Map Source",
+                params.add(
+                    Params::AmountMapChannel,
+                    "Amount Map Channel",
                     PopupDef::setup(|d| {
-                        d.set_options(&["Gray", "HSV Value", "HSL Lightness", "RGBA Channel"]);
+                        d.set_options(&["Luma", "Red", "Green", "Blue", "Alpha"]);
                         d.set_default(1);
+                    }),
+                )?;
+                params.add_with_flags(
+                    Params::UseRadiusMap,
+                    "Map Radius",
+                    CheckBoxDef::setup(|d| {
+                        d.set_default(false);
                     }),
                     ae::ParamFlag::SUPERVISE,
                     ae::ParamUIFlags::empty(),
                 )?;
-
                 params.add(
-                    Params::ScatterMapChannel,
-                    "Scatter RGBA Channel",
+                    Params::RadiusMapLayer,
+                    "Radius Map Layer (None = Input)",
+                    LayerDef::new(),
+                )?;
+                params.add(
+                    Params::RadiusMapChannel,
+                    "Radius Map Channel",
                     PopupDef::setup(|d| {
-                        d.set_options(&["Red", "Green", "Blue", "Alpha"]);
+                        d.set_options(&["Luma", "Red", "Green", "Blue", "Alpha"]);
                         d.set_default(1);
                     }),
                 )?;
-
                 params.add_with_flags(
-                    Params::UseGrainMap,
+                    Params::UseGrainSizeMap,
                     "Map Grain Size",
                     CheckBoxDef::setup(|d| {
                         d.set_default(false);
@@ -483,105 +553,41 @@ impl AdobePluginGlobal for Plugin {
                     ae::ParamFlag::SUPERVISE,
                     ae::ParamUIFlags::empty(),
                 )?;
-
-                params.add_with_flags(
-                    Params::GrainMapInput,
-                    "Grain Map Input",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["Layer (None = Input)", "Input Layer (Effect & Mask)"]);
-                        d.set_default(1);
-                    }),
-                    ae::ParamFlag::SUPERVISE,
-                    ae::ParamUIFlags::empty(),
-                )?;
-
-                params.add(Params::GrainMapLayer, "Grain Map Layer", LayerDef::new())?;
-
-                params.add_with_flags(
-                    Params::GrainMapMode,
-                    "Grain Map Source",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["Gray", "HSV Value", "HSL Lightness", "RGBA Channel"]);
-                        d.set_default(1);
-                    }),
-                    ae::ParamFlag::SUPERVISE,
-                    ae::ParamUIFlags::empty(),
-                )?;
-
                 params.add(
-                    Params::GrainMapChannel,
-                    "Grain RGBA Channel",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["Red", "Green", "Blue", "Alpha"]);
+                    Params::GrainSizeMin,
+                    "Grain Size Min (px)",
+                    SliderDef::setup(|d| {
+                        d.set_valid_min(1);
+                        d.set_valid_max(1024);
+                        d.set_slider_min(1);
+                        d.set_slider_max(128);
                         d.set_default(1);
                     }),
                 )?;
-
-                params.add_with_flags(
-                    Params::UseNoiseOffsetMap,
-                    "Map Noise Offset",
-                    CheckBoxDef::setup(|d| {
-                        d.set_default(false);
-                    }),
-                    ae::ParamFlag::SUPERVISE,
-                    ae::ParamUIFlags::empty(),
-                )?;
-
-                params.add_with_flags(
-                    Params::NoiseOffsetMapInput,
-                    "Noise Offset Map Input",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["Layer (None = Input)", "Input Layer (Effect & Mask)"]);
-                        d.set_default(1);
-                    }),
-                    ae::ParamFlag::SUPERVISE,
-                    ae::ParamUIFlags::empty(),
-                )?;
-
                 params.add(
-                    Params::NoiseOffsetMapLayer,
-                    "Noise Offset Map Layer",
+                    Params::GrainSizeMapMax,
+                    "Grain Size Max (px)",
+                    SliderDef::setup(|d| {
+                        d.set_valid_min(1);
+                        d.set_valid_max(1024);
+                        d.set_slider_min(1);
+                        d.set_slider_max(128);
+                        d.set_default(1);
+                    }),
+                )?;
+                params.add(
+                    Params::GrainSizeMapLayer,
+                    "Grain Size Map Layer (None = Input)",
                     LayerDef::new(),
                 )?;
-
                 params.add(
-                    Params::NoiseOffsetMapMode,
-                    "Noise Offset Map Mode",
+                    Params::GrainSizeMapChannel,
+                    "Grain Size Map Channel",
                     PopupDef::setup(|d| {
-                        d.set_options(&[
-                            "Hue / Saturation",
-                            "UV (XY -> RG)",
-                            "Normal (RG)",
-                            "Divergence Direction",
-                            "Divergence Rotation",
-                        ]);
-                        d.set_default(2);
+                        d.set_options(&["Luma", "Red", "Green", "Blue", "Alpha"]);
+                        d.set_default(1);
                     }),
                 )?;
-
-                params.add(
-                    Params::NoiseOffsetDisplacement,
-                    "Noise Offset Displace (px)",
-                    FloatSliderDef::setup(|d| {
-                        d.set_valid_min(0.0);
-                        d.set_valid_max(4096.0);
-                        d.set_slider_min(0.0);
-                        d.set_slider_max(256.0);
-                        d.set_default(0.0);
-                        d.set_precision(3);
-                    }),
-                )?;
-
-                Ok(())
-            },
-        )?;
-
-        params.add_group(
-            Params::AnisotropyGroupStart,
-            Params::AnisotropyGroupEnd,
-            "Anisotropy Map",
-            true,
-            |params| {
                 params.add_with_flags(
                     Params::UseAnisotropyMap,
                     "Map Anisotropy",
@@ -591,24 +597,11 @@ impl AdobePluginGlobal for Plugin {
                     ae::ParamFlag::SUPERVISE,
                     ae::ParamUIFlags::empty(),
                 )?;
-
-                params.add_with_flags(
-                    Params::AnisotropyMapInput,
-                    "Anisotropy Map Input",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["Layer (None = Input)", "Input Layer (Effect & Mask)"]);
-                        d.set_default(1);
-                    }),
-                    ae::ParamFlag::SUPERVISE,
-                    ae::ParamUIFlags::empty(),
-                )?;
-
                 params.add(
                     Params::AnisotropyMapLayer,
-                    "Anisotropy Map Layer",
+                    "Anisotropy Map Layer (None = Input)",
                     LayerDef::new(),
                 )?;
-
                 params.add_with_flags(
                     Params::AnisotropyMapMode,
                     "Anisotropy Map Mode",
@@ -625,7 +618,6 @@ impl AdobePluginGlobal for Plugin {
                     ae::ParamFlag::SUPERVISE,
                     ae::ParamUIFlags::empty(),
                 )?;
-
                 params.add(
                     Params::UseAnisotropyDirection,
                     "Use Map Direction",
@@ -633,7 +625,6 @@ impl AdobePluginGlobal for Plugin {
                         d.set_default(true);
                     }),
                 )?;
-
                 params.add(
                     Params::UseAnisotropyStrength,
                     "Use Map Strength",
@@ -641,7 +632,6 @@ impl AdobePluginGlobal for Plugin {
                         d.set_default(true);
                     }),
                 )?;
-
                 params.add(
                     Params::AnisotropyDivergenceSource,
                     "Divergence Source",
@@ -658,79 +648,6 @@ impl AdobePluginGlobal for Plugin {
                         d.set_default(1);
                     }),
                 )?;
-
-                Ok(())
-            },
-        )?;
-
-        params.add_group(
-            Params::TextureGroupStart,
-            Params::TextureGroupEnd,
-            "Texture",
-            true,
-            |params| {
-                params.add_with_flags(
-                    Params::TextureMode,
-                    "Texture Mode",
-                    PopupDef::setup(|d| {
-                        d.set_options(&[
-                            "Off",
-                            "Amount Modulation",
-                            "Direction Jitter",
-                            "Amount + Direction",
-                        ]);
-                        d.set_default(1);
-                    }),
-                    ae::ParamFlag::SUPERVISE,
-                    ae::ParamUIFlags::empty(),
-                )?;
-
-                params.add_with_flags(
-                    Params::TextureInput,
-                    "Texture Input",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["Layer (None = Input)", "Input Layer (Effect & Mask)"]);
-                        d.set_default(1);
-                    }),
-                    ae::ParamFlag::SUPERVISE,
-                    ae::ParamUIFlags::empty(),
-                )?;
-
-                params.add(Params::TextureLayer, "Texture Layer", LayerDef::new())?;
-
-                params.add_with_flags(
-                    Params::TextureMapMode,
-                    "Texture Source",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["Gray", "HSV Value", "HSL Lightness", "RGBA Channel"]);
-                        d.set_default(1);
-                    }),
-                    ae::ParamFlag::SUPERVISE,
-                    ae::ParamUIFlags::empty(),
-                )?;
-
-                params.add(
-                    Params::TextureMapChannel,
-                    "Texture RGBA Channel",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["Red", "Green", "Blue", "Alpha"]);
-                        d.set_default(1);
-                    }),
-                )?;
-
-                params.add(
-                    Params::TextureInfluence,
-                    "Texture Influence",
-                    FloatSliderDef::setup(|d| {
-                        d.set_valid_min(0.0);
-                        d.set_valid_max(1.0);
-                        d.set_slider_min(0.0);
-                        d.set_slider_max(1.0);
-                        d.set_default(0.5);
-                        d.set_precision(3);
-                    }),
-                )?;
-
                 Ok(())
             },
         )?;
@@ -739,7 +656,7 @@ impl AdobePluginGlobal for Plugin {
             Params::OutputGroupStart,
             Params::OutputGroupEnd,
             "Output",
-            true,
+            false,
             |params| {
                 params.add(
                     Params::Seed,
@@ -752,29 +669,28 @@ impl AdobePluginGlobal for Plugin {
                         d.set_default(0);
                     }),
                 )?;
-
                 params.add(
-                    Params::NoiseW,
-                    "Noise W (Z)",
-                    FloatSliderDef::setup(|d| {
-                        d.set_valid_min(-100000.0);
-                        d.set_valid_max(100000.0);
-                        d.set_slider_min(-100.0);
-                        d.set_slider_max(100.0);
-                        d.set_default(0.0);
-                        d.set_precision(3);
+                    Params::TemporalMode,
+                    "Temporal Mode",
+                    PopupDef::setup(|d| {
+                        d.set_options(&["Static", "Randomize Every Frame"]);
+                        d.set_default(1);
                     }),
                 )?;
-
                 params.add(
                     Params::EdgeMode,
                     "Edge Mode",
                     PopupDef::setup(|d| {
-                        d.set_options(&["None (Zero)", "Repeat", "Tile", "Mirror"]);
-                        d.set_default(2);
+                        d.set_options(&[
+                            "Reject and Retry",
+                            "Clamp",
+                            "Tile",
+                            "Mirror",
+                            "Transparent",
+                        ]);
+                        d.set_default(1);
                     }),
                 )?;
-
                 params.add_with_flags(
                     Params::BlendMode,
                     "Blend With Original",
@@ -793,7 +709,6 @@ impl AdobePluginGlobal for Plugin {
                     ae::ParamFlag::SUPERVISE,
                     ae::ParamUIFlags::empty(),
                 )?;
-
                 params.add(
                     Params::BlendOpacity,
                     "Blend Opacity (%)",
@@ -806,15 +721,13 @@ impl AdobePluginGlobal for Plugin {
                         d.set_precision(1);
                     }),
                 )?;
-
                 params.add(
                     Params::PreserveAlpha,
-                    "Preserve Alpha",
+                    "Preserve Original Alpha",
                     CheckBoxDef::setup(|d| {
-                        d.set_default(true);
+                        d.set_default(false);
                     }),
                 )?;
-
                 params.add(
                     Params::Clamp32,
                     "Clamp (32bpc)",
@@ -822,11 +735,9 @@ impl AdobePluginGlobal for Plugin {
                         d.set_default(false);
                     }),
                 )?;
-
                 Ok(())
             },
         )?;
-
         Ok(())
     }
 
@@ -849,8 +760,11 @@ impl AdobePluginGlobal for Plugin {
                 );
             }
             ae::Command::GlobalSetup => {
+                out_data.set_out_flag(OutFlags::DeepColorAware, true);
                 out_data.set_out_flag(OutFlags::SendUpdateParamsUi, true);
+                out_data.set_out_flag2(OutFlags2::FloatColorAware, true);
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
+                out_data.set_out_flag2(OutFlags2::RevealsZeroAlpha, true);
                 out_data.set_out_flag2(OutFlags2::ParamGroupStartCollapsedFlag, true);
                 if let Ok(suite) = ae::aegp::suites::Utility::new()
                     && let Ok(plugin_id) = suite.register_with_aegp("AOD_ScatterMap")
@@ -861,36 +775,110 @@ impl AdobePluginGlobal for Plugin {
             ae::Command::Render {
                 in_layer,
                 out_layer,
-            } => {
-                self.do_render(in_data, in_layer, out_data, out_layer, params)?;
-            }
+            } => self.do_render(in_data, in_layer, out_data, out_layer, params, None)?,
             ae::Command::SmartPreRender { mut extra } => {
                 let req = extra.output_request();
-
-                if let Ok(in_result) = extra.callbacks().checkout_layer(
+                let settings = read_render_settings(params)?;
+                let callbacks = extra.callbacks();
+                let in_result = checkout_full_smart_layer(
+                    callbacks,
                     0,
-                    0,
+                    SMART_QUERY_ID_BASE + SMART_INPUT_ID as i32,
+                    SMART_INPUT_ID,
                     &req,
-                    in_data.current_time(),
-                    in_data.time_step(),
-                    in_data.time_scale(),
-                ) {
-                    let _ = extra.union_result_rect(in_result.result_rect.into());
-                    let _ = extra.union_max_result_rect(in_result.max_result_rect.into());
-                } else {
-                    return Err(Error::InterruptCancel);
+                    in_data,
+                )?;
+                let full_rect: ae::Rect = in_result.max_result_rect.into();
+                let _ = extra.union_result_rect(full_rect);
+                let _ = extra.union_max_result_rect(full_rect);
+                extra.set_returns_extra_pixels(true);
+
+                for (param, checkout_id, enabled) in [
+                    (
+                        Params::AmountMapLayer,
+                        SMART_AMOUNT_MAP_ID,
+                        settings.use_amount_map,
+                    ),
+                    (
+                        Params::RadiusMapLayer,
+                        SMART_RADIUS_MAP_ID,
+                        settings.use_radius_map,
+                    ),
+                    (
+                        Params::GrainSizeMapLayer,
+                        SMART_GRAIN_SIZE_MAP_ID,
+                        settings.use_grain_size_map,
+                    ),
+                    (
+                        Params::AnisotropyMapLayer,
+                        SMART_ANISOTROPY_MAP_ID,
+                        settings.use_anisotropy_map,
+                    ),
+                    (
+                        Params::KernelTextureLayer,
+                        SMART_KERNEL_TEXTURE_ID,
+                        matches!(settings.grain_shape, GrainShape::Texture),
+                    ),
+                ] {
+                    if !enabled {
+                        continue;
+                    }
+                    let param_index = params.index(param).ok_or(Error::BadCallbackParameter)?;
+                    checkout_full_smart_layer(
+                        callbacks,
+                        param_index as i32,
+                        SMART_QUERY_ID_BASE + checkout_id as i32,
+                        checkout_id,
+                        &req,
+                        in_data,
+                    )?;
                 }
             }
             ae::Command::SmartRender { extra } => {
                 let cb = extra.callbacks();
-                let in_layer_opt = cb.checkout_layer_pixels(0)?;
+                let settings = read_render_settings(params)?;
+                let map_layers = OwnedRenderMaps {
+                    amount: checkout_smart_layer_buffer(
+                        cb,
+                        SMART_AMOUNT_MAP_ID,
+                        settings.use_amount_map,
+                    )?,
+                    radius: checkout_smart_layer_buffer(
+                        cb,
+                        SMART_RADIUS_MAP_ID,
+                        settings.use_radius_map,
+                    )?,
+                    grain_size: checkout_smart_layer_buffer(
+                        cb,
+                        SMART_GRAIN_SIZE_MAP_ID,
+                        settings.use_grain_size_map,
+                    )?,
+                    anisotropy: checkout_smart_layer_buffer(
+                        cb,
+                        SMART_ANISOTROPY_MAP_ID,
+                        settings.use_anisotropy_map,
+                    )?,
+                    kernel_texture: checkout_smart_layer_buffer(
+                        cb,
+                        SMART_KERNEL_TEXTURE_ID,
+                        matches!(settings.grain_shape, GrainShape::Texture),
+                    )?,
+                };
+                let in_layer_opt = cb.checkout_layer_pixels(SMART_INPUT_ID)?;
                 let out_layer_opt = cb.checkout_output()?;
 
                 if let (Some(in_layer), Some(out_layer)) = (in_layer_opt, out_layer_opt) {
-                    self.do_render(in_data, in_layer, out_data, out_layer, params)?;
+                    self.do_render(
+                        in_data,
+                        in_layer,
+                        out_data,
+                        out_layer,
+                        params,
+                        Some(map_layers),
+                    )?;
                 }
 
-                cb.checkin_layer_pixels(0)?;
+                cb.checkin_layer_pixels(SMART_INPUT_ID)?;
             }
             ae::Command::UserChangedParam { param_index }
                 if param_affects_ui(params.type_at(param_index)) =>
@@ -913,162 +901,67 @@ impl Plugin {
         in_data: InData,
         params: &mut ae::Parameters<Params>,
     ) -> Result<(), Error> {
-        let scatter_algorithm =
-            scatter_algorithm_from_popup(params.get(Params::ScatterAlgorithm)?.as_popup()?.value());
-        let use_legacy_sampling = scatter_algorithm.is_legacy_sampling();
-        Self::set_param_name(
+        let mode = scatter_mode_from_popup(params.get(Params::ScatterMode)?.as_popup()?.value());
+        let gather = matches!(mode, ScatterMode::Gather);
+        self.set_param_visible(in_data, params, Params::GatherSamples, gather)?;
+        self.set_param_visible(in_data, params, Params::EdgeMode, gather)?;
+
+        let grain_shape =
+            grain_shape_from_popup(params.get(Params::GrainShape)?.as_popup()?.value());
+        let custom_texture = matches!(grain_shape, GrainShape::Texture);
+        self.set_param_visible(in_data, params, Params::KernelTextureLayer, custom_texture)?;
+        self.set_param_visible(
+            in_data,
             params,
-            Params::ScatterSamples,
-            if use_legacy_sampling {
-                "Samples"
-            } else {
-                "Complexity"
-            },
+            Params::KernelTextureChannel,
+            custom_texture,
+        )?;
+        self.set_param_visible(in_data, params, Params::KernelThreshold, custom_texture)?;
+
+        let grain_fill_mode =
+            grain_fill_mode_from_popup(params.get(Params::GrainFillMode)?.as_popup()?.value());
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::GrainFillOpacity,
+            !matches!(grain_fill_mode, GrainFillMode::Texture),
         )?;
 
-        let use_scatter_map = params.get(Params::UseScatterMap)?.as_checkbox()?.value();
-        let scatter_map_input =
-            map_layer_source_from_popup(params.get(Params::ScatterMapInput)?.as_popup()?.value());
-        let scatter_map_mode =
-            scalar_map_mode_from_popup(params.get(Params::ScatterMapMode)?.as_popup()?.value());
-        self.set_param_visible(in_data, params, Params::ScatterMapInput, use_scatter_map)?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::ScatterMapLayer,
-            use_scatter_map && matches!(scatter_map_input, MapLayerSource::LayerOrInput),
-        )?;
-        self.set_param_visible(in_data, params, Params::ScatterMapMode, use_scatter_map)?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::ScatterMapChannel,
-            use_scatter_map && matches!(scatter_map_mode, ScalarMapMode::RgbaChannel),
-        )?;
-
-        let use_grain_map = params.get(Params::UseGrainMap)?.as_checkbox()?.value();
-        let grain_map_input =
-            map_layer_source_from_popup(params.get(Params::GrainMapInput)?.as_popup()?.value());
-        let grain_map_mode =
-            scalar_map_mode_from_popup(params.get(Params::GrainMapMode)?.as_popup()?.value());
-        self.set_param_visible(in_data, params, Params::GrainMapInput, use_grain_map)?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::GrainMapLayer,
-            use_grain_map && matches!(grain_map_input, MapLayerSource::LayerOrInput),
-        )?;
-        self.set_param_visible(in_data, params, Params::GrainMapMode, use_grain_map)?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::GrainMapChannel,
-            use_grain_map && matches!(grain_map_mode, ScalarMapMode::RgbaChannel),
-        )?;
-
-        let use_noise_offset_map = params
-            .get(Params::UseNoiseOffsetMap)?
-            .as_checkbox()?
-            .value();
-        let noise_offset_map_input = map_layer_source_from_popup(
-            params.get(Params::NoiseOffsetMapInput)?.as_popup()?.value(),
-        );
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::NoiseOffsetMapInput,
-            use_noise_offset_map,
-        )?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::NoiseOffsetMapLayer,
-            use_noise_offset_map && matches!(noise_offset_map_input, MapLayerSource::LayerOrInput),
-        )?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::NoiseOffsetMapMode,
-            use_noise_offset_map,
-        )?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::NoiseOffsetDisplacement,
-            use_noise_offset_map,
-        )?;
-
+        let use_amount_map = params.get(Params::UseAmountMap)?.as_checkbox()?.value();
+        self.set_param_visible(in_data, params, Params::AmountMapLayer, use_amount_map)?;
+        self.set_param_visible(in_data, params, Params::AmountMapChannel, use_amount_map)?;
+        let use_radius_map = params.get(Params::UseRadiusMap)?.as_checkbox()?.value();
+        self.set_param_visible(in_data, params, Params::RadiusMapLayer, use_radius_map)?;
+        self.set_param_visible(in_data, params, Params::RadiusMapChannel, use_radius_map)?;
+        let use_grain_size_map = params.get(Params::UseGrainSizeMap)?.as_checkbox()?.value();
+        Self::set_param_enabled(params, Params::GrainSize, !use_grain_size_map)?;
+        Self::set_param_enabled(params, Params::GrainSizeMin, use_grain_size_map)?;
+        Self::set_param_enabled(params, Params::GrainSizeMapMax, use_grain_size_map)?;
+        for id in [Params::GrainSizeMapLayer, Params::GrainSizeMapChannel] {
+            self.set_param_visible(in_data, params, id, use_grain_size_map)?;
+        }
         let use_anisotropy_map = params.get(Params::UseAnisotropyMap)?.as_checkbox()?.value();
-        let anisotropy_map_input = map_layer_source_from_popup(
-            params.get(Params::AnisotropyMapInput)?.as_popup()?.value(),
-        );
-        let anisotropy_mode = anisotropy_map_mode_from_popup(
+        let anisotropy_map_mode = anisotropy_map_mode_from_popup(
             params.get(Params::AnisotropyMapMode)?.as_popup()?.value(),
         );
-        let show_divergence_source = use_anisotropy_map
-            && matches!(
-                anisotropy_mode,
-                AnisotropyMapMode::DivergenceDirection | AnisotropyMapMode::DivergenceRotation
-            );
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::AnisotropyMapInput,
-            use_anisotropy_map,
-        )?;
-        self.set_param_visible(
-            in_data,
-            params,
+        for id in [
             Params::AnisotropyMapLayer,
-            use_anisotropy_map && matches!(anisotropy_map_input, MapLayerSource::LayerOrInput),
-        )?;
-        self.set_param_visible(
-            in_data,
-            params,
             Params::AnisotropyMapMode,
-            use_anisotropy_map,
-        )?;
-        self.set_param_visible(
-            in_data,
-            params,
             Params::UseAnisotropyDirection,
-            use_anisotropy_map,
-        )?;
-        self.set_param_visible(
-            in_data,
-            params,
             Params::UseAnisotropyStrength,
-            use_anisotropy_map,
-        )?;
+        ] {
+            self.set_param_visible(in_data, params, id, use_anisotropy_map)?;
+        }
         self.set_param_visible(
             in_data,
             params,
             Params::AnisotropyDivergenceSource,
-            show_divergence_source,
+            use_anisotropy_map
+                && matches!(
+                    anisotropy_map_mode,
+                    AnisotropyMapMode::DivergenceDirection | AnisotropyMapMode::DivergenceRotation
+                ),
         )?;
-
-        let texture_mode =
-            texture_mode_from_popup(params.get(Params::TextureMode)?.as_popup()?.value());
-        let use_texture = !matches!(texture_mode, TextureMode::Off);
-        let texture_input =
-            map_layer_source_from_popup(params.get(Params::TextureInput)?.as_popup()?.value());
-        let texture_map_mode =
-            scalar_map_mode_from_popup(params.get(Params::TextureMapMode)?.as_popup()?.value());
-        self.set_param_visible(in_data, params, Params::TextureInput, use_texture)?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::TextureLayer,
-            use_texture && matches!(texture_input, MapLayerSource::LayerOrInput),
-        )?;
-        self.set_param_visible(in_data, params, Params::TextureMapMode, use_texture)?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::TextureMapChannel,
-            use_texture && matches!(texture_map_mode, ScalarMapMode::RgbaChannel),
-        )?;
-        self.set_param_visible(in_data, params, Params::TextureInfluence, use_texture)?;
 
         let blend_mode =
             output_blend_mode_from_popup(params.get(Params::BlendMode)?.as_popup()?.value());
@@ -1078,18 +971,6 @@ impl Plugin {
             Params::BlendOpacity,
             !matches!(blend_mode, OutputBlendMode::None),
         )?;
-
-        Ok(())
-    }
-
-    fn set_param_name(
-        params: &mut ae::Parameters<Params>,
-        id: Params,
-        name: &str,
-    ) -> Result<(), Error> {
-        let mut p = params.get_mut(id)?;
-        p.set_name(name)?;
-        p.update_param_ui()?;
         Ok(())
     }
 
@@ -1103,7 +984,6 @@ impl Plugin {
         if in_data.is_premiere() {
             return Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::INVISIBLE, !visible);
         }
-
         if let Some(plugin_id) = self.aegp_id {
             let effect = in_data.effect();
             if let Some(index) = params.index(id)
@@ -1117,8 +997,15 @@ impl Plugin {
                 );
             }
         }
-
         Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::INVISIBLE, !visible)
+    }
+
+    fn set_param_enabled(
+        params: &mut ae::Parameters<Params>,
+        id: Params,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::DISABLED, !enabled)
     }
 
     fn set_param_ui_flag(
@@ -1132,7 +1019,6 @@ impl Plugin {
         if current_status == status {
             return Ok(());
         }
-
         let mut p = params.get_mut(id)?;
         p.set_ui_flag(flag, status);
         p.update_param_ui()?;
@@ -1141,220 +1027,112 @@ impl Plugin {
 
     fn do_render(
         &self,
-        _in_data: InData,
+        in_data: InData,
         in_layer: Layer,
         _out_data: OutData,
         mut out_layer: Layer,
         params: &mut Parameters<Params>,
+        smart_map_layers: Option<OwnedRenderMaps>,
     ) -> Result<(), Error> {
         let out_w = out_layer.width();
         let out_h = out_layer.height();
-        let src_w = in_layer.width();
-        let src_h = in_layer.height();
-        if out_w == 0 || out_h == 0 || src_w == 0 || src_h == 0 {
+        if out_w == 0 || out_h == 0 || in_layer.width() == 0 || in_layer.height() == 0 {
             return Ok(());
         }
 
-        let settings = read_render_settings(params)?;
+        let settings = downsample_render_settings(
+            read_render_settings(params)?,
+            f32::from(in_data.downsample_x()),
+            f32::from(in_data.downsample_y()),
+        );
         let source = read_layer_buffer(&in_layer);
-
-        let scatter_map_layer = checkout_layer_buffer(
-            params,
-            Params::ScatterMapLayer,
-            should_checkout_map_layer(settings.use_scatter_map, settings.scatter_map_input),
-        )?;
-        let grain_map_layer = checkout_layer_buffer(
-            params,
-            Params::GrainMapLayer,
-            should_checkout_map_layer(settings.use_grain_map, settings.grain_map_input),
-        )?;
-        let noise_offset_map_layer = checkout_layer_buffer(
-            params,
-            Params::NoiseOffsetMapLayer,
-            should_checkout_map_layer(
-                settings.use_noise_offset_map,
-                settings.noise_offset_map_input,
+        let working_source = resample_nearest_buffer(source, out_w, out_h);
+        let map_layers = if let Some(map_layers) = smart_map_layers {
+            map_layers
+        } else {
+            OwnedRenderMaps {
+                amount: checkout_layer_buffer(
+                    params,
+                    Params::AmountMapLayer,
+                    settings.use_amount_map,
+                )?,
+                radius: checkout_layer_buffer(
+                    params,
+                    Params::RadiusMapLayer,
+                    settings.use_radius_map,
+                )?,
+                grain_size: checkout_layer_buffer(
+                    params,
+                    Params::GrainSizeMapLayer,
+                    settings.use_grain_size_map,
+                )?,
+                anisotropy: checkout_layer_buffer(
+                    params,
+                    Params::AnisotropyMapLayer,
+                    settings.use_anisotropy_map,
+                )?,
+                kernel_texture: checkout_layer_buffer(
+                    params,
+                    Params::KernelTextureLayer,
+                    matches!(settings.grain_shape, GrainShape::Texture),
+                )?,
+            }
+        };
+        let maps = RenderMaps {
+            amount: map_buffer_ref(
+                map_layers.amount.as_ref(),
+                &working_source,
+                settings.use_amount_map,
             ),
-        )?;
-        let anisotropy_map_layer = checkout_layer_buffer(
-            params,
-            Params::AnisotropyMapLayer,
-            should_checkout_map_layer(settings.use_anisotropy_map, settings.anisotropy_map_input),
-        )?;
-        let texture_layer = checkout_layer_buffer(
-            params,
-            Params::TextureLayer,
-            should_checkout_map_layer(
-                !matches!(settings.texture_mode, TextureMode::Off),
-                settings.texture_input,
+            radius: map_buffer_ref(
+                map_layers.radius.as_ref(),
+                &working_source,
+                settings.use_radius_map,
             ),
-        )?;
+            grain_size: map_buffer_ref(
+                map_layers.grain_size.as_ref(),
+                &working_source,
+                settings.use_grain_size_map,
+            ),
+            anisotropy: map_buffer_ref(
+                map_layers.anisotropy.as_ref(),
+                &working_source,
+                settings.use_anisotropy_map,
+            ),
+            kernel_texture: map_buffer_ref(
+                map_layers.kernel_texture.as_ref(),
+                &working_source,
+                matches!(settings.grain_shape, GrainShape::Texture),
+            ),
+        };
 
-        let scatter_map = map_buffer_ref(
-            scatter_map_layer.as_ref(),
-            &source,
-            settings.use_scatter_map,
-            settings.scatter_map_input,
-        );
-        let grain_map = map_buffer_ref(
-            grain_map_layer.as_ref(),
-            &source,
-            settings.use_grain_map,
-            settings.grain_map_input,
-        );
-        let noise_offset_map = map_buffer_ref(
-            noise_offset_map_layer.as_ref(),
-            &source,
-            settings.use_noise_offset_map,
-            settings.noise_offset_map_input,
-        );
-        let anisotropy_map = map_buffer_ref(
-            anisotropy_map_layer.as_ref(),
-            &source,
-            settings.use_anisotropy_map,
-            settings.anisotropy_map_input,
-        );
-        let texture = map_buffer_ref(
-            texture_layer.as_ref(),
-            &source,
-            !matches!(settings.texture_mode, TextureMode::Off),
-            settings.texture_input,
-        );
-
+        let frame = in_data.current_frame() as i32;
+        let render_seed = temporal_seed(settings.seed, settings.temporal_mode, frame);
+        let mut rendered = render_scatter(&working_source, maps, &settings, render_seed);
+        drop(map_layers);
         let out_world_type = out_layer.world_type();
         let out_is_f32 = matches!(
             out_world_type,
             ae::aegp::WorldType::F32 | ae::aegp::WorldType::None
         );
+        for (index, px) in rendered.iter_mut().enumerate() {
+            let original = working_source.pixels[index];
+            if settings.preserve_alpha {
+                px.alpha = original.alpha;
+            }
+            *px = blend_with_original(*px, original, settings.blend_mode, settings.blend_opacity);
+            *px = sanitize_pixel_for_output(*px, out_is_f32, settings.clamp_32);
+        }
 
         out_layer.iterate(0, out_h as i32, None, |x, y, mut dst| {
-            let out_x = x as usize;
-            let out_y = y as usize;
-            let coord = OutputCoord {
-                x: out_x,
-                y: out_y,
-                out_w,
-                out_h,
-            };
-            let center_x = remap_coord_to_layer_float(out_x, out_w, source.width);
-            let center_y = remap_coord_to_layer_float(out_y, out_h, source.height);
-            let center = sample_bilinear(&source, center_x, center_y, EdgeMode::Repeat);
-
-            let scatter_factor = scalar_map_value(
-                scatter_map,
-                coord,
-                settings.scatter_map_mode,
-                settings.scatter_map_channel,
-                1.0,
-            );
-            let grain_factor = scalar_map_value(
-                grain_map,
-                coord,
-                settings.grain_map_mode,
-                settings.grain_map_channel,
-                1.0,
-            );
-            let texture_value = scalar_map_value(
-                texture,
-                coord,
-                settings.texture_map_mode,
-                settings.texture_map_channel,
-                0.5,
-            );
-
-            let mut radius = settings.scatter_radius * scatter_factor.max(0.0);
-            let mut angle = settings.direction;
-            if matches!(
-                settings.texture_mode,
-                TextureMode::Amount | TextureMode::AmountAndDirection
-            ) {
-                let amount_mod = 1.0 + (texture_value - 0.5) * 2.0 * settings.texture_influence;
-                radius *= amount_mod.max(0.0);
-            }
-            if matches!(
-                settings.texture_mode,
-                TextureMode::Direction | TextureMode::AmountAndDirection
-            ) {
-                angle += (texture_value - 0.5) * TAU * settings.texture_influence;
-            }
-
-            let mut anisotropy = settings.anisotropy;
-            if settings.use_anisotropy_map {
-                let flow = anisotropy_flow_at(
-                    anisotropy_map,
-                    coord,
-                    settings.anisotropy_map_mode,
-                    settings.anisotropy_divergence_source,
-                );
-                if flow.valid {
-                    if settings.use_anisotropy_direction {
-                        angle = flow.dir_y.atan2(flow.dir_x);
-                    }
-                    if settings.use_anisotropy_strength {
-                        anisotropy *= flow.strength.clamp(0.0, 1.0);
-                    }
-                }
-            }
-
-            let mut out_px = if radius <= 1.0e-6 {
-                center
-            } else {
-                let grain = (settings.grain_size * grain_factor.max(0.0)).max(1.0);
-                let mut noise_offset_x = settings.noise_offset_x;
-                let mut noise_offset_y = settings.noise_offset_y;
-                if settings.use_noise_offset_map {
-                    let flow = anisotropy_flow_at(
-                        noise_offset_map,
-                        coord,
-                        settings.noise_offset_map_mode,
-                        DivergenceSource::Gray,
-                    );
-                    if flow.valid {
-                        let displacement = settings.noise_offset_displacement * flow.strength;
-                        noise_offset_x += flow.dir_x * displacement;
-                        noise_offset_y += flow.dir_y * displacement;
-                    }
-                }
-                let sample_params = ScatterSampleParams {
-                    center_x,
-                    center_y,
-                    noise_x: center_x - noise_offset_x,
-                    noise_y: center_y - noise_offset_y,
-                    noise_w: settings.noise_w,
-                    radius,
-                    grain,
-                    angle,
-                    anisotropy: anisotropy.clamp(0.0, 1.0),
-                };
-                if settings.scatter_algorithm.is_legacy_sampling() {
-                    scatter_pixel(&source, center, sample_params, &settings)
-                } else {
-                    displace_pixel(&source, sample_params, &settings)
-                }
-            };
-
-            if matches!(settings.color_space, ScatterColorSpace::Alpha) {
-                out_px.red = center.red;
-                out_px.green = center.green;
-                out_px.blue = center.blue;
-            }
-            if settings.preserve_alpha && !matches!(settings.color_space, ScatterColorSpace::Alpha)
-            {
-                out_px.alpha = center.alpha;
-            }
-            out_px =
-                blend_with_original(out_px, center, settings.blend_mode, settings.blend_opacity);
-            out_px = sanitize_pixel_for_output(out_px, out_is_f32, settings.clamp_32);
-
+            let px = rendered[y as usize * out_w + x as usize];
             match out_world_type {
-                ae::aegp::WorldType::U8 => dst.set_from_u8(out_px.to_pixel8()),
-                ae::aegp::WorldType::U15 => dst.set_from_u16(out_px.to_pixel16()),
-                ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => dst.set_from_f32(out_px),
+                ae::aegp::WorldType::U8 => dst.set_from_u8(px.to_pixel8()),
+                ae::aegp::WorldType::U15 => dst.set_from_u16(px.to_pixel16()),
+                ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => dst.set_from_f32(px),
             }
-
             Ok(())
         })?;
-
         Ok(())
     }
 }
@@ -1362,104 +1140,119 @@ impl Plugin {
 fn param_affects_ui(param: Params) -> bool {
     matches!(
         param,
-        Params::ScatterAlgorithm
-            | Params::UseScatterMap
-            | Params::ScatterMapInput
-            | Params::ScatterMapMode
-            | Params::UseGrainMap
-            | Params::GrainMapInput
-            | Params::GrainMapMode
-            | Params::UseNoiseOffsetMap
-            | Params::NoiseOffsetMapInput
+        Params::ScatterMode
+            | Params::GrainShape
+            | Params::GrainFillMode
+            | Params::UseAmountMap
+            | Params::UseRadiusMap
+            | Params::UseGrainSizeMap
             | Params::UseAnisotropyMap
-            | Params::AnisotropyMapInput
             | Params::AnisotropyMapMode
-            | Params::TextureMode
-            | Params::TextureInput
-            | Params::TextureMapMode
             | Params::BlendMode
     )
 }
 
 fn read_render_settings(params: &mut Parameters<Params>) -> Result<RenderSettings, Error> {
-    let noise_offset = params.get(Params::NoiseOffset)?;
-    let (noise_offset_x, noise_offset_y) = point_value_f32(&noise_offset.as_point()?);
-
-    Ok(RenderSettings {
-        color_space: color_space_from_popup(params.get(Params::ColorSpace)?.as_popup()?.value()),
-        scatter_radius: params
-            .get(Params::ScatterRadius)?
-            .as_float_slider()?
-            .value()
-            .max(0.0) as f32,
-        samples: params
-            .get(Params::ScatterSamples)?
+    let use_grain_size_map = params.get(Params::UseGrainSizeMap)?.as_checkbox()?.value();
+    let base_grain_size = params
+        .get(Params::GrainSize)?
+        .as_slider()?
+        .value()
+        .clamp(1, 1024) as usize;
+    let grain_size = if use_grain_size_map {
+        params
+            .get(Params::GrainSizeMapMax)?
             .as_slider()?
             .value()
-            .clamp(1, 128) as u32,
-        scatter_algorithm: scatter_algorithm_from_popup(
-            params.get(Params::ScatterAlgorithm)?.as_popup()?.value(),
-        ),
-        sampling_distribution: sampling_distribution_from_popup(
+            .clamp(1, 1024) as usize
+    } else {
+        base_grain_size
+    };
+    let grain_size_min = if use_grain_size_map {
+        (params
+            .get(Params::GrainSizeMin)?
+            .as_slider()?
+            .value()
+            .clamp(1, 1024) as usize)
+            .min(grain_size)
+    } else {
+        1
+    };
+    Ok(RenderSettings {
+        scatter_mode: scatter_mode_from_popup(params.get(Params::ScatterMode)?.as_popup()?.value()),
+        amount: (params.get(Params::Amount)?.as_float_slider()?.value() as f32 / 100.0)
+            .clamp(0.0, 1.0),
+        radius: params
+            .get(Params::Radius)?
+            .as_slider()?
+            .value()
+            .clamp(0, 4096),
+        grain_size,
+        grain_size_min,
+        gather_samples: params
+            .get(Params::GatherSamples)?
+            .as_slider()?
+            .value()
+            .clamp(1, 32) as u32,
+        direction: (params.get(Params::Direction)?.as_float_slider()?.value() as f32).to_radians(),
+        anisotropy: (params.get(Params::Anisotropy)?.as_float_slider()?.value() as f32 / 100.0)
+            .clamp(0.0, 1.0),
+        grain_shape: grain_shape_from_popup(params.get(Params::GrainShape)?.as_popup()?.value()),
+        grain_size_randomness: (params
+            .get(Params::GrainSizeRandomness)?
+            .as_float_slider()?
+            .value() as f32
+            / 100.0)
+            .clamp(0.0, 1.0),
+        grain_position_randomness: (params
+            .get(Params::GrainPositionRandomness)?
+            .as_float_slider()?
+            .value() as f32
+            / 100.0)
+            .clamp(0.0, 1.0),
+        grain_density: (params.get(Params::GrainDensity)?.as_float_slider()?.value() as f32
+            / 100.0)
+            .clamp(1.0, 8.0),
+        kernel_randomness: (params
+            .get(Params::KernelRandomness)?
+            .as_float_slider()?
+            .value() as f32
+            / 100.0)
+            .clamp(0.0, 1.0),
+        kernel_texture_channel: map_channel_from_popup(
             params
-                .get(Params::SamplingDistribution)?
+                .get(Params::KernelTextureChannel)?
                 .as_popup()?
                 .value(),
         ),
-        distribution_shape: (params
-            .get(Params::DistributionShape)?
+        kernel_threshold: (params
+            .get(Params::KernelThreshold)?
             .as_float_slider()?
-            .value() as f32)
-            .clamp(0.0, 32.0),
-        noise_offset_x,
-        noise_offset_y,
-        use_scatter_map: params.get(Params::UseScatterMap)?.as_checkbox()?.value(),
-        scatter_map_input: map_layer_source_from_popup(
-            params.get(Params::ScatterMapInput)?.as_popup()?.value(),
-        ),
-        scatter_map_mode: scalar_map_mode_from_popup(
-            params.get(Params::ScatterMapMode)?.as_popup()?.value(),
-        ),
-        scatter_map_channel: rgba_channel_from_popup(
-            params.get(Params::ScatterMapChannel)?.as_popup()?.value(),
-        ),
-        grain_size: params
-            .get(Params::GrainSize)?
-            .as_float_slider()?
-            .value()
-            .max(1.0) as f32,
-        use_grain_map: params.get(Params::UseGrainMap)?.as_checkbox()?.value(),
-        grain_map_input: map_layer_source_from_popup(
-            params.get(Params::GrainMapInput)?.as_popup()?.value(),
-        ),
-        grain_map_mode: scalar_map_mode_from_popup(
-            params.get(Params::GrainMapMode)?.as_popup()?.value(),
-        ),
-        grain_map_channel: rgba_channel_from_popup(
-            params.get(Params::GrainMapChannel)?.as_popup()?.value(),
-        ),
-        use_noise_offset_map: params
-            .get(Params::UseNoiseOffsetMap)?
-            .as_checkbox()?
-            .value(),
-        noise_offset_map_input: map_layer_source_from_popup(
-            params.get(Params::NoiseOffsetMapInput)?.as_popup()?.value(),
-        ),
-        noise_offset_map_mode: anisotropy_map_mode_from_popup(
-            params.get(Params::NoiseOffsetMapMode)?.as_popup()?.value(),
-        ),
-        noise_offset_displacement: (params
-            .get(Params::NoiseOffsetDisplacement)?
-            .as_float_slider()?
-            .value() as f32)
-            .max(0.0),
-        direction: (params.get(Params::Direction)?.as_float_slider()?.value() as f32).to_radians(),
-        anisotropy: (params.get(Params::Anisotropy)?.as_float_slider()?.value() as f32)
+            .value() as f32
+            / 100.0)
             .clamp(0.0, 1.0),
-        use_anisotropy_map: params.get(Params::UseAnisotropyMap)?.as_checkbox()?.value(),
-        anisotropy_map_input: map_layer_source_from_popup(
-            params.get(Params::AnisotropyMapInput)?.as_popup()?.value(),
+        grain_fill_mode: grain_fill_mode_from_popup(
+            params.get(Params::GrainFillMode)?.as_popup()?.value(),
         ),
+        grain_fill_opacity: (params
+            .get(Params::GrainFillOpacity)?
+            .as_float_slider()?
+            .value() as f32
+            / 100.0)
+            .clamp(0.0, 1.0),
+        use_amount_map: params.get(Params::UseAmountMap)?.as_checkbox()?.value(),
+        amount_map_channel: map_channel_from_popup(
+            params.get(Params::AmountMapChannel)?.as_popup()?.value(),
+        ),
+        use_radius_map: params.get(Params::UseRadiusMap)?.as_checkbox()?.value(),
+        radius_map_channel: map_channel_from_popup(
+            params.get(Params::RadiusMapChannel)?.as_popup()?.value(),
+        ),
+        use_grain_size_map,
+        grain_size_map_channel: map_channel_from_popup(
+            params.get(Params::GrainSizeMapChannel)?.as_popup()?.value(),
+        ),
+        use_anisotropy_map: params.get(Params::UseAnisotropyMap)?.as_checkbox()?.value(),
         anisotropy_map_mode: anisotropy_map_mode_from_popup(
             params.get(Params::AnisotropyMapMode)?.as_popup()?.value(),
         ),
@@ -1477,23 +1270,10 @@ fn read_render_settings(params: &mut Parameters<Params>) -> Result<RenderSetting
                 .as_popup()?
                 .value(),
         ),
-        texture_mode: texture_mode_from_popup(params.get(Params::TextureMode)?.as_popup()?.value()),
-        texture_input: map_layer_source_from_popup(
-            params.get(Params::TextureInput)?.as_popup()?.value(),
-        ),
-        texture_map_mode: scalar_map_mode_from_popup(
-            params.get(Params::TextureMapMode)?.as_popup()?.value(),
-        ),
-        texture_map_channel: rgba_channel_from_popup(
-            params.get(Params::TextureMapChannel)?.as_popup()?.value(),
-        ),
-        texture_influence: (params
-            .get(Params::TextureInfluence)?
-            .as_float_slider()?
-            .value() as f32)
-            .clamp(0.0, 1.0),
         seed: params.get(Params::Seed)?.as_slider()?.value() as u32,
-        noise_w: params.get(Params::NoiseW)?.as_float_slider()?.value() as f32,
+        temporal_mode: temporal_mode_from_popup(
+            params.get(Params::TemporalMode)?.as_popup()?.value(),
+        ),
         edge_mode: edge_mode_from_popup(params.get(Params::EdgeMode)?.as_popup()?.value()),
         blend_mode: output_blend_mode_from_popup(
             params.get(Params::BlendMode)?.as_popup()?.value(),
@@ -1506,64 +1286,56 @@ fn read_render_settings(params: &mut Parameters<Params>) -> Result<RenderSetting
     })
 }
 
-fn color_space_from_popup(value: i32) -> ScatterColorSpace {
+fn downsample_render_settings(
+    mut settings: RenderSettings,
+    scale_x: f32,
+    scale_y: f32,
+) -> RenderSettings {
+    // AE normally downsamples both axes equally. The geometric mean remains
+    // stable for the uncommon non-square preview ratio without over-favoring
+    // either axis while the public controls remain scalar.
+    let pixel_scale = (scale_x.max(0.0) * scale_y.max(0.0)).sqrt();
+    if settings.radius > 0 {
+        settings.radius = ((settings.radius as f32 * pixel_scale).round() as i32).max(1);
+    }
+    settings.grain_size = ((settings.grain_size as f32 * pixel_scale).round() as usize).max(1);
+    settings.grain_size_min = ((settings.grain_size_min as f32 * pixel_scale).round() as usize)
+        .max(1)
+        .min(settings.grain_size);
+    settings
+}
+
+fn scatter_mode_from_popup(value: i32) -> ScatterMode {
     match value {
-        2 => ScatterColorSpace::LinearRgb,
-        3 => ScatterColorSpace::Alpha,
-        4 => ScatterColorSpace::Srgb,
-        5 => ScatterColorSpace::Oklab,
-        6 => ScatterColorSpace::Oklch,
-        7 => ScatterColorSpace::Hsl,
-        8 => ScatterColorSpace::Hsv,
-        _ => ScatterColorSpace::LinearRgba,
+        2 => ScatterMode::Swap,
+        _ => ScatterMode::Gather,
     }
 }
 
-fn scatter_algorithm_from_popup(value: i32) -> ScatterAlgorithm {
+fn map_channel_from_popup(value: i32) -> MapChannel {
     match value {
-        2 => ScatterAlgorithm::CellBlock,
-        3 => ScatterAlgorithm::CellSmooth,
-        4 => ScatterAlgorithm::NoiseVector,
-        5 => ScatterAlgorithm::DomainWarpFbm,
-        6 => ScatterAlgorithm::CurlFbm,
-        7 => ScatterAlgorithm::LegacySquareCell,
-        8 => ScatterAlgorithm::LegacySmoothGrid,
-        9 => ScatterAlgorithm::LegacyVoronoiCell,
-        10 => ScatterAlgorithm::LegacyBlueNoise,
-        _ => ScatterAlgorithm::FbmVector,
+        2 => MapChannel::Red,
+        3 => MapChannel::Green,
+        4 => MapChannel::Blue,
+        5 => MapChannel::Alpha,
+        _ => MapChannel::Luma,
     }
 }
 
-fn sampling_distribution_from_popup(value: i32) -> SamplingDistribution {
+fn grain_shape_from_popup(value: i32) -> GrainShape {
     match value {
-        2 => SamplingDistribution::Gaussian,
-        3 => SamplingDistribution::Exponential,
-        _ => SamplingDistribution::Uniform,
+        2 => GrainShape::Circle,
+        3 => GrainShape::Texture,
+        _ => GrainShape::Square,
     }
 }
 
-fn scalar_map_mode_from_popup(value: i32) -> ScalarMapMode {
+fn grain_fill_mode_from_popup(value: i32) -> GrainFillMode {
     match value {
-        2 => ScalarMapMode::HsvValue,
-        3 => ScalarMapMode::HslLightness,
-        4 => ScalarMapMode::RgbaChannel,
-        _ => ScalarMapMode::Gray,
-    }
-}
-
-fn rgba_channel_from_popup(value: i32) -> RgbaChannel {
-    match value {
-        2 => RgbaChannel::Green,
-        3 => RgbaChannel::Blue,
-        4 => RgbaChannel::Alpha,
-        _ => RgbaChannel::Red,
-    }
-}
-
-fn map_layer_source_from_popup(value: i32) -> MapLayerSource {
-    match value {
-        2 => MapLayerSource::InputLayer,
-        _ => MapLayerSource::LayerOrInput,
+        2 => GrainFillMode::Average,
+        3 => GrainFillMode::Median,
+        4 => GrainFillMode::Center,
+        _ => GrainFillMode::Texture,
     }
 }
 
@@ -1589,21 +1361,20 @@ fn divergence_source_from_popup(value: i32) -> DivergenceSource {
     }
 }
 
-fn texture_mode_from_popup(value: i32) -> TextureMode {
+fn temporal_mode_from_popup(value: i32) -> TemporalMode {
     match value {
-        2 => TextureMode::Amount,
-        3 => TextureMode::Direction,
-        4 => TextureMode::AmountAndDirection,
-        _ => TextureMode::Off,
+        2 => TemporalMode::Frame,
+        _ => TemporalMode::Static,
     }
 }
 
 fn edge_mode_from_popup(value: i32) -> EdgeMode {
     match value {
-        1 => EdgeMode::None,
+        2 => EdgeMode::Clamp,
         3 => EdgeMode::Tile,
         4 => EdgeMode::Mirror,
-        _ => EdgeMode::Repeat,
+        5 => EdgeMode::Transparent,
+        _ => EdgeMode::Reject,
     }
 }
 
@@ -1619,6 +1390,48 @@ fn output_blend_mode_from_popup(value: i32) -> OutputBlendMode {
     }
 }
 
+fn checkout_full_smart_layer(
+    callbacks: PreRenderCallbacks,
+    param_index: i32,
+    query_id: i32,
+    checkout_id: u32,
+    request: &ae::sys::PF_RenderRequest,
+    in_data: InData,
+) -> Result<ae::sys::PF_CheckoutResult, Error> {
+    let query_result = callbacks.checkout_layer(
+        param_index,
+        query_id,
+        request,
+        in_data.current_time(),
+        in_data.time_step(),
+        in_data.time_scale(),
+    )?;
+    let mut full_request = *request;
+    full_request.rect = query_result.max_result_rect;
+    callbacks.checkout_layer(
+        param_index,
+        checkout_id as i32,
+        &full_request,
+        in_data.current_time(),
+        in_data.time_step(),
+        in_data.time_scale(),
+    )
+}
+
+fn checkout_smart_layer_buffer(
+    callbacks: SmartRenderCallbacks,
+    checkout_id: u32,
+    enabled: bool,
+) -> Result<Option<LayerBuffer>, Error> {
+    if !enabled {
+        return Ok(None);
+    }
+    let layer = callbacks.checkout_layer_pixels(checkout_id)?;
+    let buffer = layer.as_ref().map(read_layer_buffer);
+    callbacks.checkin_layer_pixels(checkout_id)?;
+    Ok(buffer)
+}
+
 fn checkout_layer_buffer(
     params: &mut Parameters<Params>,
     id: Params,
@@ -1627,36 +1440,20 @@ fn checkout_layer_buffer(
     if !enabled {
         return Ok(None);
     }
-
-    let checkout = params.checkout_at(id, None, None, None)?;
-    let layer = checkout.as_layer()?.value();
+    let param = params.get(id)?;
+    let layer = param.as_layer()?.value();
     Ok(layer.as_ref().map(read_layer_buffer))
-}
-
-fn should_checkout_map_layer(enabled: bool, input: MapLayerSource) -> bool {
-    enabled && matches!(input, MapLayerSource::LayerOrInput)
 }
 
 fn map_buffer_ref<'a>(
     layer_map: Option<&'a LayerBuffer>,
     input_layer: &'a LayerBuffer,
     enabled: bool,
-    input: MapLayerSource,
 ) -> Option<&'a LayerBuffer> {
-    if !enabled {
-        return None;
-    }
-
-    match input {
-        MapLayerSource::LayerOrInput => layer_map.or(Some(input_layer)),
-        MapLayerSource::InputLayer => Some(input_layer),
-    }
-}
-
-fn point_value_f32(point: &PointDef<'_>) -> (f32, f32) {
-    match point.float_value() {
-        Ok(p) => (p.x as f32, p.y as f32),
-        Err(_) => point.value(),
+    if enabled {
+        layer_map.or(Some(input_layer))
+    } else {
+        None
     }
 }
 
@@ -1664,22 +1461,16 @@ fn read_layer_buffer(layer: &Layer) -> LayerBuffer {
     let width = layer.width();
     let height = layer.height();
     let world_type = layer.world_type();
-    let mut pixels = vec![
-        PixelF32 {
-            alpha: 0.0,
-            red: 0.0,
-            green: 0.0,
-            blue: 0.0,
-        };
-        width * height
-    ];
-
+    let mut pixels = vec![transparent_pixel(); width * height];
     for y in 0..height {
         for x in 0..width {
-            pixels[y * width + x] = read_pixel_f32(layer, world_type, x, y);
+            pixels[y * width + x] = match world_type {
+                ae::aegp::WorldType::U8 => layer.as_pixel8(x, y).to_pixel32(),
+                ae::aegp::WorldType::U15 => layer.as_pixel16(x, y).to_pixel32(),
+                ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => *layer.as_pixel32(x, y),
+            };
         }
     }
-
     LayerBuffer {
         width,
         height,
@@ -1687,818 +1478,1817 @@ fn read_layer_buffer(layer: &Layer) -> LayerBuffer {
     }
 }
 
-fn read_pixel_f32(layer: &Layer, world_type: ae::aegp::WorldType, x: usize, y: usize) -> PixelF32 {
-    match world_type {
-        ae::aegp::WorldType::U8 => layer.as_pixel8(x, y).to_pixel32(),
-        ae::aegp::WorldType::U15 => layer.as_pixel16(x, y).to_pixel32(),
-        ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => *layer.as_pixel32(x, y),
+fn resample_nearest_buffer(source: LayerBuffer, width: usize, height: usize) -> LayerBuffer {
+    if source.width == width && source.height == height {
+        return source;
+    }
+    let mut pixels = vec![transparent_pixel(); width * height];
+    for y in 0..height {
+        for x in 0..width {
+            let source_x = remap_coord_nearest(x, width, source.width);
+            let source_y = remap_coord_nearest(y, height, source.height);
+            pixels[y * width + x] = source.pixels[source_y * source.width + source_x];
+        }
+    }
+    LayerBuffer {
+        width,
+        height,
+        pixels,
     }
 }
 
-fn displace_pixel(
-    src: &LayerBuffer,
-    sample_params: ScatterSampleParams,
-    settings: &RenderSettings,
-) -> PixelF32 {
-    let (vx, vy) = displacement_vector(sample_params, settings);
-    let (dx, dy) = anisotropic_displacement(vx, vy, sample_params);
-    sample_bilinear(
-        src,
-        sample_params.center_x + dx,
-        sample_params.center_y + dy,
-        settings.edge_mode,
-    )
-}
-
-fn displacement_vector(
-    sample_params: ScatterSampleParams,
-    settings: &RenderSettings,
-) -> (f32, f32) {
-    let p = (
-        sample_params.noise_x / sample_params.grain,
-        sample_params.noise_y / sample_params.grain,
-        sample_params.noise_w,
-    );
-    let octaves = settings.samples.clamp(1, 8);
-    let v = match settings.scatter_algorithm {
-        ScatterAlgorithm::CellBlock => cell_block_displacement(p, settings.seed),
-        ScatterAlgorithm::CellSmooth => cell_smooth_displacement(p, settings.seed),
-        ScatterAlgorithm::NoiseVector => noise_vector(p, settings.seed),
-        ScatterAlgorithm::DomainWarpFbm => domain_warp_fbm_displacement(p, octaves, settings.seed),
-        ScatterAlgorithm::CurlFbm => curl_fbm_displacement(p, octaves, settings.seed),
-        ScatterAlgorithm::FbmVector => fbm_vector_displacement(p, octaves, settings.seed),
-        _ => (0.0, 0.0),
-    };
-    shape_displacement_vector(v, settings)
-}
-
-fn shape_displacement_vector(v: (f32, f32), settings: &RenderSettings) -> (f32, f32) {
-    let v = limit_vector(v);
-    let len2 = (v.0 * v.0 + v.1 * v.1).clamp(0.0, 1.0);
-    if len2 <= 1.0e-8 {
-        return v;
+fn remap_coord_nearest(coord: usize, out_len: usize, source_len: usize) -> usize {
+    if out_len == 0 || source_len <= 1 {
+        return 0;
     }
-
-    let len = len2.sqrt();
-    let shaped_len = sample_radius(
-        len2,
-        settings.sampling_distribution,
-        settings.distribution_shape,
-    );
-    let scale = shaped_len / len;
-    (v.0 * scale, v.1 * scale)
+    let mapped = ((coord as f32 + 0.5) * source_len as f32 / out_len as f32 - 0.5).round();
+    (mapped as i64).clamp(0, source_len as i64 - 1) as usize
 }
 
-fn anisotropic_displacement(vx: f32, vy: f32, sample_params: ScatterSampleParams) -> (f32, f32) {
-    let dir_x = sample_params.angle.cos();
-    let dir_y = sample_params.angle.sin();
-    let perp_x = -dir_y;
-    let perp_y = dir_x;
-    let minor = (1.0 - sample_params.anisotropy).clamp(0.0, 1.0);
-    let u = vx * sample_params.radius;
-    let v = vy * sample_params.radius * minor;
-    (dir_x * u + perp_x * v, dir_y * u + perp_y * v)
-}
-
-fn cell_block_displacement(p: (f32, f32, f32), seed: u32) -> (f32, f32) {
-    hash_vector_3d(
-        p.0.floor() as i32,
-        p.1.floor() as i32,
-        p.2.floor() as i32,
-        seed,
-    )
-}
-
-fn cell_smooth_displacement(p: (f32, f32, f32), seed: u32) -> (f32, f32) {
-    let cell_x = p.0.floor() as i32;
-    let cell_y = p.1.floor() as i32;
-    let cell_z = p.2.floor() as i32;
-    let fx = smoothstep(p.0 - cell_x as f32);
-    let fy = smoothstep(p.1 - cell_y as f32);
-    let fz = smoothstep(p.2 - cell_z as f32);
-
-    let h000 = hash_vector_3d(cell_x, cell_y, cell_z, seed);
-    let h100 = hash_vector_3d(cell_x + 1, cell_y, cell_z, seed);
-    let h010 = hash_vector_3d(cell_x, cell_y + 1, cell_z, seed);
-    let h110 = hash_vector_3d(cell_x + 1, cell_y + 1, cell_z, seed);
-    let h001 = hash_vector_3d(cell_x, cell_y, cell_z + 1, seed);
-    let h101 = hash_vector_3d(cell_x + 1, cell_y, cell_z + 1, seed);
-    let h011 = hash_vector_3d(cell_x, cell_y + 1, cell_z + 1, seed);
-    let h111 = hash_vector_3d(cell_x + 1, cell_y + 1, cell_z + 1, seed);
-
-    let z0_top = (lerp(h000.0, h100.0, fx), lerp(h000.1, h100.1, fx));
-    let z0_bottom = (lerp(h010.0, h110.0, fx), lerp(h010.1, h110.1, fx));
-    let z1_top = (lerp(h001.0, h101.0, fx), lerp(h001.1, h101.1, fx));
-    let z1_bottom = (lerp(h011.0, h111.0, fx), lerp(h011.1, h111.1, fx));
-    let z0 = (
-        lerp(z0_top.0, z0_bottom.0, fy),
-        lerp(z0_top.1, z0_bottom.1, fy),
-    );
-    let z1 = (
-        lerp(z1_top.0, z1_bottom.0, fy),
-        lerp(z1_top.1, z1_bottom.1, fy),
-    );
-    (lerp(z0.0, z1.0, fz), lerp(z0.1, z1.1, fz))
-}
-
-fn noise_vector(p: (f32, f32, f32), seed: u32) -> (f32, f32) {
-    (
-        value_noise_signed(p.0, p.1, p.2, seed, 0x21),
-        value_noise_signed(p.0 + 19.19, p.1 - 7.31, p.2 + 11.13, seed, 0x4D),
-    )
-}
-
-fn fbm_vector_displacement(p: (f32, f32, f32), octaves: u32, seed: u32) -> (f32, f32) {
-    let mut sum_x = 0.0;
-    let mut sum_y = 0.0;
-    let mut amp = 1.0;
-    let mut total_amp = 0.0;
-    let mut freq = 1.0;
-    for octave in 0..octaves {
-        let octave_seed = seed ^ octave.wrapping_mul(0x9E37_79B9);
-        let (nx, ny) = noise_vector((p.0 * freq, p.1 * freq, p.2 * freq), octave_seed);
-        sum_x += nx * amp;
-        sum_y += ny * amp;
-        total_amp += amp;
-        amp *= 0.5;
-        freq *= 2.0;
+fn density_layers(settings: &RenderSettings) -> Vec<(u32, f32)> {
+    let grain_size = settings.grain_size.max(1);
+    let useful_layers = grain_size.saturating_mul(grain_size).min(8) as f32;
+    let density = settings.grain_density.clamp(1.0, useful_layers);
+    let full_layers = density.floor() as u32;
+    let mut layers = Vec::with_capacity(density.ceil() as usize);
+    for layer in 0..full_layers {
+        layers.push((layer, 1.0));
     }
+    let remainder = density - full_layers as f32;
+    if remainder > 1.0e-6 && full_layers < useful_layers as u32 {
+        layers.push((full_layers, remainder));
+    }
+    layers
+}
 
-    if total_amp <= 1.0e-6 {
-        (0.0, 0.0)
+fn density_layer_seed(seed: u32, layer: u32) -> u32 {
+    if layer == 0 {
+        seed
     } else {
-        (sum_x / total_amp, sum_y / total_amp)
+        hash_u32(seed ^ layer.wrapping_mul(0x9E37_79B9) ^ 0xD1B5_4A35)
     }
 }
 
-fn domain_warp_fbm_displacement(p: (f32, f32, f32), octaves: u32, seed: u32) -> (f32, f32) {
-    let q = fbm_vector_displacement(p, octaves, seed ^ 0xA53A_9D13);
-    let r = fbm_vector_displacement(
-        (p.0 + q.0 * 2.0 + 1.7, p.1 + q.1 * 2.0 + 9.2, p.2 + 4.1),
-        octaves,
-        seed ^ 0xC2B2_AE35,
+fn render_scatter(
+    source: &LayerBuffer,
+    maps: RenderMaps<'_>,
+    settings: &RenderSettings,
+    seed: u32,
+) -> Vec<PixelF32> {
+    match settings.scatter_mode {
+        ScatterMode::Gather => render_gather(source, maps, settings, seed),
+        ScatterMode::Swap => render_swap(source, maps, settings, seed),
+    }
+}
+
+fn render_gather(
+    source: &LayerBuffer,
+    maps: RenderMaps<'_>,
+    settings: &RenderSettings,
+    seed: u32,
+) -> Vec<PixelF32> {
+    let mut output = source.pixels.clone();
+    if settings.amount <= 0.0 || settings.radius <= 0 {
+        return output;
+    }
+
+    let layers = density_layers(settings)
+        .into_iter()
+        .map(|(density_layer, density_weight)| {
+            (
+                KernelContext {
+                    image_width: source.width,
+                    image_height: source.height,
+                    maps,
+                    settings,
+                    seed: density_layer_seed(seed, density_layer),
+                    density_layer,
+                },
+                density_weight,
+            )
+        })
+        .collect::<Vec<_>>();
+    render_gather_layers(&mut output, source, &layers);
+    output
+}
+
+#[cfg(test)]
+fn render_gather_layer(
+    output: &mut [PixelF32],
+    source: &LayerBuffer,
+    kernel_context: KernelContext<'_>,
+    density_weight: f32,
+) {
+    render_gather_layers(output, source, &[(kernel_context, density_weight)]);
+}
+
+fn render_gather_layers(
+    output: &mut [PixelF32],
+    source: &LayerBuffer,
+    layers: &[(KernelContext<'_>, f32)],
+) {
+    if source.width == 0 || source.height == 0 || layers.is_empty() {
+        return;
+    }
+    if layers.len() == 1
+        && layers[0].0.density_layer == 0
+        && layers[0].0.settings.grain_position_randomness <= 0.0
+        && layers[0].0.settings.kernel_randomness <= 0.0
+    {
+        render_non_overlapping_gather_layer(output, source, layers[0].0, layers[0].1);
+        return;
+    }
+
+    let grain = layers[0].0.settings.grain_size.max(1);
+    let columns = source.width.div_ceil(grain);
+    let rows = source.height.div_ceil(grain);
+    let grains_per_layer = columns * rows;
+    let total_grains = grains_per_layer.saturating_mul(layers.len());
+    assert!(
+        total_grains < u32::MAX as usize,
+        "ScatterMap image contains too many grains"
     );
-    let s = fbm_vector_displacement(
-        (p.0 + r.0 * 2.0 + 8.3, p.1 + r.1 * 2.0 + 2.8, p.2 + 8.6),
-        octaves,
-        seed ^ 0x27D4_EB2F,
-    );
-    (s.0, s.1)
-}
 
-fn curl_fbm_displacement(p: (f32, f32, f32), octaves: u32, seed: u32) -> (f32, f32) {
-    let eps = 0.5;
-    let px1 = scalar_fbm((p.0 + eps, p.1, p.2), octaves, seed);
-    let px0 = scalar_fbm((p.0 - eps, p.1, p.2), octaves, seed);
-    let py1 = scalar_fbm((p.0, p.1 + eps, p.2), octaves, seed);
-    let py0 = scalar_fbm((p.0, p.1 - eps, p.2), octaves, seed);
-    let dx = (px1 - px0) / (2.0 * eps);
-    let dy = (py1 - py0) / (2.0 * eps);
-    (dy * 2.0, -dx * 2.0)
-}
-
-fn scalar_fbm(p: (f32, f32, f32), octaves: u32, seed: u32) -> f32 {
-    let mut sum = 0.0;
-    let mut amp = 1.0;
-    let mut total_amp = 0.0;
-    let mut freq = 1.0;
-    for octave in 0..octaves {
-        let octave_seed = seed ^ octave.wrapping_mul(0x85EB_CA6B);
-        sum += value_noise_signed(p.0 * freq, p.1 * freq, p.2 * freq, octave_seed, 0x77) * amp;
-        total_amp += amp;
-        amp *= 0.5;
-        freq *= 2.0;
-    }
-
-    if total_amp <= 1.0e-6 {
-        0.0
-    } else {
-        sum / total_amp
-    }
-}
-
-fn value_noise_signed(x: f32, y: f32, z: f32, seed: u32, channel: u32) -> f32 {
-    let cell_x = x.floor() as i32;
-    let cell_y = y.floor() as i32;
-    let cell_z = z.floor() as i32;
-    let fx = smoothstep(x - cell_x as f32);
-    let fy = smoothstep(y - cell_y as f32);
-    let fz = smoothstep(z - cell_z as f32);
-
-    let h000 = hash_signed_3d(cell_x, cell_y, cell_z, seed, channel);
-    let h100 = hash_signed_3d(cell_x + 1, cell_y, cell_z, seed, channel);
-    let h010 = hash_signed_3d(cell_x, cell_y + 1, cell_z, seed, channel);
-    let h110 = hash_signed_3d(cell_x + 1, cell_y + 1, cell_z, seed, channel);
-    let h001 = hash_signed_3d(cell_x, cell_y, cell_z + 1, seed, channel);
-    let h101 = hash_signed_3d(cell_x + 1, cell_y, cell_z + 1, seed, channel);
-    let h011 = hash_signed_3d(cell_x, cell_y + 1, cell_z + 1, seed, channel);
-    let h111 = hash_signed_3d(cell_x + 1, cell_y + 1, cell_z + 1, seed, channel);
-
-    let z0_top = lerp(h000, h100, fx);
-    let z0_bottom = lerp(h010, h110, fx);
-    let z1_top = lerp(h001, h101, fx);
-    let z1_bottom = lerp(h011, h111, fx);
-    let z0 = lerp(z0_top, z0_bottom, fy);
-    let z1 = lerp(z1_top, z1_bottom, fy);
-    lerp(z0, z1, fz).clamp(-1.0, 1.0)
-}
-
-fn hash_vector_3d(cell_x: i32, cell_y: i32, cell_z: i32, seed: u32) -> (f32, f32) {
-    (
-        hash_signed_3d(cell_x, cell_y, cell_z, seed, 0),
-        hash_signed_3d(cell_x, cell_y, cell_z, seed, 1),
-    )
-}
-
-fn hash_signed_3d(cell_x: i32, cell_y: i32, cell_z: i32, seed: u32, channel: u32) -> f32 {
-    rand01(hash_3d(cell_x, cell_y, cell_z, channel, seed)) * 2.0 - 1.0
-}
-
-fn limit_vector(v: (f32, f32)) -> (f32, f32) {
-    let len2 = v.0 * v.0 + v.1 * v.1;
-    if len2 > 1.0 {
-        let inv_len = len2.sqrt().recip();
-        (v.0 * inv_len, v.1 * inv_len)
-    } else {
-        v
-    }
-}
-
-fn scatter_pixel(
-    src: &LayerBuffer,
-    center: PixelF32,
-    sample_params: ScatterSampleParams,
-    settings: &RenderSettings,
-) -> PixelF32 {
-    let dir_x = sample_params.angle.cos();
-    let dir_y = sample_params.angle.sin();
-    let perp_x = -dir_y;
-    let perp_y = dir_x;
-    let minor = (1.0 - sample_params.anisotropy).clamp(0.0, 1.0);
-
-    let mut acc = ColorAccumulator::new(settings.color_space);
-    for tap in 0..settings.samples {
-        let (disk_x, disk_y) = scatter_unit_offset(sample_params, tap, settings);
-        let u = disk_x * sample_params.radius;
-        let v = disk_y * sample_params.radius * minor;
-        let dx = dir_x * u + perp_x * v;
-        let dy = dir_y * u + perp_y * v;
-        let sample = sample_bilinear(
-            src,
-            sample_params.center_x + dx,
-            sample_params.center_y + dy,
-            settings.edge_mode,
-        );
-        acc.add(sample);
-    }
-
-    acc.finish(center, settings.preserve_alpha)
-}
-
-fn scatter_unit_offset(
-    sample_params: ScatterSampleParams,
-    tap: u32,
-    settings: &RenderSettings,
-) -> (f32, f32) {
-    match settings.scatter_algorithm {
-        ScatterAlgorithm::LegacySquareCell => square_cell_offset(sample_params, tap, settings),
-        ScatterAlgorithm::LegacySmoothGrid => smooth_grid_offset(sample_params, tap, settings),
-        ScatterAlgorithm::LegacyVoronoiCell => voronoi_cell_offset(sample_params, tap, settings),
-        ScatterAlgorithm::LegacyBlueNoise => blue_noise_offset(sample_params, tap, settings),
-        _ => (0.0, 0.0),
-    }
-}
-
-fn square_cell_offset(
-    sample_params: ScatterSampleParams,
-    tap: u32,
-    settings: &RenderSettings,
-) -> (f32, f32) {
-    let (cell_x, cell_y, cell_z) = grain_cell(sample_params);
-    random_disk_offset(cell_x, cell_y, cell_z, tap, settings)
-}
-
-fn smooth_grid_offset(
-    sample_params: ScatterSampleParams,
-    tap: u32,
-    settings: &RenderSettings,
-) -> (f32, f32) {
-    let grid_x = sample_params.noise_x / sample_params.grain;
-    let grid_y = sample_params.noise_y / sample_params.grain;
-    let cell_x = grid_x.floor() as i32;
-    let cell_y = grid_y.floor() as i32;
-    let cell_z = sample_params.noise_w.floor() as i32;
-    let fx = smoothstep(grid_x - cell_x as f32);
-    let fy = smoothstep(grid_y - cell_y as f32);
-
-    let p00 = random_disk_offset(cell_x, cell_y, cell_z, tap, settings);
-    let p10 = random_disk_offset(cell_x + 1, cell_y, cell_z, tap, settings);
-    let p01 = random_disk_offset(cell_x, cell_y + 1, cell_z, tap, settings);
-    let p11 = random_disk_offset(cell_x + 1, cell_y + 1, cell_z, tap, settings);
-
-    let top = (lerp(p00.0, p10.0, fx), lerp(p00.1, p10.1, fx));
-    let bottom = (lerp(p01.0, p11.0, fx), lerp(p01.1, p11.1, fx));
-    (lerp(top.0, bottom.0, fy), lerp(top.1, bottom.1, fy))
-}
-
-fn voronoi_cell_offset(
-    sample_params: ScatterSampleParams,
-    tap: u32,
-    settings: &RenderSettings,
-) -> (f32, f32) {
-    let grid_x = sample_params.noise_x / sample_params.grain;
-    let grid_y = sample_params.noise_y / sample_params.grain;
-    let base_x = grid_x.floor() as i32;
-    let base_y = grid_y.floor() as i32;
-    let cell_z = sample_params.noise_w.floor() as i32;
-    let seed = settings.seed;
-
-    let mut best_x = base_x;
-    let mut best_y = base_y;
-    let mut best_d2 = f32::INFINITY;
-    for y in -1..=1 {
-        for x in -1..=1 {
-            let cell_x = base_x + x;
-            let cell_y = base_y + y;
-            let feature_x =
-                cell_x as f32 + rand01(hash_3d(cell_x, cell_y, cell_z, 9, seed ^ 0x7A37_9B1D));
-            let feature_y =
-                cell_y as f32 + rand01(hash_3d(cell_x, cell_y, cell_z, 10, seed ^ 0x7A37_9B1D));
-            let dx = grid_x - feature_x;
-            let dy = grid_y - feature_y;
-            let d2 = dx * dx + dy * dy;
-            if d2 < best_d2 {
-                best_d2 = d2;
-                best_x = cell_x;
-                best_y = cell_y;
+    // A single owner id per pixel is enough because grain_front_priority is a
+    // permutation of the stable id for a fixed seed, so priorities cannot tie.
+    let priority_seed = layers[0].0.seed ^ 0xCBBB_9D5D;
+    let mut winners = vec![u32::MAX; source.width * source.height];
+    for (layer_slot, &(context, density_weight)) in layers.iter().enumerate() {
+        let id_base = layer_slot * grains_per_layer;
+        for block_index in 0..grains_per_layer {
+            let block = block_at(
+                block_index % columns,
+                block_index / columns,
+                grain,
+                source.width,
+                source.height,
+            );
+            let prepared = prepare_kernel(block, context);
+            if gather_grain_radius_at(
+                block,
+                prepared.center_x,
+                prepared.center_y,
+                context,
+                density_weight,
+            )
+            .is_none()
+            {
+                continue;
             }
+            let grain_id = (id_base + block_index) as u32;
+            let priority = grain_front_priority(priority_seed, grain_id);
+            visit_kernel_pixels(prepared, context, |index| {
+                let current = winners[index];
+                if current == u32::MAX || priority > grain_front_priority(priority_seed, current) {
+                    winners[index] = grain_id;
+                }
+            });
         }
     }
 
-    let shifted_settings = RenderSettings {
-        seed: seed ^ 0x517C_C1B7,
-        ..*settings
-    };
-    random_disk_offset(best_x, best_y, cell_z, tap, &shifted_settings)
+    let mut visible_grains = vec![false; total_grains];
+    for &winner in &winners {
+        if winner != u32::MAX {
+            visible_grains[winner as usize] = true;
+        }
+    }
+    let settings = layers[0].0.settings;
+    let fill_changes_grain = !matches!(settings.grain_fill_mode, GrainFillMode::Texture)
+        && settings.grain_fill_opacity > 0.0;
+    let mut visible_indices = Vec::new();
+    let mut median_scratch = Vec::new();
+    let mut primary_offsets = Vec::with_capacity(settings.gather_samples as usize);
+    for (layer_slot, &(context, density_weight)) in layers.iter().enumerate() {
+        let id_base = layer_slot * grains_per_layer;
+        for block_index in 0..grains_per_layer {
+            let winner_id = (id_base + block_index) as u32;
+            if !visible_grains[winner_id as usize] {
+                continue;
+            }
+            let block = block_at(
+                block_index % columns,
+                block_index / columns,
+                grain,
+                source.width,
+                source.height,
+            );
+            let prepared = prepare_kernel(block, context);
+            let Some(state) = gather_grain_state_at(
+                block,
+                prepared.center_x,
+                prepared.center_y,
+                context,
+                density_weight,
+            ) else {
+                continue;
+            };
+            gather_primary_offsets(block, state, context, &mut primary_offsets);
+
+            if fill_changes_grain {
+                visible_indices.clear();
+                visit_kernel_bounds(prepared, context, |index| {
+                    if winners[index] == winner_id {
+                        visible_indices.push(index as u32);
+                    }
+                });
+                if visible_indices.is_empty() {
+                    continue;
+                }
+                for &index in &visible_indices {
+                    let index = index as usize;
+                    let x = index % source.width;
+                    let y = index / source.width;
+                    output[index] =
+                        gather_pixel(source, x, y, block, state, &primary_offsets, context);
+                }
+                let representative = grain_representative(
+                    output,
+                    &visible_indices,
+                    block,
+                    context,
+                    settings.grain_fill_mode,
+                    &mut median_scratch,
+                );
+                for &index in &visible_indices {
+                    let index = index as usize;
+                    output[index] =
+                        lerp_pixel(output[index], representative, settings.grain_fill_opacity);
+                }
+            } else {
+                visit_kernel_bounds(prepared, context, |index| {
+                    if winners[index] == winner_id {
+                        let x = index % source.width;
+                        let y = index / source.width;
+                        output[index] =
+                            gather_pixel(source, x, y, block, state, &primary_offsets, context);
+                    }
+                });
+            }
+        }
+    }
 }
 
-fn blue_noise_offset(
-    sample_params: ScatterSampleParams,
-    tap: u32,
-    settings: &RenderSettings,
-) -> (f32, f32) {
-    let phase_scale = (sample_params.grain / 8.0).max(1.0);
-    let cell_x = (sample_params.noise_x / phase_scale).floor() as i32;
-    let cell_y = (sample_params.noise_y / phase_scale).floor() as i32;
-    let cell_z = sample_params.noise_w.floor() as i32;
-    let mask_x = cell_x.rem_euclid(8) as usize;
-    let mask_y = cell_y.rem_euclid(8) as usize;
-    let mask = (BLUE_NOISE_8X8[mask_y * 8 + mask_x] as f32 + 0.5) / 64.0;
-    let phase = rand01(hash_3d(cell_x, cell_y, cell_z, 11, settings.seed));
-    let jitter = rand01(hash_3d(
-        cell_x,
-        cell_y,
-        cell_z.wrapping_add(tap as i32),
-        12,
-        settings.seed,
-    ));
-    let sample_count = settings.samples.max(1) as f32;
-    let radial_index = (tap as f32 + 0.5 + (jitter - 0.5) * 0.5).clamp(0.0, sample_count);
-    let radius = sample_radius(
-        radial_index / sample_count,
-        settings.sampling_distribution,
-        settings.distribution_shape,
+fn render_non_overlapping_gather_layer(
+    output: &mut [PixelF32],
+    source: &LayerBuffer,
+    context: KernelContext<'_>,
+    density_weight: f32,
+) {
+    let settings = context.settings;
+    let grain = settings.grain_size.max(1);
+    let columns = source.width.div_ceil(grain);
+    let rows = source.height.div_ceil(grain);
+    let fill_changes_grain = !matches!(settings.grain_fill_mode, GrainFillMode::Texture)
+        && settings.grain_fill_opacity > 0.0;
+    let mut visible_indices = Vec::new();
+    let mut median_scratch = Vec::new();
+    let mut primary_offsets = Vec::with_capacity(settings.gather_samples as usize);
+
+    for block_index in 0..columns * rows {
+        let block = block_at(
+            block_index % columns,
+            block_index / columns,
+            grain,
+            source.width,
+            source.height,
+        );
+        let prepared = prepare_kernel(block, context);
+        let Some(state) = gather_grain_state_at(
+            block,
+            prepared.center_x,
+            prepared.center_y,
+            context,
+            density_weight,
+        ) else {
+            continue;
+        };
+        gather_primary_offsets(block, state, context, &mut primary_offsets);
+
+        if fill_changes_grain {
+            visible_indices.clear();
+            visit_kernel_pixels(prepared, context, |index| {
+                visible_indices.push(index as u32);
+            });
+            if visible_indices.is_empty() {
+                continue;
+            }
+            for &index in &visible_indices {
+                let index = index as usize;
+                let x = index % source.width;
+                let y = index / source.width;
+                output[index] = gather_pixel(source, x, y, block, state, &primary_offsets, context);
+            }
+            let representative = grain_representative(
+                output,
+                &visible_indices,
+                block,
+                context,
+                settings.grain_fill_mode,
+                &mut median_scratch,
+            );
+            for &index in &visible_indices {
+                let index = index as usize;
+                output[index] =
+                    lerp_pixel(output[index], representative, settings.grain_fill_opacity);
+            }
+        } else {
+            visit_kernel_pixels(prepared, context, |index| {
+                let x = index % source.width;
+                let y = index / source.width;
+                output[index] = gather_pixel(source, x, y, block, state, &primary_offsets, context);
+            });
+        }
+    }
+}
+
+fn gather_grain_state_at(
+    block: Block,
+    center_x: f32,
+    center_y: f32,
+    context: KernelContext<'_>,
+    density_weight: f32,
+) -> Option<GatherGrainState> {
+    let radius = gather_grain_radius_at(block, center_x, center_y, context, density_weight)?;
+    let (sample_x, sample_y) = sample_point_from_center(center_x, center_y, context);
+    let settings = context.settings;
+    let (direction, anisotropy) = anisotropy_at(
+        context.maps.anisotropy,
+        sample_x,
+        sample_y,
+        context.image_width,
+        context.image_height,
+        settings,
     );
-    let angle = tap as f32 * GOLDEN_ANGLE + (mask + phase) * TAU;
-
-    (angle.cos() * radius, angle.sin() * radius)
+    Some(GatherGrainState {
+        radius,
+        transform: anisotropy_transform(direction, anisotropy),
+    })
 }
 
-fn random_disk_offset(
+fn gather_grain_radius_at(
+    block: Block,
+    center_x: f32,
+    center_y: f32,
+    context: KernelContext<'_>,
+    density_weight: f32,
+) -> Option<i32> {
+    let (sample_x, sample_y) = sample_point_from_center(center_x, center_y, context);
+    let settings = context.settings;
+    let amount = settings.amount
+        * density_weight
+        * map_value(
+            context.maps.amount,
+            sample_x,
+            sample_y,
+            context.image_width,
+            context.image_height,
+            settings.amount_map_channel,
+            1.0,
+        );
+    let event = rand01(hash_coords(
+        context.seed,
+        block.grid_x as i32,
+        block.grid_y as i32,
+        0,
+        0xA1,
+    ));
+    if event >= amount.clamp(0.0, 1.0) {
+        return None;
+    }
+    let radius_factor = map_value(
+        context.maps.radius,
+        sample_x,
+        sample_y,
+        context.image_width,
+        context.image_height,
+        settings.radius_map_channel,
+        1.0,
+    );
+    let radius = ((settings.radius as f32) * radius_factor.clamp(0.0, 1.0)).floor() as i32;
+    if radius <= 0 {
+        return None;
+    }
+    Some(radius)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gather_pixel(
+    source: &LayerBuffer,
+    x: usize,
+    y: usize,
+    block: Block,
+    state: GatherGrainState,
+    primary_offsets: &[(i32, i32)],
+    context: KernelContext<'_>,
+) -> PixelF32 {
+    #[cfg(test)]
+    GATHER_PIXEL_CALLS.with(|calls| calls.set(calls.get() + 1));
+
+    let mut sum = transparent_pixel();
+    for tap in 0..context.settings.gather_samples {
+        let sampled = gather_sample(
+            source,
+            x,
+            y,
+            block.grid_x as i32,
+            block.grid_y as i32,
+            state.radius,
+            state.transform,
+            tap,
+            primary_offsets[tap as usize],
+            context.seed,
+            context.settings.edge_mode,
+        );
+        sum.alpha += sampled.alpha;
+        sum.red += sampled.red;
+        sum.green += sampled.green;
+        sum.blue += sampled.blue;
+    }
+    let inverse = (context.settings.gather_samples as f32).recip();
+    PixelF32 {
+        alpha: sum.alpha * inverse,
+        red: sum.red * inverse,
+        green: sum.green * inverse,
+        blue: sum.blue * inverse,
+    }
+}
+
+fn gather_primary_offsets(
+    block: Block,
+    state: GatherGrainState,
+    context: KernelContext<'_>,
+    offsets: &mut Vec<(i32, i32)>,
+) {
+    offsets.clear();
+    for tap in 0..context.settings.gather_samples {
+        offsets.push(discrete_anisotropic_offset_with_transform(
+            block.grid_x as i32,
+            block.grid_y as i32,
+            tap,
+            0,
+            state.radius,
+            state.transform,
+            context.seed,
+        ));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gather_sample(
+    source: &LayerBuffer,
+    x: usize,
+    y: usize,
     cell_x: i32,
     cell_y: i32,
-    cell_z: i32,
+    radius: i32,
+    transform: AnisotropyTransform,
     tap: u32,
-    settings: &RenderSettings,
-) -> (f32, f32) {
-    let z = cell_z.wrapping_add(tap as i32);
-    let angle = rand01(hash_3d(cell_x, cell_y, z, 0, settings.seed)) * TAU;
-    let radius_u = rand01(hash_3d(cell_x, cell_y, z, 1, settings.seed));
-    let radius = sample_radius(
-        radius_u,
-        settings.sampling_distribution,
-        settings.distribution_shape,
-    );
-    (angle.cos() * radius, angle.sin() * radius)
+    primary_offset: (i32, i32),
+    seed: u32,
+    edge_mode: EdgeMode,
+) -> PixelF32 {
+    let first_attempt = if matches!(edge_mode, EdgeMode::Reject) {
+        0
+    } else {
+        MAX_GATHER_ATTEMPTS
+    };
+    for attempt in first_attempt..MAX_GATHER_ATTEMPTS {
+        let (dx, dy) = if attempt == 0 {
+            primary_offset
+        } else {
+            discrete_anisotropic_offset_with_transform(
+                cell_x, cell_y, tap, attempt, radius, transform, seed,
+            )
+        };
+        let sample_x = x as i32 + dx;
+        let sample_y = y as i32 + dy;
+        if matches!(edge_mode, EdgeMode::Reject) {
+            if let (Some(sample_x), Some(sample_y)) = (
+                in_bounds_coord(sample_x, source.width),
+                in_bounds_coord(sample_y, source.height),
+            ) {
+                return source.pixels[sample_y * source.width + sample_x];
+            }
+            continue;
+        }
+        let sample_x = resolve_coord(sample_x, source.width, edge_mode);
+        let sample_y = resolve_coord(sample_y, source.height, edge_mode);
+        if let (Some(sample_x), Some(sample_y)) = (sample_x, sample_y) {
+            return source.pixels[sample_y * source.width + sample_x];
+        }
+        return transparent_pixel();
+    }
+    let sample_x = x as i32 + primary_offset.0;
+    let sample_y = y as i32 + primary_offset.1;
+    let sample_x = resolve_coord(sample_x, source.width, edge_mode);
+    let sample_y = resolve_coord(sample_y, source.height, edge_mode);
+    if let (Some(sample_x), Some(sample_y)) = (sample_x, sample_y) {
+        return source.pixels[sample_y * source.width + sample_x];
+    }
+    if matches!(edge_mode, EdgeMode::Transparent) {
+        return transparent_pixel();
+    }
+    source.pixels[y * source.width + x]
 }
 
-fn sample_radius(u: f32, distribution: SamplingDistribution, shape: f32) -> f32 {
-    let u = u.clamp(0.0, 1.0 - f32::EPSILON);
-    let shape = shape.max(0.0);
-    match distribution {
-        SamplingDistribution::Uniform => u.powf(1.0 / (shape + 1.0)).clamp(0.0, 1.0),
-        SamplingDistribution::Gaussian => {
-            let sigma = 1.0 / (shape + 1.0);
-            let max_cdf = 1.0 - (-0.5 / (sigma * sigma)).exp();
-            (sigma * (-2.0 * (1.0 - u * max_cdf).ln()).sqrt()).clamp(0.0, 1.0)
+fn build_swap_partition<'a>(
+    width: usize,
+    height: usize,
+    maps: RenderMaps<'a>,
+    settings: &'a RenderSettings,
+    seed: u32,
+) -> (GrainPartition, Vec<(KernelContext<'a>, f32)>, usize, usize) {
+    let grain = settings.grain_size.max(1);
+    let columns = width.div_ceil(grain);
+    let rows = height.div_ceil(grain);
+    let groups_per_layer = columns * rows;
+    let layers = density_layers(settings)
+        .into_iter()
+        .map(|(density_layer, density_weight)| {
+            (
+                KernelContext {
+                    image_width: width,
+                    image_height: height,
+                    maps,
+                    settings,
+                    seed: density_layer_seed(seed, density_layer),
+                    density_layer,
+                },
+                density_weight,
+            )
+        })
+        .collect::<Vec<_>>();
+    let total_grains = groups_per_layer.saturating_mul(layers.len());
+    assert!(
+        total_grains < u32::MAX as usize && width.saturating_mul(height) <= u32::MAX as usize,
+        "ScatterMap image contains too many pixels or grains"
+    );
+
+    if layers.len() == 1
+        && layers[0].0.density_layer == 0
+        && settings.grain_position_randomness <= 0.0
+        && settings.kernel_randomness <= 0.0
+    {
+        let partition = build_non_overlapping_swap_partition(
+            width,
+            height,
+            columns,
+            rows,
+            layers[0].0,
+            layers[0].1,
+        );
+        return (partition, layers, columns, rows);
+    }
+
+    let priority_seed = seed;
+    let mut owners = vec![u32::MAX; width * height];
+    for (layer_slot, &(context, density_weight)) in layers.iter().enumerate() {
+        let id_base = layer_slot * groups_per_layer;
+        for block_index in 0..groups_per_layer {
+            let block = block_at(
+                block_index % columns,
+                block_index / columns,
+                grain,
+                width,
+                height,
+            );
+            let prepared = prepare_kernel(block, context);
+            if !swap_grain_is_active(block, prepared, context, density_weight) {
+                continue;
+            }
+            let grain_id = (id_base + block_index) as u32;
+            let priority = grain_front_priority(priority_seed, grain_id);
+            visit_kernel_pixels(prepared, context, |pixel_index| {
+                let current = owners[pixel_index];
+                if current == u32::MAX || priority > grain_front_priority(priority_seed, current) {
+                    owners[pixel_index] = grain_id;
+                }
+            });
         }
-        SamplingDistribution::Exponential => {
-            let lambda = shape + 1.0;
-            let max_cdf = 1.0 - (-lambda).exp();
-            (-(1.0 - u * max_cdf).ln() / lambda).clamp(0.0, 1.0)
+    }
+    let partition = grain_partition_from_global_owners(
+        &owners,
+        0,
+        groups_per_layer * layers.len(),
+        columns,
+        rows,
+    );
+    (partition, layers, columns, rows)
+}
+
+fn build_non_overlapping_swap_partition(
+    width: usize,
+    height: usize,
+    columns: usize,
+    rows: usize,
+    context: KernelContext<'_>,
+    density_weight: f32,
+) -> GrainPartition {
+    let grain = context.settings.grain_size.max(1);
+    let group_count = columns * rows;
+    let mut offsets = Vec::with_capacity(group_count + 1);
+    let mut indices = Vec::with_capacity(width * height);
+    offsets.push(0_u32);
+    for block_index in 0..group_count {
+        let block = block_at(
+            block_index % columns,
+            block_index / columns,
+            grain,
+            width,
+            height,
+        );
+        let prepared = prepare_kernel(block, context);
+        if swap_grain_is_active(block, prepared, context, density_weight) {
+            visit_kernel_pixels(prepared, context, |pixel_index| {
+                indices.push(pixel_index as u32);
+            });
         }
+        offsets.push(indices.len() as u32);
+    }
+    GrainPartition {
+        offsets,
+        indices,
+        columns,
+        rows,
     }
 }
 
-fn grain_cell(sample_params: ScatterSampleParams) -> (i32, i32, i32) {
-    (
-        (sample_params.noise_x / sample_params.grain).floor() as i32,
-        (sample_params.noise_y / sample_params.grain).floor() as i32,
-        sample_params.noise_w.floor() as i32,
+fn swap_grain_is_active(
+    block: Block,
+    prepared: PreparedKernel,
+    context: KernelContext<'_>,
+    density_weight: f32,
+) -> bool {
+    let (sample_x, sample_y) =
+        sample_point_from_center(prepared.center_x, prepared.center_y, context);
+    let settings = context.settings;
+    let amount = settings.amount
+        * density_weight
+        * map_value(
+            context.maps.amount,
+            sample_x,
+            sample_y,
+            context.image_width,
+            context.image_height,
+            settings.amount_map_channel,
+            1.0,
+        );
+    if rand01(hash_coords(
+        context.seed ^ 0x6C8E_9CF5,
+        block.grid_x as i32,
+        block.grid_y as i32,
+        0,
+        0xB1,
+    )) >= amount.clamp(0.0, 1.0)
+    {
+        return false;
+    }
+    let radius_factor = map_value(
+        context.maps.radius,
+        sample_x,
+        sample_y,
+        context.image_width,
+        context.image_height,
+        settings.radius_map_channel,
+        1.0,
+    );
+    ((settings.radius as f32) * radius_factor.clamp(0.0, 1.0)).floor() as i32 > 0
+}
+
+fn grain_partition_from_global_owners(
+    owners: &[u32],
+    id_base: usize,
+    group_count: usize,
+    columns: usize,
+    rows: usize,
+) -> GrainPartition {
+    let id_base = id_base as u32;
+    let id_end = id_base + group_count as u32;
+    let mut offsets = vec![0_u32; group_count + 1];
+    for &owner in owners {
+        if (id_base..id_end).contains(&owner) {
+            offsets[(owner - id_base) as usize + 1] += 1;
+        }
+    }
+    for index in 1..offsets.len() {
+        offsets[index] = offsets[index - 1].saturating_add(offsets[index]);
+    }
+    let assigned = offsets.last().copied().unwrap_or(0);
+    let mut indices = vec![0_u32; assigned as usize];
+    for (pixel_index, &owner) in owners.iter().enumerate().rev() {
+        if !(id_base..id_end).contains(&owner) {
+            continue;
+        }
+        let end = &mut offsets[(owner - id_base) as usize + 1];
+        *end -= 1;
+        indices[*end as usize] = pixel_index as u32;
+    }
+    for index in 0..group_count {
+        offsets[index] = offsets[index + 1];
+    }
+    offsets[group_count] = assigned;
+    GrainPartition {
+        offsets,
+        indices,
+        columns,
+        rows,
+    }
+}
+
+fn render_swap(
+    source: &LayerBuffer,
+    maps: RenderMaps<'_>,
+    settings: &RenderSettings,
+    seed: u32,
+) -> Vec<PixelF32> {
+    if source.width == 0 || source.height == 0 || settings.amount <= 0.0 || settings.radius <= 0 {
+        return source.pixels.clone();
+    }
+    let pixel_count = source.width * source.height;
+    assert!(
+        pixel_count <= u32::MAX as usize,
+        "ScatterMap image contains too many pixels"
+    );
+    let mut permutation: Vec<u32> = (0..pixel_count as u32).collect();
+    let (partition, layers, columns, rows) =
+        build_swap_partition(source.width, source.height, maps, settings, seed);
+    let groups_per_layer = columns * rows;
+    let fill_changes_grain = !matches!(settings.grain_fill_mode, GrainFillMode::Texture)
+        && settings.grain_fill_opacity > 0.0;
+    let mut affected_layers = Vec::new();
+    for (layer_slot, &(kernel_context, _)) in layers.iter().enumerate() {
+        let affected = build_swap_permutation_for_partition(
+            &mut permutation,
+            source.width,
+            source.height,
+            maps,
+            settings,
+            kernel_context.seed,
+            &partition,
+            layer_slot * groups_per_layer,
+            kernel_context,
+        );
+        if fill_changes_grain {
+            affected_layers.push((layer_slot, affected));
+        }
+    }
+    if !fill_changes_grain {
+        drop(partition);
+        return permutation
+            .into_iter()
+            .map(|source_index| source.pixels[source_index as usize])
+            .collect();
+    }
+    let mut output: Vec<PixelF32> = permutation
+        .into_iter()
+        .map(|source_index| source.pixels[source_index as usize])
+        .collect();
+    for (layer_slot, affected) in affected_layers {
+        let kernel_context = layers[layer_slot].0;
+        apply_grain_fill(
+            &mut output,
+            &partition,
+            layer_slot * groups_per_layer,
+            &affected,
+            kernel_context,
+        );
+    }
+    output
+}
+
+#[cfg(test)]
+fn build_swap_permutation(
+    width: usize,
+    height: usize,
+    maps: RenderMaps<'_>,
+    settings: &RenderSettings,
+    seed: u32,
+) -> Vec<u32> {
+    assert!(
+        width.saturating_mul(height) <= u32::MAX as usize,
+        "ScatterMap image contains too many pixels"
+    );
+    let mut permutation: Vec<u32> = (0..(width * height) as u32).collect();
+    if width == 0 || height == 0 || settings.amount <= 0.0 || settings.radius <= 0 {
+        return permutation;
+    }
+    let (partition, layers, columns, rows) =
+        build_swap_partition(width, height, maps, settings, seed);
+    let groups_per_layer = columns * rows;
+    for (layer_slot, &(kernel_context, _)) in layers.iter().enumerate() {
+        build_swap_permutation_for_partition(
+            &mut permutation,
+            width,
+            height,
+            maps,
+            settings,
+            kernel_context.seed,
+            &partition,
+            layer_slot * groups_per_layer,
+            kernel_context,
+        );
+    }
+    permutation
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_swap_permutation_for_partition(
+    permutation: &mut [u32],
+    width: usize,
+    height: usize,
+    maps: RenderMaps<'_>,
+    settings: &RenderSettings,
+    seed: u32,
+    partition: &GrainPartition,
+    group_base: usize,
+    kernel_context: KernelContext<'_>,
+) -> Vec<bool> {
+    let grain = settings.grain_size.max(1);
+
+    let group_count = partition.columns * partition.rows;
+    let mut radii = vec![0_i32; group_count];
+    let mut order = Vec::with_capacity(group_count.min(partition.indices.len()));
+    for (index, radius) in radii.iter_mut().enumerate() {
+        if partition.group(group_base + index).is_empty() {
+            continue;
+        }
+        let block = partition_block(index, partition, kernel_context);
+        let (center_x, center_y) = grain_sample_point(block, kernel_context);
+        let radius_factor = map_value(
+            maps.radius,
+            center_x,
+            center_y,
+            width,
+            height,
+            settings.radius_map_channel,
+            1.0,
+        );
+        *radius = ((settings.radius as f32) * radius_factor.clamp(0.0, 1.0)).floor() as i32;
+        if *radius <= 0 {
+            continue;
+        }
+        order.push(index as u32);
+    }
+
+    shuffle_values(&mut order, seed ^ 0xD1B5_4A35);
+    let mut used = vec![false; group_count];
+    for block_index in order {
+        let block_index = block_index as usize;
+        if used[block_index] {
+            continue;
+        }
+        let block = partition_block(block_index, partition, kernel_context);
+        let (block_center_x, block_center_y) = kernel_center(block, kernel_context);
+        let (sample_x, sample_y) =
+            sample_point_from_center(block_center_x, block_center_y, kernel_context);
+        let (direction, anisotropy) =
+            anisotropy_at(maps.anisotropy, sample_x, sample_y, width, height, settings);
+        let transform = anisotropy_transform(direction, anisotropy);
+        let cell_radius = (radii[block_index] as usize).div_ceil(grain).max(1) as i32;
+        let mut partner = None;
+        for attempt in 0..MAX_SWAP_ATTEMPTS {
+            let (offset_x, offset_y) = discrete_anisotropic_offset_with_transform(
+                block.grid_x as i32,
+                block.grid_y as i32,
+                0,
+                attempt,
+                cell_radius,
+                transform,
+                seed ^ 0x94D0_49BB,
+            );
+            let candidate_x = block.grid_x as i32 + offset_x;
+            let candidate_y = block.grid_y as i32 + offset_y;
+            if candidate_x < 0
+                || candidate_y < 0
+                || candidate_x >= partition.columns as i32
+                || candidate_y >= partition.rows as i32
+            {
+                continue;
+            }
+            let candidate_index = candidate_y as usize * partition.columns + candidate_x as usize;
+            let candidate = partition_block(candidate_index, partition, kernel_context);
+            if candidate_index == block_index
+                || used[candidate_index]
+                || radii[candidate_index] <= 0
+                || partition.group(group_base + candidate_index).len()
+                    != partition.group(group_base + block_index).len()
+            {
+                continue;
+            }
+            let (candidate_center_x, candidate_center_y) = kernel_center(candidate, kernel_context);
+            let dx = candidate_center_x - block_center_x;
+            let dy = candidate_center_y - block_center_y;
+            let allowed_radius = radii[block_index].min(radii[candidate_index]) as f32;
+            if dx * dx + dy * dy > allowed_radius * allowed_radius {
+                continue;
+            }
+            partner = Some(candidate_index);
+            break;
+        }
+        if let Some(partner_index) = partner {
+            let allowed_radius = radii[block_index].min(radii[partner_index]);
+            if swap_grain_groups(
+                permutation,
+                partition.group(group_base + block_index),
+                partition.group(group_base + partner_index),
+                width,
+                allowed_radius,
+            ) {
+                used[block_index] = true;
+                used[partner_index] = true;
+            }
+        }
+    }
+    used
+}
+
+fn swap_grain_groups(
+    permutation: &mut [u32],
+    a: &[u32],
+    b: &[u32],
+    width: usize,
+    allowed_radius: i32,
+) -> bool {
+    if a.is_empty() || a.len() != b.len() {
+        return false;
+    }
+    let allowed_squared = allowed_radius as i64 * allowed_radius as i64;
+    for (&destination_a, &destination_b) in a.iter().zip(b) {
+        let destination_a = destination_a as usize;
+        let destination_b = destination_b as usize;
+        let ax = destination_a % width;
+        let ay = destination_a / width;
+        let bx = destination_b % width;
+        let by = destination_b / width;
+        let dx = ax as i64 - bx as i64;
+        let dy = ay as i64 - by as i64;
+        let source_a = permutation[destination_a] as usize;
+        let source_b = permutation[destination_b] as usize;
+        let source_ax = source_a % width;
+        let source_ay = source_a / width;
+        let source_bx = source_b % width;
+        let source_by = source_b / width;
+        let next_a_dx = ax as i64 - source_bx as i64;
+        let next_a_dy = ay as i64 - source_by as i64;
+        let next_b_dx = bx as i64 - source_ax as i64;
+        let next_b_dy = by as i64 - source_ay as i64;
+        if dx * dx + dy * dy > allowed_squared
+            || next_a_dx * next_a_dx + next_a_dy * next_a_dy > allowed_squared
+            || next_b_dx * next_b_dx + next_b_dy * next_b_dy > allowed_squared
+        {
+            return false;
+        }
+    }
+    for (&destination_a, &destination_b) in a.iter().zip(b) {
+        permutation.swap(destination_a as usize, destination_b as usize);
+    }
+    true
+}
+
+fn block_at(
+    grid_x: usize,
+    grid_y: usize,
+    grain: usize,
+    image_width: usize,
+    image_height: usize,
+) -> Block {
+    let x = grid_x * grain;
+    let y = grid_y * grain;
+    Block {
+        x,
+        y,
+        width: grain.min(image_width - x),
+        height: grain.min(image_height - y),
+        grid_x,
+        grid_y,
+    }
+}
+
+#[cfg(test)]
+fn build_grain_partition(
+    width: usize,
+    height: usize,
+    context: KernelContext<'_>,
+) -> GrainPartition {
+    let grain = context.settings.grain_size.max(1);
+    let columns = width.div_ceil(grain);
+    let rows = height.div_ceil(grain);
+    let group_count = columns * rows;
+    assert!(
+        group_count < u32::MAX as usize && width.saturating_mul(height) <= u32::MAX as usize,
+        "ScatterMap image contains too many pixels or grains"
+    );
+    let mut winners = vec![u32::MAX; width * height];
+    for block_index in 0..group_count {
+        let block = block_at(
+            block_index % columns,
+            block_index / columns,
+            grain,
+            width,
+            height,
+        );
+        let prepared = prepare_kernel(block, context);
+        visit_kernel_pixels(prepared, context, |pixel_index| {
+            let current = winners[pixel_index];
+            if current == u32::MAX
+                || prepared.front_priority > grain_front_priority(context.seed, current)
+            {
+                winners[pixel_index] = block_index as u32;
+            }
+        });
+    }
+    grain_partition_from_global_owners(&winners, 0, group_count, columns, rows)
+}
+
+fn partition_block(index: usize, partition: &GrainPartition, context: KernelContext<'_>) -> Block {
+    block_at(
+        index % partition.columns,
+        index / partition.columns,
+        context.settings.grain_size.max(1),
+        context.image_width,
+        context.image_height,
     )
 }
 
-struct ColorAccumulator {
-    color_space: ScatterColorSpace,
-    sum: [f32; 4],
-    hue_x: f32,
-    hue_y: f32,
-    count: f32,
+fn kernel_center(block: Block, context: KernelContext<'_>) -> (f32, f32) {
+    let randomness = context.settings.grain_position_randomness;
+    let base_x = block.x as f32 + block.width as f32 * 0.5;
+    let base_y = block.y as f32 + block.height as f32 * 0.5;
+    if context.density_layer == 0 && randomness <= 0.0 {
+        return (base_x, base_y);
+    }
+    let random_x = rand01(hash_coords(
+        context.seed ^ 0x510E_527F,
+        block.grid_x as i32,
+        block.grid_y as i32,
+        0,
+        0xC5,
+    ));
+    let random_y = rand01(hash_coords(
+        context.seed ^ 0x9B05_688C,
+        block.grid_x as i32,
+        block.grid_y as i32,
+        0,
+        0xC6,
+    ));
+    if context.density_layer == 0 {
+        let offset_x = (random_x * 2.0 - 1.0) * block.width as f32 * 0.5 * randomness;
+        let offset_y = (random_y * 2.0 - 1.0) * block.height as f32 * 0.5 * randomness;
+        return (
+            (base_x + offset_x).clamp(0.5, context.image_width as f32 - 0.5),
+            (base_y + offset_y).clamp(0.5, context.image_height as f32 - 0.5),
+        );
+    }
+    let (phase_x, phase_y) = density_layer_phase(context.density_layer);
+    let offset_x = lerp(phase_x, random_x - 0.5, randomness) * block.width as f32;
+    let offset_y = lerp(phase_y, random_y - 0.5, randomness) * block.height as f32;
+    let center_x = (base_x + offset_x).clamp(0.5, context.image_width as f32 - 0.5);
+    let center_y = (base_y + offset_y).clamp(0.5, context.image_height as f32 - 0.5);
+    (center_x, center_y)
 }
 
-impl ColorAccumulator {
-    fn new(color_space: ScatterColorSpace) -> Self {
-        Self {
-            color_space,
-            sum: [0.0; 4],
-            hue_x: 0.0,
-            hue_y: 0.0,
-            count: 0.0,
-        }
-    }
+fn density_layer_phase(layer: u32) -> (f32, f32) {
+    const PHASES: [(f32, f32); 16] = [
+        (0.0, 0.0),
+        (-0.5, -0.5),
+        (-0.5, 0.0),
+        (0.0, -0.5),
+        (-0.25, -0.25),
+        (0.25, 0.25),
+        (-0.25, 0.25),
+        (0.25, -0.25),
+        (-0.25, 0.0),
+        (0.25, 0.0),
+        (0.0, -0.25),
+        (0.0, 0.25),
+        (-0.5, -0.25),
+        (-0.5, 0.25),
+        (-0.25, -0.5),
+        (0.25, -0.5),
+    ];
+    PHASES[layer.min(PHASES.len() as u32 - 1) as usize]
+}
 
-    fn add(&mut self, px: PixelF32) {
-        self.count += 1.0;
-        match self.color_space {
-            ScatterColorSpace::LinearRgba
-            | ScatterColorSpace::LinearRgb
-            | ScatterColorSpace::Alpha => {
-                self.sum[0] += px.red;
-                self.sum[1] += px.green;
-                self.sum[2] += px.blue;
-                self.sum[3] += px.alpha;
-            }
-            ScatterColorSpace::Srgb => {
-                let lin = LinSrgb::new(px.red, px.green, px.blue);
-                let srgb: Srgb<f32> = Srgb::from_linear(lin);
-                self.sum[0] += srgb.red;
-                self.sum[1] += srgb.green;
-                self.sum[2] += srgb.blue;
-                self.sum[3] += px.alpha;
-            }
-            ScatterColorSpace::Oklab => {
-                let c: Oklab<f32> = Oklab::from_color(LinSrgb::new(px.red, px.green, px.blue));
-                self.sum[0] += c.l;
-                self.sum[1] += c.a;
-                self.sum[2] += c.b;
-                self.sum[3] += px.alpha;
-            }
-            ScatterColorSpace::Oklch => {
-                let c: Oklch<f32> = Oklch::from_color(LinSrgb::new(px.red, px.green, px.blue));
-                let hue = c.hue.into_degrees().to_radians();
-                let weight = c.chroma.max(1.0e-6);
-                self.hue_x += hue.cos() * weight;
-                self.hue_y += hue.sin() * weight;
-                self.sum[0] += c.l;
-                self.sum[1] += c.chroma.min(OKLCH_CHROMA_MAX * 4.0);
-                self.sum[3] += px.alpha;
-            }
-            ScatterColorSpace::Hsl => {
-                let c = Hsl::from_color(LinSrgb::new(px.red, px.green, px.blue));
-                let hue = c.hue.into_degrees().to_radians();
-                let weight = c.saturation.max(1.0e-6);
-                self.hue_x += hue.cos() * weight;
-                self.hue_y += hue.sin() * weight;
-                self.sum[0] += c.saturation;
-                self.sum[1] += c.lightness;
-                self.sum[3] += px.alpha;
-            }
-            ScatterColorSpace::Hsv => {
-                let c = Hsv::from_color(LinSrgb::new(px.red, px.green, px.blue));
-                let hue = c.hue.into_degrees().to_radians();
-                let weight = c.saturation.max(1.0e-6);
-                self.hue_x += hue.cos() * weight;
-                self.hue_y += hue.sin() * weight;
-                self.sum[0] += c.saturation;
-                self.sum[1] += c.value;
-                self.sum[3] += px.alpha;
-            }
-        }
-    }
+fn grain_front_priority(seed: u32, grain_id: u32) -> u32 {
+    hash_u32(seed ^ grain_id.wrapping_mul(0x9E37_79B9) ^ 0xA54F_F53A)
+}
 
-    fn finish(&self, center: PixelF32, preserve_alpha: bool) -> PixelF32 {
-        let inv = self.count.max(1.0).recip();
-        let avg_alpha = self.sum[3] * inv;
-        let alpha = if preserve_alpha {
-            center.alpha
-        } else {
-            avg_alpha
-        };
-
-        match self.color_space {
-            ScatterColorSpace::LinearRgba => PixelF32 {
-                red: self.sum[0] * inv,
-                green: self.sum[1] * inv,
-                blue: self.sum[2] * inv,
-                alpha,
-            },
-            ScatterColorSpace::LinearRgb => PixelF32 {
-                red: self.sum[0] * inv,
-                green: self.sum[1] * inv,
-                blue: self.sum[2] * inv,
-                alpha,
-            },
-            ScatterColorSpace::Alpha => PixelF32 {
-                red: center.red,
-                green: center.green,
-                blue: center.blue,
-                alpha: avg_alpha,
-            },
-            ScatterColorSpace::Srgb => {
-                let lin = Srgb::new(self.sum[0] * inv, self.sum[1] * inv, self.sum[2] * inv)
-                    .into_linear();
-                PixelF32 {
-                    red: lin.red,
-                    green: lin.green,
-                    blue: lin.blue,
-                    alpha,
-                }
-            }
-            ScatterColorSpace::Oklab => {
-                let lin = LinSrgb::from_color(Oklab::new(
-                    self.sum[0] * inv,
-                    self.sum[1] * inv,
-                    self.sum[2] * inv,
-                ));
-                PixelF32 {
-                    red: lin.red,
-                    green: lin.green,
-                    blue: lin.blue,
-                    alpha,
-                }
-            }
-            ScatterColorSpace::Oklch => {
-                let hue = hue_from_vector(self.hue_x, self.hue_y);
-                let lin = LinSrgb::from_color(Oklch::new(
-                    self.sum[0] * inv,
-                    self.sum[1] * inv,
-                    OklabHue::from_degrees(hue),
-                ));
-                PixelF32 {
-                    red: lin.red,
-                    green: lin.green,
-                    blue: lin.blue,
-                    alpha,
-                }
-            }
-            ScatterColorSpace::Hsl => {
-                let hue = hue_from_vector(self.hue_x, self.hue_y);
-                let lin = LinSrgb::from_color(Hsl::new(
-                    RgbHue::from_degrees(hue),
-                    (self.sum[0] * inv).clamp(0.0, 1.0),
-                    (self.sum[1] * inv).clamp(0.0, 1.0),
-                ));
-                PixelF32 {
-                    red: lin.red,
-                    green: lin.green,
-                    blue: lin.blue,
-                    alpha,
-                }
-            }
-            ScatterColorSpace::Hsv => {
-                let hue = hue_from_vector(self.hue_x, self.hue_y);
-                let lin = LinSrgb::from_color(Hsv::new(
-                    RgbHue::from_degrees(hue),
-                    (self.sum[0] * inv).clamp(0.0, 1.0),
-                    (self.sum[1] * inv).clamp(0.0, 1.0),
-                ));
-                PixelF32 {
-                    red: lin.red,
-                    green: lin.green,
-                    blue: lin.blue,
-                    alpha,
-                }
-            }
-        }
+fn prepare_kernel(block: Block, context: KernelContext<'_>) -> PreparedKernel {
+    let (center_x, center_y) = kernel_center(block, context);
+    let scale = kernel_scale_at(block, center_x, center_y, context);
+    #[cfg(test)]
+    let columns = context
+        .image_width
+        .div_ceil(context.settings.grain_size.max(1));
+    #[cfg(test)]
+    let grain_id = block.grid_y * columns + block.grid_x;
+    PreparedKernel {
+        block,
+        center_x,
+        center_y,
+        radius_x: (block.width as f32 * 0.5 * scale).max(0.5),
+        radius_y: (block.height as f32 * 0.5 * scale).max(0.5),
+        #[cfg(test)]
+        front_priority: grain_front_priority(context.seed, grain_id as u32),
     }
 }
 
-fn hue_from_vector(x: f32, y: f32) -> f32 {
-    if x.abs() + y.abs() <= 1.0e-12 {
-        0.0
+fn grain_sample_point(block: Block, context: KernelContext<'_>) -> (usize, usize) {
+    let (center_x, center_y) = kernel_center(block, context);
+    sample_point_from_center(center_x, center_y, context)
+}
+
+fn sample_point_from_center(
+    center_x: f32,
+    center_y: f32,
+    context: KernelContext<'_>,
+) -> (usize, usize) {
+    let pixel_x = (center_x - 0.5)
+        .round()
+        .clamp(0.0, context.image_width.saturating_sub(1) as f32) as usize;
+    let pixel_y = (center_y - 0.5)
+        .round()
+        .clamp(0.0, context.image_height.saturating_sub(1) as f32) as usize;
+    (pixel_x, pixel_y)
+}
+
+#[cfg(test)]
+fn kernel_contains(
+    block: Block,
+    pixel_x: usize,
+    pixel_y: usize,
+    context: KernelContext<'_>,
+) -> bool {
+    kernel_contains_prepared(prepare_kernel(block, context), pixel_x, pixel_y, context)
+}
+
+fn kernel_contains_prepared(
+    prepared: PreparedKernel,
+    pixel_x: usize,
+    pixel_y: usize,
+    context: KernelContext<'_>,
+) -> bool {
+    let block = prepared.block;
+    let nx = (pixel_x as f32 + 0.5 - prepared.center_x) / prepared.radius_x;
+    let ny = (pixel_y as f32 + 0.5 - prepared.center_y) / prepared.radius_y;
+    let shape_noise = if context.settings.kernel_randomness > 0.0 {
+        rand01(hash_coords(
+            context.seed ^ 0x3C6E_F372,
+            block.grid_x as i32,
+            block.grid_y as i32,
+            (pixel_y * context.image_width + pixel_x) as i32,
+            0xC3,
+        )) * 2.0
+            - 1.0
     } else {
-        y.atan2(x).to_degrees().rem_euclid(360.0)
-    }
-}
-
-fn anisotropy_flow_at(
-    map: Option<&LayerBuffer>,
-    coord: OutputCoord,
-    mode: AnisotropyMapMode,
-    divergence_source: DivergenceSource,
-) -> FlowVector {
-    let Some(map) = map else {
-        return FlowVector {
-            dir_x: 1.0,
-            dir_y: 0.0,
-            strength: 0.0,
-            valid: false,
-        };
+        0.0
     };
 
+    match context.settings.grain_shape {
+        GrainShape::Square | GrainShape::Circle => {
+            let distance = if matches!(context.settings.grain_shape, GrainShape::Circle) {
+                (nx * nx + ny * ny).sqrt()
+            } else {
+                nx.abs().max(ny.abs())
+            };
+            let boundary = 1.0 + shape_noise * context.settings.kernel_randomness * 0.35;
+            distance <= boundary
+        }
+        GrainShape::Texture => {
+            if nx.abs() > 1.0 || ny.abs() > 1.0 {
+                return false;
+            }
+            let Some(texture) = context.maps.kernel_texture else {
+                return false;
+            };
+            let u = (nx + 1.0) * 0.5;
+            let v = (ny + 1.0) * 0.5;
+            let texture_x = u * texture.width as f32 - 0.5;
+            let texture_y = v * texture.height as f32 - 0.5;
+            let value = scalar_from_pixel(
+                sample_map_bilinear(texture, texture_x, texture_y),
+                context.settings.kernel_texture_channel,
+            )
+            .clamp(0.0, 1.0);
+            let threshold = (context.settings.kernel_threshold
+                + shape_noise * context.settings.kernel_randomness * 0.5)
+                .clamp(0.0, 1.0);
+            value >= threshold
+        }
+    }
+}
+
+fn kernel_pixel_bounds(
+    prepared: PreparedKernel,
+    context: KernelContext<'_>,
+) -> Option<(usize, usize, usize, usize)> {
+    if context.image_width == 0 || context.image_height == 0 {
+        return None;
+    }
+    let support = match context.settings.grain_shape {
+        GrainShape::Square | GrainShape::Circle => 1.0 + context.settings.kernel_randomness * 0.35,
+        GrainShape::Texture => 1.0,
+    };
+    let geometric_min_x = (prepared.center_x - prepared.radius_x * support - 0.5).ceil() as i64;
+    let geometric_max_x = (prepared.center_x + prepared.radius_x * support - 0.5).floor() as i64;
+    let geometric_min_y = (prepared.center_y - prepared.radius_y * support - 0.5).ceil() as i64;
+    let geometric_max_y = (prepared.center_y + prepared.radius_y * support - 0.5).floor() as i64;
+
+    let grain = context.settings.grain_size.max(1);
+    let columns = context.image_width.div_ceil(grain);
+    let rows = context.image_height.div_ceil(grain);
+    let neighbor_range =
+        usize::from(context.settings.grain_position_randomness > 0.0 || context.density_layer > 0);
+    let allowed_min_grid_x = prepared.block.grid_x.saturating_sub(neighbor_range);
+    let allowed_max_grid_x = (prepared.block.grid_x + neighbor_range).min(columns - 1);
+    let allowed_min_grid_y = prepared.block.grid_y.saturating_sub(neighbor_range);
+    let allowed_max_grid_y = (prepared.block.grid_y + neighbor_range).min(rows - 1);
+    let allowed_min_x = (allowed_min_grid_x * grain) as i64;
+    let allowed_max_x = ((allowed_max_grid_x + 1) * grain).min(context.image_width) as i64 - 1;
+    let allowed_min_y = (allowed_min_grid_y * grain) as i64;
+    let allowed_max_y = ((allowed_max_grid_y + 1) * grain).min(context.image_height) as i64 - 1;
+
+    let min_x = geometric_min_x.max(allowed_min_x).max(0);
+    let max_x = geometric_max_x
+        .min(allowed_max_x)
+        .min(context.image_width as i64 - 1);
+    let min_y = geometric_min_y.max(allowed_min_y).max(0);
+    let max_y = geometric_max_y
+        .min(allowed_max_y)
+        .min(context.image_height as i64 - 1);
+    (min_x <= max_x && min_y <= max_y).then_some((
+        min_x as usize,
+        max_x as usize,
+        min_y as usize,
+        max_y as usize,
+    ))
+}
+
+fn visit_kernel_bounds(
+    prepared: PreparedKernel,
+    context: KernelContext<'_>,
+    mut visitor: impl FnMut(usize),
+) {
+    let Some((min_x, max_x, min_y, max_y)) = kernel_pixel_bounds(prepared, context) else {
+        return;
+    };
+    for y in min_y..=max_y {
+        let row = y * context.image_width;
+        for x in min_x..=max_x {
+            visitor(row + x);
+        }
+    }
+}
+
+fn visit_kernel_pixels(
+    prepared: PreparedKernel,
+    context: KernelContext<'_>,
+    mut visitor: impl FnMut(usize),
+) {
+    visit_kernel_bounds(prepared, context, |index| {
+        let x = index % context.image_width;
+        let y = index / context.image_width;
+        if kernel_contains_prepared(prepared, x, y, context) {
+            visitor(index);
+        }
+    });
+}
+
+#[cfg(test)]
+fn kernel_scale(block: Block, context: KernelContext<'_>) -> f32 {
+    let (center_x, center_y) = kernel_center(block, context);
+    kernel_scale_at(block, center_x, center_y, context)
+}
+
+fn kernel_scale_at(_block: Block, center_x: f32, center_y: f32, context: KernelContext<'_>) -> f32 {
+    let grain_size = context.settings.grain_size.max(1) as f32;
+    let grain_size_min = context
+        .settings
+        .grain_size_min
+        .clamp(1, context.settings.grain_size.max(1)) as f32;
+    let (sample_x, sample_y) = sample_point_from_center(center_x, center_y, context);
+    let map_factor = map_value(
+        context.maps.grain_size,
+        sample_x,
+        sample_y,
+        context.image_width,
+        context.image_height,
+        context.settings.grain_size_map_channel,
+        1.0,
+    );
+    let map_factor = map_factor.clamp(0.0, 1.0);
+    let mapped_size = lerp(grain_size_min, grain_size, map_factor).round();
+    let randomized_size = if context.settings.grain_size_randomness > 0.0 {
+        let random = rand01(hash_coords(
+            context.seed ^ 0xBB67_AE85,
+            _block.grid_x as i32,
+            _block.grid_y as i32,
+            0,
+            0xC4,
+        ));
+        lerp(
+            mapped_size,
+            grain_size_min,
+            context.settings.grain_size_randomness * random,
+        )
+    } else {
+        mapped_size
+    };
+    (randomized_size / grain_size).clamp(grain_size_min / grain_size, 1.0)
+}
+
+fn apply_grain_fill(
+    output: &mut [PixelF32],
+    partition: &GrainPartition,
+    group_base: usize,
+    affected: &[bool],
+    context: KernelContext<'_>,
+) {
+    let opacity = context.settings.grain_fill_opacity;
+    if matches!(context.settings.grain_fill_mode, GrainFillMode::Texture) || opacity <= 0.0 {
+        return;
+    }
+    let mut median_scratch = Vec::new();
+    for block_index in 0..affected.len() {
+        let group = partition.group(group_base + block_index);
+        if group.is_empty() || !affected.get(block_index).copied().unwrap_or(false) {
+            continue;
+        }
+        let representative = grain_representative(
+            output,
+            group,
+            partition_block(block_index, partition, context),
+            context,
+            context.settings.grain_fill_mode,
+            &mut median_scratch,
+        );
+        for &index in group {
+            let index = index as usize;
+            output[index] = lerp_pixel(output[index], representative, opacity);
+        }
+    }
+}
+
+fn grain_representative(
+    pixels: &[PixelF32],
+    group: &[u32],
+    block: Block,
+    context: KernelContext<'_>,
+    mode: GrainFillMode,
+    median_scratch: &mut Vec<f32>,
+) -> PixelF32 {
     match mode {
-        AnisotropyMapMode::HueSaturation => {
-            let px = sample_map_pixel(map, coord);
-            let (h, s, _) = rgb_to_hsv(px.red, px.green, px.blue);
-            let angle = h * TAU;
-            FlowVector {
-                dir_x: angle.cos(),
-                dir_y: angle.sin(),
-                strength: s.clamp(0.0, 1.0),
-                valid: true,
+        GrainFillMode::Texture => pixels[group[0] as usize],
+        GrainFillMode::Average => {
+            let mut sum = transparent_pixel();
+            for &index in group {
+                let pixel = pixels[index as usize];
+                sum.alpha += pixel.alpha;
+                sum.red += pixel.red;
+                sum.green += pixel.green;
+                sum.blue += pixel.blue;
+            }
+            let inverse = (group.len() as f32).recip();
+            PixelF32 {
+                alpha: sum.alpha * inverse,
+                red: sum.red * inverse,
+                green: sum.green * inverse,
+                blue: sum.blue * inverse,
             }
         }
-        AnisotropyMapMode::Uv | AnisotropyMapMode::Normal => {
-            let px = sample_map_pixel(map, coord);
-            let dir_x = sanitize_non_finite(px.red) * 2.0 - 1.0;
-            let mut dir_y = sanitize_non_finite(px.green) * 2.0 - 1.0;
-            if matches!(mode, AnisotropyMapMode::Normal) {
-                dir_y = -dir_y;
+        GrainFillMode::Median => {
+            median_scratch.clear();
+            median_scratch.extend(group.iter().map(|&index| pixels[index as usize].alpha));
+            let alpha = median(median_scratch);
+            median_scratch.clear();
+            median_scratch.extend(group.iter().map(|&index| pixels[index as usize].red));
+            let red = median(median_scratch);
+            median_scratch.clear();
+            median_scratch.extend(group.iter().map(|&index| pixels[index as usize].green));
+            let green = median(median_scratch);
+            median_scratch.clear();
+            median_scratch.extend(group.iter().map(|&index| pixels[index as usize].blue));
+            let blue = median(median_scratch);
+            PixelF32 {
+                alpha,
+                red,
+                green,
+                blue,
             }
-            normalized_flow(dir_x, dir_y, (dir_x * dir_x + dir_y * dir_y).sqrt())
+        }
+        GrainFillMode::Center => {
+            let (center_x, center_y) = kernel_center(block, context);
+            let center_index = group
+                .iter()
+                .copied()
+                .min_by(|a, b| {
+                    let distance = |index: u32| {
+                        let index = index as usize;
+                        let x = index % context.image_width;
+                        let y = index / context.image_width;
+                        let dx = x as f32 + 0.5 - center_x;
+                        let dy = y as f32 + 0.5 - center_y;
+                        dx * dx + dy * dy
+                    };
+                    distance(*a).total_cmp(&distance(*b))
+                })
+                .unwrap_or(group[0]);
+            pixels[center_index as usize]
+        }
+    }
+}
+
+fn median(values: &mut [f32]) -> f32 {
+    debug_assert!(!values.is_empty());
+    let middle = values.len() / 2;
+    let upper = *values.select_nth_unstable_by(middle, f32::total_cmp).1;
+    if values.len().is_multiple_of(2) {
+        let lower = values[..middle]
+            .iter()
+            .copied()
+            .max_by(f32::total_cmp)
+            .unwrap_or(upper);
+        (lower + upper) * 0.5
+    } else {
+        upper
+    }
+}
+
+fn anisotropy_at(
+    map: Option<&LayerBuffer>,
+    x: usize,
+    y: usize,
+    out_width: usize,
+    out_height: usize,
+    settings: &RenderSettings,
+) -> (f32, f32) {
+    let mut direction = settings.direction;
+    let mut anisotropy = settings.anisotropy;
+    if !settings.use_anisotropy_map {
+        return (direction, anisotropy);
+    }
+    let Some(map) = map else {
+        return (direction, anisotropy);
+    };
+    let (dir_x, dir_y, strength) = match settings.anisotropy_map_mode {
+        AnisotropyMapMode::HueSaturation => {
+            let px = mapped_pixel(map, x, y, out_width, out_height);
+            let (hue, saturation) = hue_saturation(px);
+            (hue.cos(), hue.sin(), saturation)
+        }
+        AnisotropyMapMode::Uv => {
+            let px = mapped_pixel(map, x, y, out_width, out_height);
+            let dir_x = sanitize_non_finite(px.red) * 2.0 - 1.0;
+            let dir_y = sanitize_non_finite(px.green) * 2.0 - 1.0;
+            let strength = (dir_x * dir_x + dir_y * dir_y).sqrt().clamp(0.0, 1.0);
+            (dir_x, dir_y, strength)
+        }
+        AnisotropyMapMode::Normal => {
+            let px = mapped_pixel(map, x, y, out_width, out_height);
+            let dir_x = sanitize_non_finite(px.red) * 2.0 - 1.0;
+            let dir_y = 1.0 - sanitize_non_finite(px.green) * 2.0;
+            let strength = (dir_x * dir_x + dir_y * dir_y).sqrt().clamp(0.0, 1.0);
+            (dir_x, dir_y, strength)
         }
         AnisotropyMapMode::DivergenceDirection | AnisotropyMapMode::DivergenceRotation => {
-            let left = scalar_divergence_value(
+            let Some(flow) = divergence_flow_at(
                 map,
-                OutputCoord {
-                    x: coord.x.saturating_sub(1),
-                    ..coord
-                },
-                divergence_source,
-            );
-            let right = scalar_divergence_value(
-                map,
-                OutputCoord {
-                    x: (coord.x + 1).min(coord.out_w.saturating_sub(1)),
-                    ..coord
-                },
-                divergence_source,
-            );
-            let up = scalar_divergence_value(
-                map,
-                OutputCoord {
-                    y: coord.y.saturating_sub(1),
-                    ..coord
-                },
-                divergence_source,
-            );
-            let down = scalar_divergence_value(
-                map,
-                OutputCoord {
-                    y: (coord.y + 1).min(coord.out_h.saturating_sub(1)),
-                    ..coord
-                },
-                divergence_source,
-            );
-            let gx = right - left;
-            let gy = down - up;
-            let (dir_x, dir_y) = if matches!(mode, AnisotropyMapMode::DivergenceRotation) {
-                (-gy, gx)
-            } else {
-                (gx, gy)
+                x,
+                y,
+                out_width,
+                out_height,
+                settings.anisotropy_divergence_source,
+                matches!(
+                    settings.anisotropy_map_mode,
+                    AnisotropyMapMode::DivergenceRotation
+                ),
+            ) else {
+                return (direction, anisotropy);
             };
-            normalized_flow(dir_x, dir_y, (gx * gx + gy * gy).sqrt() * 4.0)
+            flow
         }
+    };
+    if settings.use_anisotropy_direction && strength > 1.0e-6 && dir_x.abs() + dir_y.abs() > 1.0e-6
+    {
+        direction = dir_y.atan2(dir_x);
     }
+    if settings.use_anisotropy_strength {
+        anisotropy *= strength;
+    }
+    (direction, anisotropy.clamp(0.0, 1.0))
 }
 
-fn normalized_flow(dir_x: f32, dir_y: f32, strength: f32) -> FlowVector {
-    let len2 = dir_x * dir_x + dir_y * dir_y;
-    if !len2.is_finite() || len2 <= 1.0e-12 {
-        return FlowVector {
-            dir_x: 1.0,
-            dir_y: 0.0,
-            strength: 0.0,
-            valid: false,
-        };
+#[allow(clippy::too_many_arguments)]
+fn divergence_flow_at(
+    map: &LayerBuffer,
+    x: usize,
+    y: usize,
+    out_width: usize,
+    out_height: usize,
+    source: DivergenceSource,
+    rotate: bool,
+) -> Option<(f32, f32, f32)> {
+    if map.width == 0 || map.height == 0 || out_width == 0 || out_height == 0 {
+        return None;
     }
-    let inv = len2.sqrt().recip();
-    FlowVector {
-        dir_x: dir_x * inv,
-        dir_y: dir_y * inv,
-        strength: sanitize_non_finite(strength).clamp(0.0, 1.0),
-        valid: true,
+    let left = divergence_value_at(map, x.saturating_sub(1), y, out_width, out_height, source);
+    let right = divergence_value_at(
+        map,
+        x.saturating_add(1).min(out_width - 1),
+        y,
+        out_width,
+        out_height,
+        source,
+    );
+    let up = divergence_value_at(map, x, y.saturating_sub(1), out_width, out_height, source);
+    let down = divergence_value_at(
+        map,
+        x,
+        y.saturating_add(1).min(out_height - 1),
+        out_width,
+        out_height,
+        source,
+    );
+    let gradient_x = right - left;
+    let gradient_y = down - up;
+    let length_squared = gradient_x * gradient_x + gradient_y * gradient_y;
+    if !length_squared.is_finite() || length_squared <= 1.0e-12 {
+        return None;
     }
-}
-
-fn scalar_map_value(
-    map: Option<&LayerBuffer>,
-    coord: OutputCoord,
-    mode: ScalarMapMode,
-    channel: RgbaChannel,
-    default_value: f32,
-) -> f32 {
-    if let Some(map) = map {
-        sanitize_non_finite(scalar_from_pixel(
-            sample_map_pixel(map, coord),
-            mode,
-            channel,
-        ))
+    let length = length_squared.sqrt();
+    let (direction_x, direction_y) = if rotate {
+        (-gradient_y, gradient_x)
     } else {
-        default_value
-    }
+        (gradient_x, gradient_y)
+    };
+    Some((
+        direction_x / length,
+        direction_y / length,
+        (length * 4.0).clamp(0.0, 1.0),
+    ))
 }
 
-fn scalar_divergence_value(map: &LayerBuffer, coord: OutputCoord, source: DivergenceSource) -> f32 {
-    let px = sample_map_pixel(map, coord);
+fn divergence_value_at(
+    map: &LayerBuffer,
+    x: usize,
+    y: usize,
+    out_width: usize,
+    out_height: usize,
+    source: DivergenceSource,
+) -> f32 {
+    let px = mapped_pixel(map, x, y, out_width, out_height);
     match source {
-        DivergenceSource::Gray => luma(px),
+        DivergenceSource::Gray => scalar_from_pixel(px, MapChannel::Luma),
         DivergenceSource::Red => sanitize_non_finite(px.red),
         DivergenceSource::Green => sanitize_non_finite(px.green),
         DivergenceSource::Blue => sanitize_non_finite(px.blue),
         DivergenceSource::Alpha => sanitize_non_finite(px.alpha),
         DivergenceSource::HsvValue => {
-            let (_, _, v) = rgb_to_hsv(px.red, px.green, px.blue);
-            v
+            let red = sanitize_non_finite(px.red);
+            let green = sanitize_non_finite(px.green);
+            let blue = sanitize_non_finite(px.blue);
+            red.max(green).max(blue)
         }
         DivergenceSource::HslLightness => {
-            let (_, _, l) = rgb_to_hsl(px.red, px.green, px.blue);
-            l
+            let red = sanitize_non_finite(px.red);
+            let green = sanitize_non_finite(px.green);
+            let blue = sanitize_non_finite(px.blue);
+            (red.max(green).max(blue) + red.min(green).min(blue)) * 0.5
         }
     }
 }
 
-fn scalar_from_pixel(px: PixelF32, mode: ScalarMapMode, channel: RgbaChannel) -> f32 {
-    match mode {
-        ScalarMapMode::Gray => luma(px),
-        ScalarMapMode::HsvValue => {
-            let (_, _, v) = rgb_to_hsv(px.red, px.green, px.blue);
-            v
-        }
-        ScalarMapMode::HslLightness => {
-            let (_, _, l) = rgb_to_hsl(px.red, px.green, px.blue);
-            l
-        }
-        ScalarMapMode::RgbaChannel => match channel {
-            RgbaChannel::Red => sanitize_non_finite(px.red),
-            RgbaChannel::Green => sanitize_non_finite(px.green),
-            RgbaChannel::Blue => sanitize_non_finite(px.blue),
-            RgbaChannel::Alpha => sanitize_non_finite(px.alpha),
-        },
+fn hue_saturation(px: PixelF32) -> (f32, f32) {
+    let red = sanitize_non_finite(px.red);
+    let green = sanitize_non_finite(px.green);
+    let blue = sanitize_non_finite(px.blue);
+    let max = red.max(green).max(blue);
+    let min = red.min(green).min(blue);
+    let delta = max - min;
+    let saturation = if max.abs() <= 1.0e-6 {
+        0.0
+    } else {
+        (delta / max.abs()).clamp(0.0, 1.0)
+    };
+    if delta.abs() <= 1.0e-6 {
+        return (0.0, saturation);
+    }
+    let hue_turns = if max == red {
+        ((green - blue) / delta).rem_euclid(6.0) / 6.0
+    } else if max == green {
+        ((blue - red) / delta + 2.0) / 6.0
+    } else {
+        ((red - green) / delta + 4.0) / 6.0
+    };
+    (hue_turns * std::f32::consts::TAU, saturation)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(test)]
+fn discrete_anisotropic_offset(
+    cell_x: i32,
+    cell_y: i32,
+    tap: u32,
+    attempt: u32,
+    radius: i32,
+    direction: f32,
+    anisotropy: f32,
+    seed: u32,
+) -> (i32, i32) {
+    discrete_anisotropic_offset_with_transform(
+        cell_x,
+        cell_y,
+        tap,
+        attempt,
+        radius,
+        anisotropy_transform(direction, anisotropy),
+        seed,
+    )
+}
+
+fn anisotropy_transform(direction: f32, anisotropy: f32) -> AnisotropyTransform {
+    AnisotropyTransform {
+        cosine: direction.cos(),
+        sine: direction.sin(),
+        perpendicular_scale: 1.0 - anisotropy.clamp(0.0, 1.0),
     }
 }
 
-fn luma(px: PixelF32) -> f32 {
-    0.2126 * sanitize_non_finite(px.red)
-        + 0.7152 * sanitize_non_finite(px.green)
-        + 0.0722 * sanitize_non_finite(px.blue)
+#[allow(clippy::too_many_arguments)]
+fn discrete_anisotropic_offset_with_transform(
+    cell_x: i32,
+    cell_y: i32,
+    tap: u32,
+    attempt: u32,
+    radius: i32,
+    transform: AnisotropyTransform,
+    seed: u32,
+) -> (i32, i32) {
+    let (dx, dy) = discrete_disk_offset(cell_x, cell_y, tap, attempt, radius, seed);
+    let parallel = dx as f32 * transform.cosine + dy as f32 * transform.sine;
+    let perpendicular = (-dx as f32 * transform.sine + dy as f32 * transform.cosine)
+        * transform.perpendicular_scale;
+    let target_x = parallel * transform.cosine - perpendicular * transform.sine;
+    let target_y = parallel * transform.sine + perpendicular * transform.cosine;
+    let rounded_x = target_x.round() as i32;
+    let rounded_y = target_y.round() as i32;
+    let radius_squared = radius as i64 * radius as i64;
+    if rounded_x as i64 * rounded_x as i64 + rounded_y as i64 * rounded_y as i64 <= radius_squared {
+        return (rounded_x, rounded_y);
+    }
+
+    let x_candidates = [target_x.floor() as i32, target_x.ceil() as i32];
+    let y_candidates = [target_y.floor() as i32, target_y.ceil() as i32];
+    let mut best = (0, 0);
+    let mut best_error = f32::INFINITY;
+    for candidate_x in x_candidates {
+        for candidate_y in y_candidates {
+            let distance_squared =
+                candidate_x as i64 * candidate_x as i64 + candidate_y as i64 * candidate_y as i64;
+            if distance_squared > radius_squared {
+                continue;
+            }
+            let error_x = candidate_x as f32 - target_x;
+            let error_y = candidate_y as f32 - target_y;
+            let error = error_x * error_x + error_y * error_y;
+            if error < best_error {
+                best = (candidate_x, candidate_y);
+                best_error = error;
+            }
+        }
+    }
+    best
 }
 
-fn sample_map_pixel(map: &LayerBuffer, coord: OutputCoord) -> PixelF32 {
-    let map_x = remap_coord_to_layer_float(coord.x, coord.out_w, map.width);
-    let map_y = remap_coord_to_layer_float(coord.y, coord.out_h, map.height);
-    sample_bilinear(map, map_x, map_y, EdgeMode::Repeat)
+fn discrete_disk_offset(
+    cell_x: i32,
+    cell_y: i32,
+    tap: u32,
+    attempt: u32,
+    radius: i32,
+    seed: u32,
+) -> (i32, i32) {
+    if radius <= 0 {
+        return (0, 0);
+    }
+    let span = (radius * 2 + 1) as u32;
+    for rejection in 0..MAX_DISK_REJECTIONS {
+        let channel = attempt
+            .wrapping_mul(MAX_DISK_REJECTIONS)
+            .wrapping_add(rejection)
+            .wrapping_mul(2);
+        let x_hash = hash_coords(seed, cell_x, cell_y, tap as i32, channel);
+        let y_hash = hash_coords(seed, cell_x, cell_y, tap as i32, channel + 1);
+        let dx = (x_hash % span) as i32 - radius;
+        let dy = (y_hash % span) as i32 - radius;
+        let distance_squared = dx * dx + dy * dy;
+        if distance_squared > 0 && distance_squared <= radius * radius {
+            return (dx, dy);
+        }
+    }
+
+    match hash_coords(seed ^ 0x7F4A_7C15, cell_x, cell_y, tap as i32, attempt) % 4 {
+        0 => (1, 0),
+        1 => (-1, 0),
+        2 => (0, 1),
+        _ => (0, -1),
+    }
 }
 
-fn sample_bilinear(src: &LayerBuffer, x: f32, y: f32, edge_mode: EdgeMode) -> PixelF32 {
-    if src.width == 0 || src.height == 0 || !x.is_finite() || !y.is_finite() {
+fn shuffle_values<T>(values: &mut [T], seed: u32) {
+    let mut state = hash_u32(seed ^ values.len() as u32);
+    for i in (1..values.len()).rev() {
+        state = hash_u32(state.wrapping_add(i as u32).wrapping_add(0x9E37_79B9));
+        let j = state as usize % (i + 1);
+        values.swap(i, j);
+    }
+}
+
+fn map_value(
+    map: Option<&LayerBuffer>,
+    x: usize,
+    y: usize,
+    out_width: usize,
+    out_height: usize,
+    channel: MapChannel,
+    default_value: f32,
+) -> f32 {
+    let Some(map) = map else {
+        return default_value;
+    };
+    if map.width == 0 || map.height == 0 {
+        return default_value;
+    }
+    scalar_from_pixel(mapped_pixel(map, x, y, out_width, out_height), channel).clamp(0.0, 1.0)
+}
+
+fn mapped_pixel(
+    map: &LayerBuffer,
+    x: usize,
+    y: usize,
+    out_width: usize,
+    out_height: usize,
+) -> PixelF32 {
+    if map.width == 0 || map.height == 0 {
         return transparent_pixel();
     }
+    let map_x = remap_coord_float(x, out_width, map.width);
+    let map_y = remap_coord_float(y, out_height, map.height);
+    sample_map_bilinear(map, map_x, map_y)
+}
 
+fn remap_coord_float(coord: usize, out_len: usize, source_len: usize) -> f32 {
+    if out_len == 0 || source_len == 0 {
+        return 0.0;
+    }
+    (coord as f32 + 0.5) * source_len as f32 / out_len as f32 - 0.5
+}
+
+fn sample_map_bilinear(map: &LayerBuffer, x: f32, y: f32) -> PixelF32 {
     let x0 = x.floor() as i32;
     let y0 = y.floor() as i32;
     let x1 = x0 + 1;
     let y1 = y0 + 1;
     let tx = x - x0 as f32;
     let ty = y - y0 as f32;
-
-    let p00 = sample_pixel(src, x0, y0, edge_mode);
-    let p10 = sample_pixel(src, x1, y0, edge_mode);
-    let p01 = sample_pixel(src, x0, y1, edge_mode);
-    let p11 = sample_pixel(src, x1, y1, edge_mode);
-
-    let top = lerp_pixel(p00, p10, tx);
-    let bottom = lerp_pixel(p01, p11, tx);
+    let sample = |sample_x: i32, sample_y: i32| {
+        let sample_x = sample_x.clamp(0, map.width as i32 - 1) as usize;
+        let sample_y = sample_y.clamp(0, map.height as i32 - 1) as usize;
+        map.pixels[sample_y * map.width + sample_x]
+    };
+    let top = lerp_pixel(sample(x0, y0), sample(x1, y0), tx);
+    let bottom = lerp_pixel(sample(x0, y1), sample(x1, y1), tx);
     lerp_pixel(top, bottom, ty)
 }
 
-fn sample_pixel(src: &LayerBuffer, x: i32, y: i32, edge_mode: EdgeMode) -> PixelF32 {
-    let xi = resolve_coord(x, src.width, edge_mode);
-    let yi = resolve_coord(y, src.height, edge_mode);
-    if let (Some(xi), Some(yi)) = (xi, yi) {
-        src.pixels[yi * src.width + xi]
+fn lerp_pixel(a: PixelF32, b: PixelF32, t: f32) -> PixelF32 {
+    PixelF32 {
+        alpha: lerp(a.alpha, b.alpha, t),
+        red: lerp(a.red, b.red, t),
+        green: lerp(a.green, b.green, t),
+        blue: lerp(a.blue, b.blue, t),
+    }
+}
+
+fn scalar_from_pixel(px: PixelF32, channel: MapChannel) -> f32 {
+    match channel {
+        MapChannel::Luma => {
+            0.2126 * sanitize_non_finite(px.red)
+                + 0.7152 * sanitize_non_finite(px.green)
+                + 0.0722 * sanitize_non_finite(px.blue)
+        }
+        MapChannel::Red => sanitize_non_finite(px.red),
+        MapChannel::Green => sanitize_non_finite(px.green),
+        MapChannel::Blue => sanitize_non_finite(px.blue),
+        MapChannel::Alpha => sanitize_non_finite(px.alpha),
+    }
+}
+
+fn in_bounds_coord(coord: i32, len: usize) -> Option<usize> {
+    if coord >= 0 && coord < len as i32 {
+        Some(coord as usize)
     } else {
-        transparent_pixel()
+        None
     }
 }
 
@@ -2506,19 +3296,12 @@ fn resolve_coord(coord: i32, len: usize, edge_mode: EdgeMode) -> Option<usize> {
     if len == 0 {
         return None;
     }
-
-    let len_i = len as i32;
+    let len = len as i32;
     match edge_mode {
-        EdgeMode::None => {
-            if coord < 0 || coord >= len_i {
-                None
-            } else {
-                Some(coord as usize)
-            }
-        }
-        EdgeMode::Repeat => Some(coord.clamp(0, len_i - 1) as usize),
-        EdgeMode::Tile => Some(coord.rem_euclid(len_i) as usize),
-        EdgeMode::Mirror => Some(mirror_index(coord, len_i) as usize),
+        EdgeMode::Reject | EdgeMode::Transparent => in_bounds_coord(coord, len as usize),
+        EdgeMode::Clamp => Some(coord.clamp(0, len - 1) as usize),
+        EdgeMode::Tile => Some(coord.rem_euclid(len) as usize),
+        EdgeMode::Mirror => Some(mirror_index(coord, len) as usize),
     }
 }
 
@@ -2527,24 +3310,37 @@ fn mirror_index(coord: i32, len: i32) -> i32 {
         return 0;
     }
     let period = 2 * len - 2;
-    let t = coord.rem_euclid(period);
-    if t < len { t } else { period - t }
+    let value = coord.rem_euclid(period);
+    if value < len { value } else { period - value }
 }
 
-fn remap_coord_to_layer_float(coord: usize, out_len: usize, layer_len: usize) -> f32 {
-    if out_len == 0 || layer_len == 0 {
-        return 0.0;
+fn temporal_seed(seed: u32, mode: TemporalMode, frame: i32) -> u32 {
+    match mode {
+        TemporalMode::Static => seed,
+        TemporalMode::Frame => hash_u32(seed ^ (frame as u32).wrapping_mul(0x9E37_79B9)),
     }
-    ((coord as f32 + 0.5) * layer_len as f32 / out_len as f32) - 0.5
 }
 
-fn lerp_pixel(a: PixelF32, b: PixelF32, t: f32) -> PixelF32 {
-    PixelF32 {
-        red: a.red + (b.red - a.red) * t,
-        green: a.green + (b.green - a.green) * t,
-        blue: a.blue + (b.blue - a.blue) * t,
-        alpha: a.alpha + (b.alpha - a.alpha) * t,
-    }
+fn hash_coords(seed: u32, x: i32, y: i32, z: i32, channel: u32) -> u32 {
+    let mut hash = seed ^ 0xA511_E9B3;
+    hash = hash.wrapping_add((x as u32).wrapping_mul(0x85EB_CA6B));
+    hash = hash.wrapping_add((y as u32).wrapping_mul(0xC2B2_AE35));
+    hash = hash.wrapping_add((z as u32).wrapping_mul(0x27D4_EB2D));
+    hash = hash.wrapping_add(channel.wrapping_mul(0x1656_67B1));
+    hash_u32(hash)
+}
+
+fn hash_u32(mut value: u32) -> u32 {
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7FEB_352D);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846C_A68B);
+    value ^= value >> 16;
+    value
+}
+
+fn rand01(value: u32) -> f32 {
+    value as f32 / u32::MAX as f32
 }
 
 fn blend_with_original(
@@ -2556,21 +3352,15 @@ fn blend_with_original(
     if matches!(mode, OutputBlendMode::None) {
         return scatter;
     }
-
     let opacity = opacity.clamp(0.0, 1.0);
-    if opacity <= 0.0 {
-        return original;
-    }
-
     let red = blend_channel(original.red, scatter.red, mode);
     let green = blend_channel(original.green, scatter.green, mode);
     let blue = blend_channel(original.blue, scatter.blue, mode);
-
     PixelF32 {
+        alpha: lerp(original.alpha, scatter.alpha, opacity),
         red: lerp(original.red, red, opacity),
         green: lerp(original.green, green, opacity),
         blue: lerp(original.blue, blue, opacity),
-        alpha: lerp(original.alpha, scatter.alpha, opacity),
     }
 }
 
@@ -2595,11 +3385,6 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-fn smoothstep(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
 fn transparent_pixel() -> PixelF32 {
     PixelF32 {
         alpha: 0.0,
@@ -2609,91 +3394,1155 @@ fn transparent_pixel() -> PixelF32 {
     }
 }
 
-fn rgb_to_hsv(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    let r = sanitize_non_finite(r);
-    let g = sanitize_non_finite(g);
-    let b = sanitize_non_finite(b);
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let delta = max - min;
-
-    let hue = if delta <= 1.0e-6 {
-        0.0
-    } else if (max - r).abs() <= f32::EPSILON {
-        ((g - b) / delta).rem_euclid(6.0) / 6.0
-    } else if (max - g).abs() <= f32::EPSILON {
-        (((b - r) / delta) + 2.0) / 6.0
-    } else {
-        (((r - g) / delta) + 4.0) / 6.0
-    }
-    .rem_euclid(1.0);
-    let sat = if max <= 1.0e-6 { 0.0 } else { delta / max };
-
-    (hue, sat, max)
-}
-
-fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
-    let r = sanitize_non_finite(r);
-    let g = sanitize_non_finite(g);
-    let b = sanitize_non_finite(b);
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let delta = max - min;
-    let lightness = (max + min) * 0.5;
-    if delta <= 1.0e-6 {
-        return (0.0, 0.0, lightness);
-    }
-
-    let sat = delta / (1.0 - (2.0 * lightness - 1.0).abs()).max(1.0e-6);
-    let hue = if (max - r).abs() <= f32::EPSILON {
-        ((g - b) / delta).rem_euclid(6.0) / 6.0
-    } else if (max - g).abs() <= f32::EPSILON {
-        (((b - r) / delta) + 2.0) / 6.0
-    } else {
-        (((r - g) / delta) + 4.0) / 6.0
-    }
-    .rem_euclid(1.0);
-    (hue, sat, lightness)
-}
-
-fn hash_3d(cell_x: i32, cell_y: i32, tap: i32, channel: u32, seed: u32) -> u32 {
-    let mut h = seed ^ 0xA511_E9B3;
-    h = h.wrapping_add((cell_x as u32).wrapping_mul(0x85EB_CA6B));
-    h = h.wrapping_add((cell_y as u32).wrapping_mul(0xC2B2_AE35));
-    h = h.wrapping_add((tap as u32).wrapping_mul(0x27D4_EB2D));
-    h = h.wrapping_add(channel.wrapping_mul(0x1656_67B1));
-    hash_u32(h)
-}
-
-fn hash_u32(mut x: u32) -> u32 {
-    x ^= x >> 16;
-    x = x.wrapping_mul(0x7FEB_352D);
-    x ^= x >> 15;
-    x = x.wrapping_mul(0x846C_A68B);
-    x ^= x >> 16;
-    x
-}
-
-fn rand01(v: u32) -> f32 {
-    v as f32 / u32::MAX as f32
-}
-
 fn sanitize_pixel_for_output(mut px: PixelF32, out_is_f32: bool, clamp_32: bool) -> PixelF32 {
+    px.alpha = sanitize_non_finite(px.alpha);
     px.red = sanitize_non_finite(px.red);
     px.green = sanitize_non_finite(px.green);
     px.blue = sanitize_non_finite(px.blue);
-    px.alpha = sanitize_non_finite(px.alpha);
-
     if !out_is_f32 || clamp_32 {
+        px.alpha = px.alpha.clamp(0.0, 1.0);
         px.red = px.red.clamp(0.0, 1.0);
         px.green = px.green.clamp(0.0, 1.0);
         px.blue = px.blue.clamp(0.0, 1.0);
-        px.alpha = px.alpha.clamp(0.0, 1.0);
     }
-
     px
 }
 
-fn sanitize_non_finite(v: f32) -> f32 {
-    if v.is_finite() { v } else { 0.0 }
+fn sanitize_non_finite(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pixel(value: f32) -> PixelF32 {
+        PixelF32 {
+            alpha: 1.0,
+            red: value,
+            green: value * 0.5,
+            blue: 1.0 - value,
+        }
+    }
+
+    fn pixel_bits(pixels: &[PixelF32]) -> Vec<[u32; 4]> {
+        pixels
+            .iter()
+            .map(|pixel| {
+                [
+                    pixel.alpha.to_bits(),
+                    pixel.red.to_bits(),
+                    pixel.green.to_bits(),
+                    pixel.blue.to_bits(),
+                ]
+            })
+            .collect()
+    }
+
+    fn source(width: usize, height: usize) -> LayerBuffer {
+        let count = width * height;
+        LayerBuffer {
+            width,
+            height,
+            pixels: (0..count)
+                .map(|index| pixel((index + 1) as f32 / (count + 1) as f32))
+                .collect(),
+        }
+    }
+
+    fn settings(mode: ScatterMode) -> RenderSettings {
+        RenderSettings {
+            scatter_mode: mode,
+            amount: 1.0,
+            radius: 4,
+            grain_size: 1,
+            grain_size_min: 1,
+            gather_samples: 1,
+            direction: 0.0,
+            anisotropy: 0.0,
+            grain_shape: GrainShape::Square,
+            grain_size_randomness: 0.0,
+            grain_position_randomness: 0.0,
+            grain_density: 1.0,
+            kernel_randomness: 0.0,
+            kernel_texture_channel: MapChannel::Alpha,
+            kernel_threshold: 0.5,
+            grain_fill_mode: GrainFillMode::Texture,
+            grain_fill_opacity: 1.0,
+            use_amount_map: false,
+            amount_map_channel: MapChannel::Luma,
+            use_radius_map: false,
+            radius_map_channel: MapChannel::Luma,
+            use_grain_size_map: false,
+            grain_size_map_channel: MapChannel::Luma,
+            use_anisotropy_map: false,
+            anisotropy_map_mode: AnisotropyMapMode::HueSaturation,
+            use_anisotropy_direction: true,
+            use_anisotropy_strength: true,
+            anisotropy_divergence_source: DivergenceSource::Gray,
+            seed: 42,
+            temporal_mode: TemporalMode::Static,
+            edge_mode: EdgeMode::Reject,
+            blend_mode: OutputBlendMode::None,
+            blend_opacity: 1.0,
+            preserve_alpha: false,
+            clamp_32: false,
+        }
+    }
+
+    fn no_maps() -> RenderMaps<'static> {
+        RenderMaps {
+            amount: None,
+            radius: None,
+            grain_size: None,
+            anisotropy: None,
+            kernel_texture: None,
+        }
+    }
+
+    fn test_kernel_context<'a>(
+        width: usize,
+        height: usize,
+        maps: RenderMaps<'a>,
+        settings: &'a RenderSettings,
+        seed: u32,
+    ) -> KernelContext<'a> {
+        KernelContext {
+            image_width: width,
+            image_height: height,
+            maps,
+            settings,
+            seed,
+            density_layer: 0,
+        }
+    }
+
+    #[test]
+    fn gather_single_sample_only_copies_existing_pixels() {
+        let source = source(8, 8);
+        let rendered = render_gather(&source, no_maps(), &settings(ScatterMode::Gather), 42);
+        for output in rendered {
+            assert!(source.pixels.iter().any(|input| {
+                input.alpha.to_bits() == output.alpha.to_bits()
+                    && input.red.to_bits() == output.red.to_bits()
+                    && input.green.to_bits() == output.green.to_bits()
+                    && input.blue.to_bits() == output.blue.to_bits()
+            }));
+        }
+    }
+
+    #[test]
+    fn gather_multiple_samples_can_create_mixed_pixels() {
+        let source = source(8, 8);
+        let mut settings = settings(ScatterMode::Gather);
+        settings.gather_samples = 4;
+        let rendered = render_gather(&source, no_maps(), &settings, 42);
+        assert!(rendered.iter().any(|output| {
+            !source
+                .pixels
+                .iter()
+                .any(|input| input.red.to_bits() == output.red.to_bits())
+        }));
+    }
+
+    #[test]
+    fn precomputed_gather_offsets_match_attempt_by_attempt_sampling() {
+        let source = source(8, 8);
+        let radius = 5;
+        let direction = 0.73;
+        let anisotropy = 0.62;
+        let transform = anisotropy_transform(direction, anisotropy);
+        for edge_mode in [
+            EdgeMode::Reject,
+            EdgeMode::Clamp,
+            EdgeMode::Tile,
+            EdgeMode::Mirror,
+            EdgeMode::Transparent,
+        ] {
+            for &(x, y) in &[(0, 0), (7, 0), (3, 4), (0, 7), (7, 7)] {
+                for tap in 0..8 {
+                    let primary = discrete_anisotropic_offset(
+                        2, 3, tap, 0, radius, direction, anisotropy, 91,
+                    );
+                    let actual = gather_sample(
+                        &source, x, y, 2, 3, radius, transform, tap, primary, 91, edge_mode,
+                    );
+                    let expected = (0..MAX_GATHER_ATTEMPTS)
+                        .find_map(|attempt| {
+                            let (dx, dy) = discrete_anisotropic_offset(
+                                2, 3, tap, attempt, radius, direction, anisotropy, 91,
+                            );
+                            let sample_x = x as i32 + dx;
+                            let sample_y = y as i32 + dy;
+                            if matches!(edge_mode, EdgeMode::Reject) {
+                                let sample_x = in_bounds_coord(sample_x, source.width)?;
+                                let sample_y = in_bounds_coord(sample_y, source.height)?;
+                                return Some(source.pixels[sample_y * source.width + sample_x]);
+                            }
+                            let sample_x = resolve_coord(sample_x, source.width, edge_mode);
+                            let sample_y = resolve_coord(sample_y, source.height, edge_mode);
+                            Some(match (sample_x, sample_y) {
+                                (Some(sample_x), Some(sample_y)) => {
+                                    source.pixels[sample_y * source.width + sample_x]
+                                }
+                                _ => transparent_pixel(),
+                            })
+                        })
+                        .unwrap_or(source.pixels[y * source.width + x]);
+                    assert_eq!(pixel_bits(&[actual]), pixel_bits(&[expected]));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn zero_amount_is_identity() {
+        let source = source(8, 8);
+        let mut settings = settings(ScatterMode::Gather);
+        settings.amount = 0.0;
+        let rendered = render_gather(&source, no_maps(), &settings, 42);
+        assert_eq!(
+            source
+                .pixels
+                .iter()
+                .map(|px| px.red.to_bits())
+                .collect::<Vec<_>>(),
+            rendered
+                .iter()
+                .map(|px| px.red.to_bits())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn black_amount_map_is_identity() {
+        let source = source(8, 8);
+        let black_map = LayerBuffer {
+            width: 8,
+            height: 8,
+            pixels: vec![transparent_pixel(); 64],
+        };
+        let maps = RenderMaps {
+            amount: Some(&black_map),
+            ..no_maps()
+        };
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 2;
+        settings.grain_density = 4.0;
+        let rendered = render_gather(&source, maps, &settings, 42);
+        assert_eq!(
+            source
+                .pixels
+                .iter()
+                .map(|px| px.red.to_bits())
+                .collect::<Vec<_>>(),
+            rendered
+                .iter()
+                .map(|px| px.red.to_bits())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn swap_is_a_strict_permutation() {
+        let source = source(16, 16);
+        let settings = settings(ScatterMode::Swap);
+        let rendered = render_swap(&source, no_maps(), &settings, 42);
+        let mut input_values: Vec<u32> = source.pixels.iter().map(|px| px.red.to_bits()).collect();
+        let mut output_values: Vec<u32> = rendered.iter().map(|px| px.red.to_bits()).collect();
+        input_values.sort_unstable();
+        output_values.sort_unstable();
+        assert_eq!(input_values, output_values);
+        assert!(
+            source
+                .pixels
+                .iter()
+                .zip(rendered.iter())
+                .any(|(input, output)| input.red.to_bits() != output.red.to_bits())
+        );
+        let permutation =
+            build_swap_permutation(source.width, source.height, no_maps(), &settings, 42);
+        for (destination, source_index) in permutation.into_iter().enumerate() {
+            let source_index = source_index as usize;
+            let destination_x = destination % source.width;
+            let destination_y = destination / source.width;
+            let source_x = source_index % source.width;
+            let source_y = source_index / source.width;
+            let dx = destination_x as i32 - source_x as i32;
+            let dy = destination_y as i32 - source_y as i32;
+            assert!(dx * dx + dy * dy <= settings.radius.pow(2));
+        }
+    }
+
+    #[test]
+    fn swap_respects_radius() {
+        let source = source(16, 16);
+        let settings = settings(ScatterMode::Swap);
+        let permutation =
+            build_swap_permutation(source.width, source.height, no_maps(), &settings, 42);
+        for (destination, source_index) in permutation.into_iter().enumerate() {
+            let source_index = source_index as usize;
+            let destination_x = destination % source.width;
+            let destination_y = destination / source.width;
+            let source_x = source_index % source.width;
+            let source_y = source_index / source.width;
+            let dx = destination_x as i32 - source_x as i32;
+            let dy = destination_y as i32 - source_y as i32;
+            assert!(dx * dx + dy * dy <= settings.radius * settings.radius);
+        }
+    }
+
+    #[test]
+    fn swap_with_black_amount_map_is_identity() {
+        let source = source(8, 8);
+        let black_map = LayerBuffer {
+            width: 8,
+            height: 8,
+            pixels: vec![transparent_pixel(); 64],
+        };
+        let maps = RenderMaps {
+            amount: Some(&black_map),
+            ..no_maps()
+        };
+        let mut settings = settings(ScatterMode::Swap);
+        settings.grain_size = 2;
+        settings.grain_density = 4.0;
+        let rendered = render_swap(&source, maps, &settings, 42);
+        assert_eq!(
+            source
+                .pixels
+                .iter()
+                .map(|px| px.red.to_bits())
+                .collect::<Vec<_>>(),
+            rendered
+                .iter()
+                .map(|px| px.red.to_bits())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn circle_kernel_keeps_center_and_masks_corners() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 5;
+        settings.grain_shape = GrainShape::Circle;
+        let block = block_at(0, 0, 5, 5, 5);
+        let context = test_kernel_context(5, 5, no_maps(), &settings, 42);
+        assert!(kernel_contains(block, 2, 2, context));
+        assert!(!kernel_contains(block, 0, 0, context));
+    }
+
+    #[test]
+    fn texture_kernel_uses_selected_channel_and_threshold() {
+        let texture = LayerBuffer {
+            width: 2,
+            height: 1,
+            pixels: vec![
+                PixelF32 {
+                    alpha: 1.0,
+                    ..transparent_pixel()
+                },
+                transparent_pixel(),
+            ],
+        };
+        let maps = RenderMaps {
+            kernel_texture: Some(&texture),
+            ..no_maps()
+        };
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 2;
+        settings.grain_shape = GrainShape::Texture;
+        settings.kernel_texture_channel = MapChannel::Alpha;
+        settings.kernel_threshold = 0.5;
+        let block = block_at(0, 0, 2, 2, 1);
+        let context = test_kernel_context(2, 1, maps, &settings, 42);
+        assert!(kernel_contains(block, 0, 0, context));
+        assert!(!kernel_contains(block, 1, 0, context));
+    }
+
+    #[test]
+    fn black_grain_size_map_reduces_kernel_coverage() {
+        let black = LayerBuffer {
+            width: 8,
+            height: 8,
+            pixels: vec![transparent_pixel(); 64],
+        };
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 8;
+        settings.use_grain_size_map = true;
+        let block = block_at(0, 0, 8, 8, 8);
+        let full_count = (0..8)
+            .flat_map(|y| (0..8).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                kernel_contains(
+                    block,
+                    x,
+                    y,
+                    test_kernel_context(8, 8, no_maps(), &settings, 42),
+                )
+            })
+            .count();
+        let mapped = RenderMaps {
+            grain_size: Some(&black),
+            ..no_maps()
+        };
+        let mapped_count = (0..8)
+            .flat_map(|y| (0..8).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                kernel_contains(
+                    block,
+                    x,
+                    y,
+                    test_kernel_context(8, 8, mapped, &settings, 42),
+                )
+            })
+            .count();
+        assert_eq!(full_count, 64);
+        assert!(mapped_count < full_count);
+        assert!(mapped_count > 0);
+    }
+
+    #[test]
+    fn grain_size_randomness_is_deterministic_and_shrinks() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 16;
+        settings.grain_size_min = 6;
+        settings.grain_size_randomness = 1.0;
+        let block = block_at(0, 0, 16, 16, 16);
+        let context = test_kernel_context(16, 16, no_maps(), &settings, 91);
+        let first = kernel_scale(block, context);
+        let second = kernel_scale(block, context);
+        assert_eq!(first.to_bits(), second.to_bits());
+        assert!((6.0 / 16.0..=1.0).contains(&first));
+        assert!(first < 1.0);
+    }
+
+    #[test]
+    fn grain_size_range_uses_max_when_randomness_is_zero() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 16;
+        settings.grain_size_min = 6;
+        settings.grain_size_randomness = 0.0;
+        let block = block_at(0, 0, 16, 16, 16);
+        let context = test_kernel_context(16, 16, no_maps(), &settings, 91);
+        assert_eq!(kernel_scale(block, context), 1.0);
+    }
+
+    #[test]
+    fn grain_size_map_interpolates_between_min_and_max() {
+        let map_with_value = |value| LayerBuffer {
+            width: 1,
+            height: 1,
+            pixels: vec![PixelF32 {
+                alpha: 1.0,
+                red: value,
+                green: value,
+                blue: value,
+            }],
+        };
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 16;
+        settings.grain_size_min = 4;
+        settings.use_grain_size_map = true;
+        let block = block_at(0, 0, 16, 16, 16);
+
+        let black = map_with_value(0.0);
+        let black_maps = RenderMaps {
+            grain_size: Some(&black),
+            ..no_maps()
+        };
+        let black_scale = kernel_scale(
+            block,
+            test_kernel_context(16, 16, black_maps, &settings, 91),
+        );
+        assert_eq!(black_scale, 4.0 / 16.0);
+
+        let gray = map_with_value(0.5);
+        let gray_maps = RenderMaps {
+            grain_size: Some(&gray),
+            ..no_maps()
+        };
+        let gray_scale = kernel_scale(block, test_kernel_context(16, 16, gray_maps, &settings, 91));
+        assert_eq!(gray_scale, 10.0 / 16.0);
+
+        let white = map_with_value(1.0);
+        let white_maps = RenderMaps {
+            grain_size: Some(&white),
+            ..no_maps()
+        };
+        assert_eq!(
+            kernel_scale(
+                block,
+                test_kernel_context(16, 16, white_maps, &settings, 91),
+            ),
+            1.0
+        );
+    }
+
+    #[test]
+    fn grain_size_range_clamps_invalid_min_and_combined_randomness() {
+        let block = block_at(0, 0, 16, 16, 16);
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 16;
+        settings.grain_size_min = 24;
+        settings.grain_size_randomness = 1.0;
+        assert_eq!(
+            kernel_scale(block, test_kernel_context(16, 16, no_maps(), &settings, 91),),
+            1.0
+        );
+
+        let gray = LayerBuffer {
+            width: 1,
+            height: 1,
+            pixels: vec![PixelF32 {
+                alpha: 1.0,
+                red: 0.5,
+                green: 0.5,
+                blue: 0.5,
+            }],
+        };
+        let maps = RenderMaps {
+            grain_size: Some(&gray),
+            ..no_maps()
+        };
+        settings.grain_size_min = 4;
+        for seed in 0..32 {
+            let scale = kernel_scale(block, test_kernel_context(16, 16, maps, &settings, seed));
+            assert!((4.0 / 16.0..=10.0 / 16.0).contains(&scale));
+        }
+    }
+
+    #[test]
+    fn zero_position_randomness_keeps_the_grid_center() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 8;
+        let block = block_at(1, 1, 8, 24, 24);
+        let context = test_kernel_context(24, 24, no_maps(), &settings, 91);
+        assert_eq!(kernel_center(block, context), (12.0, 12.0));
+    }
+
+    #[test]
+    fn grain_density_controls_layer_count_and_fraction() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 8;
+        assert_eq!(density_layers(&settings), vec![(0, 1.0)]);
+
+        settings.grain_density = 4.0;
+        assert_eq!(
+            density_layers(&settings),
+            vec![(0, 1.0), (1, 1.0), (2, 1.0), (3, 1.0)]
+        );
+
+        settings.grain_density = 4.5;
+        assert_eq!(density_layers(&settings).last(), Some(&(4, 0.5)));
+
+        settings.grain_density = 8.0;
+        settings.grain_size = 1;
+        assert_eq!(density_layers(&settings), vec![(0, 1.0)]);
+        settings.grain_size = 2;
+        assert_eq!(density_layers(&settings).len(), 4);
+    }
+
+    #[test]
+    fn density_100_matches_the_original_single_layer_paths() {
+        let source = source(16, 16);
+        let mut gather_settings = settings(ScatterMode::Gather);
+        gather_settings.grain_size = 4;
+        gather_settings.grain_shape = GrainShape::Circle;
+        gather_settings.grain_position_randomness = 0.7;
+        gather_settings.grain_fill_mode = GrainFillMode::Average;
+        gather_settings.grain_fill_opacity = 0.6;
+        let actual = render_gather(&source, no_maps(), &gather_settings, 91);
+        let context = test_kernel_context(16, 16, no_maps(), &gather_settings, 91);
+        let mut expected = source.pixels.clone();
+        render_gather_layer(&mut expected, &source, context, 1.0);
+        assert_eq!(pixel_bits(&actual), pixel_bits(&expected));
+
+        let mut swap_settings = settings(ScatterMode::Swap);
+        swap_settings.grain_size = 4;
+        swap_settings.grain_position_randomness = 0.7;
+        swap_settings.radius = 12;
+        let actual = build_swap_permutation(16, 16, no_maps(), &swap_settings, 91);
+        let context = test_kernel_context(16, 16, no_maps(), &swap_settings, 91);
+        let partition = build_grain_partition(16, 16, context);
+        let mut expected = (0..16 * 16).collect::<Vec<_>>();
+        build_swap_permutation_for_partition(
+            &mut expected,
+            16,
+            16,
+            no_maps(),
+            &swap_settings,
+            91,
+            &partition,
+            0,
+            context,
+        );
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn higher_grain_density_adds_centers_and_reduces_gaps() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 8;
+        settings.grain_shape = GrainShape::Circle;
+        settings.grain_position_randomness = 1.0;
+
+        let coverage = |layer_count: u32| {
+            let mut covered = vec![false; 64 * 64];
+            for density_layer in 0..layer_count {
+                let context = KernelContext {
+                    image_width: 64,
+                    image_height: 64,
+                    maps: no_maps(),
+                    settings: &settings,
+                    seed: density_layer_seed(42, density_layer),
+                    density_layer,
+                };
+                let partition = build_grain_partition(64, 64, context);
+                for index in partition.groups().flatten() {
+                    covered[*index as usize] = true;
+                }
+            }
+            covered.into_iter().filter(|covered| *covered).count()
+        };
+        let sparse_coverage = coverage(1);
+        let dense_coverage = coverage(8);
+
+        assert!(dense_coverage > sparse_coverage);
+        assert!(dense_coverage as f32 / 4096.0 > 0.99);
+    }
+
+    #[test]
+    fn four_regular_density_layers_cover_circle_grid_gaps() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 8;
+        settings.grain_shape = GrainShape::Circle;
+        let mut covered = vec![false; 64 * 64];
+        for density_layer in 0..4 {
+            let context = KernelContext {
+                image_width: 64,
+                image_height: 64,
+                maps: no_maps(),
+                settings: &settings,
+                seed: density_layer_seed(42, density_layer),
+                density_layer,
+            };
+            let partition = build_grain_partition(64, 64, context);
+            for index in partition.groups().flatten() {
+                covered[*index as usize] = true;
+            }
+        }
+        let coverage = covered.into_iter().filter(|covered| *covered).count();
+        assert!(coverage as f32 / 4096.0 > 0.99);
+    }
+
+    #[test]
+    fn density_layers_keep_the_original_kernel_footprint() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 8;
+        let block = block_at(1, 1, 8, 32, 32);
+        let coverage = |density_layer| {
+            let context = KernelContext {
+                image_width: 32,
+                image_height: 32,
+                maps: no_maps(),
+                settings: &settings,
+                seed: density_layer_seed(42, density_layer),
+                density_layer,
+            };
+            (0..32)
+                .flat_map(|y| (0..32).map(move |x| (x, y)))
+                .filter(|&(x, y)| kernel_contains(block, x, y, context))
+                .count()
+        };
+        assert_eq!(coverage(0), 64);
+        assert_eq!(coverage(1), 64);
+    }
+
+    #[test]
+    fn position_randomness_is_seeded_and_changes_ownership() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 4;
+        settings.grain_position_randomness = 1.0;
+        let ownership = |seed| {
+            let context = test_kernel_context(16, 16, no_maps(), &settings, seed);
+            let partition = build_grain_partition(16, 16, context);
+            let mut owners = vec![None; 16 * 16];
+            for (owner, group) in partition.groups().enumerate() {
+                for &index in group {
+                    owners[index as usize] = Some(owner);
+                }
+            }
+            owners
+        };
+        assert_eq!(ownership(42), ownership(42));
+        assert_ne!(ownership(42), ownership(43));
+    }
+
+    #[test]
+    fn overlapping_kernels_keep_one_random_front_grain() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 4;
+        settings.grain_position_randomness = 1.0;
+
+        let mut verified = false;
+        for seed in 0..512 {
+            let context = test_kernel_context(8, 4, no_maps(), &settings, seed);
+            let left = prepare_kernel(block_at(0, 0, 4, 8, 4), context);
+            let right = prepare_kernel(block_at(1, 0, 4, 8, 4), context);
+            let overlap = (0..32)
+                .filter(|&index| {
+                    let x = index % 8;
+                    let y = index / 8;
+                    kernel_contains_prepared(left, x, y, context)
+                        && kernel_contains_prepared(right, x, y, context)
+                })
+                .collect::<Vec<_>>();
+            if overlap.len() < 2 {
+                continue;
+            }
+
+            let partition = build_grain_partition(8, 4, context);
+            let expected_owner = usize::from(right.front_priority > left.front_priority);
+            let other_owner = 1 - expected_owner;
+            for index in overlap {
+                assert!(partition.group(expected_owner).contains(&(index as u32)));
+                assert!(!partition.group(other_owner).contains(&(index as u32)));
+            }
+            verified = true;
+            break;
+        }
+        assert!(verified, "test setup did not produce a multi-pixel overlap");
+    }
+
+    #[test]
+    fn prepared_partition_preserves_the_kernel_union() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 7;
+        settings.grain_shape = GrainShape::Circle;
+        settings.grain_position_randomness = 1.0;
+        settings.grain_size_randomness = 0.6;
+        settings.kernel_randomness = 1.0;
+        let context = KernelContext {
+            image_width: 31,
+            image_height: 19,
+            maps: no_maps(),
+            settings: &settings,
+            seed: density_layer_seed(73, 3),
+            density_layer: 3,
+        };
+        let grain = settings.grain_size;
+        let columns = context.image_width.div_ceil(grain);
+        let rows = context.image_height.div_ceil(grain);
+        let partition = build_grain_partition(context.image_width, context.image_height, context);
+        let mut actual = vec![false; context.image_width * context.image_height];
+        for index in partition.groups().flatten() {
+            actual[*index as usize] = true;
+        }
+
+        let mut expected = vec![false; actual.len()];
+        for y in 0..context.image_height {
+            for x in 0..context.image_width {
+                let grid_x = (x / grain).min(columns - 1);
+                let grid_y = (y / grain).min(rows - 1);
+                let min_x = grid_x.saturating_sub(1);
+                let max_x = (grid_x + 1).min(columns - 1);
+                let min_y = grid_y.saturating_sub(1);
+                let max_y = (grid_y + 1).min(rows - 1);
+                expected[y * context.image_width + x] = (min_y..=max_y).any(|candidate_y| {
+                    (min_x..=max_x).any(|candidate_x| {
+                        kernel_contains(
+                            block_at(
+                                candidate_x,
+                                candidate_y,
+                                grain,
+                                context.image_width,
+                                context.image_height,
+                            ),
+                            x,
+                            y,
+                            context,
+                        )
+                    })
+                });
+            }
+        }
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn dense_gather_samples_each_visible_pixel_at_most_once() {
+        let source = source(64, 64);
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 8;
+        settings.grain_density = 8.0;
+        settings.grain_shape = GrainShape::Circle;
+        settings.grain_position_randomness = 1.0;
+        settings.gather_samples = 4;
+        settings.radius = 16;
+
+        GATHER_PIXEL_CALLS.with(|calls| calls.set(0));
+        let first = render_gather(&source, no_maps(), &settings, 73);
+        let calls = GATHER_PIXEL_CALLS.with(std::cell::Cell::get);
+        let second = render_gather(&source, no_maps(), &settings, 73);
+
+        assert!(calls > 0);
+        assert!(calls <= source.width * source.height);
+        assert_eq!(pixel_bits(&first), pixel_bits(&second));
+    }
+
+    #[test]
+    fn randomized_grain_swap_remains_a_strict_permutation() {
+        let source = source(24, 24);
+        let mut settings = settings(ScatterMode::Swap);
+        settings.grain_size = 4;
+        settings.grain_position_randomness = 1.0;
+        settings.radius = 16;
+        let rendered = render_swap(&source, no_maps(), &settings, 42);
+        let mut input_values: Vec<u32> = source.pixels.iter().map(|px| px.red.to_bits()).collect();
+        let mut output_values: Vec<u32> = rendered.iter().map(|px| px.red.to_bits()).collect();
+        input_values.sort_unstable();
+        output_values.sort_unstable();
+        assert_eq!(input_values, output_values);
+        assert!(
+            source
+                .pixels
+                .iter()
+                .zip(&rendered)
+                .any(|(input, output)| input.red.to_bits() != output.red.to_bits())
+        );
+    }
+
+    #[test]
+    fn dense_grain_swap_remains_a_radius_bounded_permutation() {
+        let source = source(24, 24);
+        let mut settings = settings(ScatterMode::Swap);
+        settings.grain_size = 6;
+        settings.grain_density = 4.0;
+        settings.grain_position_randomness = 1.0;
+        settings.radius = 16;
+        let permutation =
+            build_swap_permutation(source.width, source.height, no_maps(), &settings, 73);
+        let mut sorted = permutation.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            (0..(source.width * source.height) as u32).collect::<Vec<_>>()
+        );
+        assert!(
+            permutation
+                .iter()
+                .enumerate()
+                .any(|(destination, &source_index)| destination != source_index as usize)
+        );
+        for (destination, source_index) in permutation.into_iter().enumerate() {
+            let source_index = source_index as usize;
+            let destination_x = destination % source.width;
+            let destination_y = destination / source.width;
+            let source_x = source_index % source.width;
+            let source_y = source_index / source.width;
+            let dx = destination_x as i32 - source_x as i32;
+            let dy = destination_y as i32 - source_y as i32;
+            assert!(dx * dx + dy * dy <= settings.radius.pow(2));
+        }
+    }
+
+    #[test]
+    fn grain_group_swap_is_all_or_none() {
+        let mut permutation = (0..8_u32).collect::<Vec<_>>();
+        let before = permutation.clone();
+
+        assert!(!swap_grain_groups(&mut permutation, &[0, 1], &[2, 7], 4, 2,));
+        assert_eq!(permutation, before);
+
+        assert!(!swap_grain_groups(&mut permutation, &[0, 1], &[2], 4, 2,));
+        assert_eq!(permutation, before);
+    }
+
+    #[test]
+    fn radius_map_is_evaluated_once_at_the_grain_center() {
+        let source = source(4, 4);
+        let mut radius_pixels = vec![pixel(1.0); 16];
+        radius_pixels[2 * 4 + 2] = transparent_pixel();
+        let radius_map = LayerBuffer {
+            width: 4,
+            height: 4,
+            pixels: radius_pixels,
+        };
+        let maps = RenderMaps {
+            radius: Some(&radius_map),
+            ..no_maps()
+        };
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 4;
+        settings.radius = 4;
+        let rendered = render_gather(&source, maps, &settings, 42);
+        assert_eq!(
+            source
+                .pixels
+                .iter()
+                .map(|px| px.red.to_bits())
+                .collect::<Vec<_>>(),
+            rendered
+                .iter()
+                .map(|px| px.red.to_bits())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn average_fill_flattens_each_affected_grain() {
+        let mut output = source(4, 4).pixels;
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 4;
+        settings.grain_fill_mode = GrainFillMode::Average;
+        settings.grain_fill_opacity = 1.0;
+        let context = test_kernel_context(4, 4, no_maps(), &settings, 42);
+        let partition = build_grain_partition(4, 4, context);
+        let expected = output.iter().map(|px| px.red).sum::<f32>() / output.len() as f32;
+        apply_grain_fill(&mut output, &partition, 0, &[true], context);
+        assert!(
+            output
+                .iter()
+                .all(|pixel| (pixel.red - expected).abs() < 1.0e-6)
+        );
+    }
+
+    #[test]
+    fn median_and_center_fill_choose_the_requested_representative() {
+        let block = block_at(0, 0, 2, 2, 2);
+        let group = [0, 1, 2, 3];
+        let pixels = [pixel(0.0), pixel(0.0), pixel(0.0), pixel(1.0)];
+        let settings = settings(ScatterMode::Gather);
+        let context = test_kernel_context(2, 2, no_maps(), &settings, 42);
+        let mut scratch = Vec::new();
+        let median_pixel = grain_representative(
+            &pixels,
+            &group,
+            block,
+            context,
+            GrainFillMode::Median,
+            &mut scratch,
+        );
+        assert_eq!(median_pixel.red, 0.0);
+
+        let center_block = block_at(0, 0, 3, 3, 3);
+        let center_pixels = source(3, 3).pixels;
+        let center_group = (0..9).collect::<Vec<_>>();
+        let center_context = test_kernel_context(3, 3, no_maps(), &settings, 42);
+        let center_pixel = grain_representative(
+            &center_pixels,
+            &center_group,
+            center_block,
+            center_context,
+            GrainFillMode::Center,
+            &mut scratch,
+        );
+        assert_eq!(center_pixel.red.to_bits(), center_pixels[4].red.to_bits());
+    }
+
+    #[test]
+    fn fill_opacity_blends_with_the_grain_texture() {
+        let original = source(2, 2).pixels;
+        let mut output = original.clone();
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 2;
+        settings.grain_fill_mode = GrainFillMode::Average;
+        settings.grain_fill_opacity = 0.5;
+        let context = test_kernel_context(2, 2, no_maps(), &settings, 42);
+        let partition = build_grain_partition(2, 2, context);
+        let average = original.iter().map(|px| px.red).sum::<f32>() / 4.0;
+        apply_grain_fill(&mut output, &partition, 0, &[true], context);
+        for (before, after) in original.iter().zip(output) {
+            assert!((after.red - lerp(before.red, average, 0.5)).abs() < 1.0e-6);
+        }
+    }
+
+    #[test]
+    fn shape_randomness_is_seeded_and_changes_the_boundary() {
+        let mut settings = settings(ScatterMode::Gather);
+        settings.grain_size = 16;
+        settings.grain_shape = GrainShape::Circle;
+        settings.kernel_randomness = 1.0;
+        let block = block_at(0, 0, 16, 16, 16);
+        let mask = |seed| {
+            let context = test_kernel_context(16, 16, no_maps(), &settings, seed);
+            (0..16)
+                .flat_map(|y| (0..16).map(move |x| (x, y)))
+                .map(|(x, y)| kernel_contains(block, x, y, context))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(mask(42), mask(42));
+        assert_ne!(mask(42), mask(43));
+    }
+
+    #[test]
+    fn anisotropy_map_decodes_hue_and_saturation() {
+        let map = LayerBuffer {
+            width: 1,
+            height: 1,
+            pixels: vec![PixelF32 {
+                alpha: 1.0,
+                red: 1.0,
+                green: 0.0,
+                blue: 0.0,
+            }],
+        };
+        let mut settings = settings(ScatterMode::Gather);
+        settings.anisotropy = 1.0;
+        settings.use_anisotropy_map = true;
+        let (direction, strength) = anisotropy_at(Some(&map), 0, 0, 1, 1, &settings);
+        assert!(direction.abs() < 1.0e-6);
+        assert!((strength - 1.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn divergence_direction_follows_the_scalar_gradient() {
+        let map = LayerBuffer {
+            width: 3,
+            height: 3,
+            pixels: (0..9)
+                .map(|index| {
+                    let value = (index % 3) as f32 * 0.05;
+                    PixelF32 {
+                        alpha: 1.0,
+                        red: value,
+                        green: 0.0,
+                        blue: 0.0,
+                    }
+                })
+                .collect(),
+        };
+        let mut settings = settings(ScatterMode::Gather);
+        settings.direction = 0.7;
+        settings.anisotropy = 0.8;
+        settings.use_anisotropy_map = true;
+        settings.anisotropy_map_mode = AnisotropyMapMode::DivergenceDirection;
+        settings.anisotropy_divergence_source = DivergenceSource::Red;
+        let (direction, anisotropy) = anisotropy_at(Some(&map), 1, 1, 3, 3, &settings);
+        assert!(direction.abs() < 1.0e-6);
+        assert!((anisotropy - 0.32).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn divergence_rotation_turns_the_gradient_ninety_degrees() {
+        let map = LayerBuffer {
+            width: 3,
+            height: 3,
+            pixels: (0..9)
+                .map(|index| PixelF32 {
+                    alpha: 1.0,
+                    red: (index % 3) as f32 * 0.5,
+                    green: 0.0,
+                    blue: 0.0,
+                })
+                .collect(),
+        };
+        let mut settings = settings(ScatterMode::Gather);
+        settings.anisotropy = 1.0;
+        settings.use_anisotropy_map = true;
+        settings.anisotropy_map_mode = AnisotropyMapMode::DivergenceRotation;
+        settings.anisotropy_divergence_source = DivergenceSource::Red;
+        let (direction, anisotropy) = anisotropy_at(Some(&map), 1, 1, 3, 3, &settings);
+        assert!((direction - std::f32::consts::FRAC_PI_2).abs() < 1.0e-6);
+        assert!((anisotropy - 1.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn zero_divergence_preserves_base_anisotropy() {
+        let map = LayerBuffer {
+            width: 3,
+            height: 3,
+            pixels: vec![
+                PixelF32 {
+                    alpha: 1.0,
+                    red: 0.5,
+                    green: 0.5,
+                    blue: 0.5,
+                };
+                9
+            ],
+        };
+        let mut settings = settings(ScatterMode::Gather);
+        settings.direction = 0.7;
+        settings.anisotropy = 0.8;
+        settings.use_anisotropy_map = true;
+        settings.anisotropy_map_mode = AnisotropyMapMode::DivergenceDirection;
+        let (direction, anisotropy) = anisotropy_at(Some(&map), 1, 1, 3, 3, &settings);
+        assert_eq!(direction.to_bits(), settings.direction.to_bits());
+        assert_eq!(anisotropy.to_bits(), settings.anisotropy.to_bits());
+    }
+
+    #[test]
+    fn full_anisotropy_collapses_offsets_to_direction_axis() {
+        for attempt in 0..16 {
+            let (_, dy) = discrete_anisotropic_offset(0, 0, 0, attempt, 8, 0.0, 1.0, 42);
+            assert_eq!(dy, 0);
+        }
+    }
+
+    #[test]
+    fn anisotropy_rounding_stays_inside_the_radius() {
+        for attempt in 0..64 {
+            let (dx, dy) = discrete_anisotropic_offset(
+                0,
+                0,
+                0,
+                attempt,
+                1,
+                std::f32::consts::FRAC_PI_4,
+                1.0,
+                42,
+            );
+            assert!(dx * dx + dy * dy <= 1);
+        }
+    }
+
+    #[test]
+    fn circle_kernel_swap_remains_a_strict_permutation() {
+        let source = source(16, 16);
+        let mut settings = settings(ScatterMode::Swap);
+        settings.grain_size = 4;
+        settings.grain_shape = GrainShape::Circle;
+        settings.radius = 12;
+        let rendered = render_swap(&source, no_maps(), &settings, 42);
+        let mut input_values: Vec<u32> = source.pixels.iter().map(|px| px.red.to_bits()).collect();
+        let mut output_values: Vec<u32> = rendered.iter().map(|px| px.red.to_bits()).collect();
+        input_values.sort_unstable();
+        output_values.sort_unstable();
+        assert_eq!(input_values, output_values);
+    }
+
+    #[test]
+    fn temporal_frame_mode_changes_seed() {
+        let seed_a = temporal_seed(10, TemporalMode::Frame, 1);
+        let seed_b = temporal_seed(10, TemporalMode::Frame, 2);
+        assert_ne!(seed_a, seed_b);
+        assert_eq!(
+            temporal_seed(10, TemporalMode::Static, 1),
+            temporal_seed(10, TemporalMode::Static, 2)
+        );
+    }
+
+    #[test]
+    fn downsample_scales_pixel_distance_controls() {
+        let mut base = settings(ScatterMode::Gather);
+        base.radius = 12;
+        base.grain_size = 8;
+        base.grain_size_min = 4;
+
+        let half = downsample_render_settings(base, 0.5, 0.5);
+        assert_eq!(half.radius, 6);
+        assert_eq!(half.grain_size, 4);
+        assert_eq!(half.grain_size_min, 2);
+
+        let mut minimums = settings(ScatterMode::Gather);
+        minimums.radius = 1;
+        minimums.grain_size = 1;
+        minimums.grain_size_min = 1;
+        let quarter = downsample_render_settings(minimums, 0.25, 0.25);
+        assert_eq!(quarter.radius, 1);
+        assert_eq!(quarter.grain_size, 1);
+        assert_eq!(quarter.grain_size_min, 1);
+    }
 }

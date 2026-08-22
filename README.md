@@ -41,6 +41,8 @@ template.
   - 白黒depth mapをリアルな霧のFalloffへ変換します / Converts monochrome depth maps into realistic fog falloff maps.
 - AOD_DifferentialGenerate
   - レイヤーの画像勾配からRGBA微分マップを生成します / Generates RGBA differential maps from image gradients.
+- AOD_DisplaceScatter
+  - 手続き的なベクトル場とマップでレイヤーを変位・散乱します / Displaces and scatters layers with procedural vector fields and maps.
 - AOD_GradientBlur
   - 輝度/RGB勾配または色相/彩度ベクトル方向に沿って方向性ブラーを適用します / Applies directional blur along lightness/RGB gradients or hue-saturation vectors.
 - AOD_GradientDisplace
@@ -74,7 +76,7 @@ template.
 - AOD_RegionColorize
   - 不透明または色領域をランダム・位置・インデックスで色分けします / Colors connected regions with random, positional, or index-based schemes.
 - AOD_ScatterMap
-  - マップ制御の確率的な散乱をレイヤーに適用します / Applies map-driven stochastic scatter to layers.
+  - マップ制御のGather／Swap方式で画素や粒を散乱します / Applies map-driven gather and swap scatter to layers.
 - AOD_SingularValueDecompose
   - レイヤーに2D特異値分解を適用してLow-rank近似を再構成します / Performs 2D singular value decomposition and low-rank approximation on RGBA channels.
 - AOD_VoronoiGenerate
