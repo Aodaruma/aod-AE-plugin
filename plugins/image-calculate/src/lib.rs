@@ -1,7 +1,11 @@
 #![allow(clippy::drop_non_drop, clippy::question_mark)]
 
 use after_effects as ae;
+use color_art::{Color as ArtColor, ColorSpace as ArtColorSpace};
+use palette::hues::{OklabHue, RgbHue};
+use palette::{FromColor, Hsl, Hsv, Lab, LinSrgb, Oklab, Oklch, Srgb};
 use std::env;
+use std::str::FromStr;
 
 use ae::pf::*;
 use utils::ToPixel;
@@ -18,6 +22,8 @@ enum Params {
     Epsilon,
     ClampResult,
     UseOriginalAlpha,
+    Channel,
+    CalculationColorSpace,
 }
 
 #[derive(Clone, Copy)]
@@ -67,6 +73,48 @@ enum MathOp {
     HyperbolicTangent,
     ToRadians,
     ToDegrees,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChannelMode {
+    Rgba,
+    Rgb,
+    R,
+    G,
+    B,
+    A,
+    Luminance,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CalcColorSpace {
+    Rgb,
+    Oklab,
+    Oklch,
+    Lab,
+    Yiq,
+    Yuv,
+    YCbCr,
+    Hsl,
+    Hsv,
+    Cmyk,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct EncodedColor {
+    r: f32,
+    g: f32,
+    b: f32,
+    a_override: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CalcPixel {
+    c0: f32,
+    c1: f32,
+    c2: f32,
+    aux: f32,
+    alpha: f32,
 }
 
 struct OperationUiInfo {
@@ -221,6 +269,26 @@ impl AdobePluginGlobal for Plugin {
             "Use Original Alpha",
             CheckBoxDef::setup(|d| {
                 d.set_default(false);
+            }),
+        )?;
+
+        params.add(
+            Params::Channel,
+            "Channel",
+            PopupDef::setup(|d| {
+                d.set_options(&["RGBA", "RGB", "R", "G", "B", "A", "Luminance"]);
+                d.set_default(1);
+            }),
+        )?;
+
+        params.add(
+            Params::CalculationColorSpace,
+            "Calculation Color Space",
+            PopupDef::setup(|d| {
+                d.set_options(&[
+                    "RGB", "OKLAB", "OKLCH", "LAB", "YIQ", "YUV", "YCbCr", "HSL", "HSV", "CMYK",
+                ]);
+                d.set_default(1);
             }),
         )?;
 
@@ -466,6 +534,14 @@ impl Plugin {
         let epsilon = epsilon.max(1.0e-12);
         let clamp_result = params.get(Params::ClampResult)?.as_checkbox()?.value();
         let use_original_alpha = params.get(Params::UseOriginalAlpha)?.as_checkbox()?.value();
+        let channel_mode =
+            channel_mode_from_popup(params.get(Params::Channel)?.as_popup()?.value());
+        let calc_color_space = calc_color_space_from_popup(
+            params
+                .get(Params::CalculationColorSpace)?
+                .as_popup()?
+                .value(),
+        );
 
         let layer_b_checkout = params.checkout_at(Params::LayerB, None, None, None)?;
         let layer_b = layer_b_checkout.as_layer()?.value();
@@ -510,29 +586,105 @@ impl Plugin {
                 value_c,
             );
 
+            let calc_a = encode_calc_pixel(calc_color_space, src_a);
+            let calc_b = if use_layer_b {
+                encode_calc_pixel(calc_color_space, src_b)
+            } else {
+                calc_pixel_from_scalar(value_b)
+            };
+            let calc_c = if use_layer_c {
+                encode_calc_pixel(calc_color_space, src_c)
+            } else {
+                calc_pixel_from_scalar(value_c)
+            };
+
+            let mut out_calc = calc_a;
+            let mut color_changed = false;
+            let mut grayscale_linear = None;
+
+            match channel_mode {
+                ChannelMode::Rgba => {
+                    out_calc.c0 = apply_math(op, calc_a.c0, calc_b.c0, calc_c.c0, epsilon);
+                    out_calc.c1 = apply_math(op, calc_a.c1, calc_b.c1, calc_c.c1, epsilon);
+                    out_calc.c2 = apply_math(op, calc_a.c2, calc_b.c2, calc_c.c2, epsilon);
+                    out_calc.alpha =
+                        apply_math(op, calc_a.alpha, calc_b.alpha, calc_c.alpha, epsilon);
+                    color_changed = true;
+                }
+                ChannelMode::Rgb => {
+                    out_calc.c0 = apply_math(op, calc_a.c0, calc_b.c0, calc_c.c0, epsilon);
+                    out_calc.c1 = apply_math(op, calc_a.c1, calc_b.c1, calc_c.c1, epsilon);
+                    out_calc.c2 = apply_math(op, calc_a.c2, calc_b.c2, calc_c.c2, epsilon);
+                    color_changed = true;
+                }
+                ChannelMode::R => {
+                    out_calc.c0 = apply_math(op, calc_a.c0, calc_b.c0, calc_c.c0, epsilon);
+                    color_changed = true;
+                }
+                ChannelMode::G => {
+                    out_calc.c1 = apply_math(op, calc_a.c1, calc_b.c1, calc_c.c1, epsilon);
+                    color_changed = true;
+                }
+                ChannelMode::B => {
+                    out_calc.c2 = apply_math(op, calc_a.c2, calc_b.c2, calc_c.c2, epsilon);
+                    color_changed = true;
+                }
+                ChannelMode::A => {
+                    out_calc.alpha =
+                        apply_math(op, calc_a.alpha, calc_b.alpha, calc_c.alpha, epsilon);
+                }
+                ChannelMode::Luminance => {
+                    let lum_a = luminance_from_pixel(src_a);
+                    let lum_b = if use_layer_b {
+                        luminance_from_pixel(src_b)
+                    } else {
+                        value_b
+                    };
+                    let lum_c = if use_layer_c {
+                        luminance_from_pixel(src_c)
+                    } else {
+                        value_c
+                    };
+                    grayscale_linear = Some(apply_math(op, lum_a, lum_b, lum_c, epsilon));
+                    color_changed = true;
+                }
+            }
+
+            let out_rgb = if let Some(luma) = grayscale_linear {
+                let luma = sanitize_non_finite(luma);
+                let encoded =
+                    encode_from_linear(CalcColorSpace::Rgb, LinSrgb::new(luma, luma, luma));
+                [encoded.r, encoded.g, encoded.b]
+            } else if color_changed {
+                out_calc.c0 = sanitize_non_finite(out_calc.c0);
+                out_calc.c1 = sanitize_non_finite(out_calc.c1);
+                out_calc.c2 = sanitize_non_finite(out_calc.c2);
+                out_calc.aux = sanitize_non_finite(out_calc.aux);
+                let lin = decode_to_linear(
+                    calc_color_space,
+                    out_calc.c0,
+                    out_calc.c1,
+                    out_calc.c2,
+                    out_calc.aux,
+                );
+                let encoded = encode_from_linear(CalcColorSpace::Rgb, lin);
+                [encoded.r, encoded.g, encoded.b]
+            } else {
+                [src_a.red, src_a.green, src_a.blue]
+            };
+
+            let mut out_alpha = sanitize_non_finite(out_calc.alpha);
             let clamp_01 = clamp_result || !out_is_f32;
 
             let mut out_px = PixelF32 {
-                red: sanitize_output(
-                    apply_math(op, src_a.red, src_b.red, src_c.red, epsilon),
-                    clamp_01,
-                ),
-                green: sanitize_output(
-                    apply_math(op, src_a.green, src_b.green, src_c.green, epsilon),
-                    clamp_01,
-                ),
-                blue: sanitize_output(
-                    apply_math(op, src_a.blue, src_b.blue, src_c.blue, epsilon),
-                    clamp_01,
-                ),
-                alpha: sanitize_output(
-                    apply_math(op, src_a.alpha, src_b.alpha, src_c.alpha, epsilon),
-                    clamp_01,
-                ),
+                red: sanitize_output(out_rgb[0], clamp_01),
+                green: sanitize_output(out_rgb[1], clamp_01),
+                blue: sanitize_output(out_rgb[2], clamp_01),
+                alpha: sanitize_output(out_alpha, clamp_01),
             };
 
             if use_original_alpha {
-                let mut out_alpha = src_a.alpha;
+                out_alpha = src_a.alpha;
                 if !out_alpha.is_finite() {
                     out_alpha = 0.0;
                 }
@@ -562,6 +714,33 @@ fn input_source_from_popup(value: i32) -> InputSource {
     match value {
         2 => InputSource::Layer,
         _ => InputSource::Value,
+    }
+}
+
+fn channel_mode_from_popup(value: i32) -> ChannelMode {
+    match value {
+        2 => ChannelMode::Rgb,
+        3 => ChannelMode::R,
+        4 => ChannelMode::G,
+        5 => ChannelMode::B,
+        6 => ChannelMode::A,
+        7 => ChannelMode::Luminance,
+        _ => ChannelMode::Rgba,
+    }
+}
+
+fn calc_color_space_from_popup(value: i32) -> CalcColorSpace {
+    match value {
+        2 => CalcColorSpace::Oklab,
+        3 => CalcColorSpace::Oklch,
+        4 => CalcColorSpace::Lab,
+        5 => CalcColorSpace::Yiq,
+        6 => CalcColorSpace::Yuv,
+        7 => CalcColorSpace::YCbCr,
+        8 => CalcColorSpace::Hsl,
+        9 => CalcColorSpace::Hsv,
+        10 => CalcColorSpace::Cmyk,
+        _ => CalcColorSpace::Rgb,
     }
 }
 
@@ -1021,6 +1200,316 @@ fn sanitize_output(mut v: f32, clamp_01: bool) -> f32 {
         v = v.clamp(0.0, 1.0);
     }
     v
+}
+
+#[inline]
+fn sanitize_non_finite(v: f32) -> f32 {
+    if v.is_finite() { v } else { 0.0 }
+}
+
+#[inline]
+fn wrap01(x: f32) -> f32 {
+    let mut v = x % 1.0;
+    if v < 0.0 {
+        v += 1.0;
+    }
+    v
+}
+
+#[inline]
+fn encode_signed(value: f32, max_abs: f32) -> f32 {
+    (value / (2.0 * max_abs)) + 0.5
+}
+
+#[inline]
+fn decode_signed(channel: f32, max_abs: f32) -> f32 {
+    (channel - 0.5) * (2.0 * max_abs)
+}
+
+#[inline]
+fn encode_pos(value: f32, max: f32) -> f32 {
+    value / max
+}
+
+#[inline]
+fn decode_pos(channel: f32, max: f32) -> f32 {
+    channel * max
+}
+
+fn calc_pixel_from_scalar(value: f32) -> CalcPixel {
+    let value = sanitize_non_finite(value);
+    CalcPixel {
+        c0: value,
+        c1: value,
+        c2: value,
+        aux: value,
+        alpha: value,
+    }
+}
+
+fn encode_calc_pixel(space: CalcColorSpace, px: PixelF32) -> CalcPixel {
+    let lin = decode_to_linear(CalcColorSpace::Rgb, px.red, px.green, px.blue, px.alpha);
+    let encoded = encode_from_linear(space, lin);
+    CalcPixel {
+        c0: encoded.r,
+        c1: encoded.g,
+        c2: encoded.b,
+        aux: encoded.a_override.unwrap_or(0.0),
+        alpha: px.alpha,
+    }
+}
+
+fn luminance_from_pixel(px: PixelF32) -> f32 {
+    let lin = decode_to_linear(CalcColorSpace::Rgb, px.red, px.green, px.blue, px.alpha);
+    sanitize_non_finite(0.2126 * lin.red + 0.7152 * lin.green + 0.0722 * lin.blue)
+}
+
+fn decode_to_linear(space: CalcColorSpace, r: f32, g: f32, b: f32, a: f32) -> LinSrgb<f32> {
+    const OKLAB_AB_MAX: f32 = 0.5;
+    const OKLCH_CHROMA_MAX: f32 = 0.4;
+    const LAB_L_MAX: f32 = 100.0;
+    const LAB_AB_MAX: f32 = 128.0;
+    const YIQ_I_MAX: f32 = 0.5957;
+    const YIQ_Q_MAX: f32 = 0.5226;
+    const YUV_U_MAX: f32 = 0.436;
+    const YUV_V_MAX: f32 = 0.615;
+    const YCBCR_MAX: f32 = 255.0;
+
+    match space {
+        CalcColorSpace::Rgb => Srgb::new(r, g, b).into_linear(),
+        CalcColorSpace::Oklab => {
+            let l = b;
+            let a = decode_signed(r, OKLAB_AB_MAX);
+            let bb = decode_signed(g, OKLAB_AB_MAX);
+            LinSrgb::from_color(Oklab::new(l, a, bb))
+        }
+        CalcColorSpace::Oklch => {
+            let l = b;
+            let chroma = decode_pos(g, OKLCH_CHROMA_MAX);
+            let hue = wrap01(r) * 360.0;
+            LinSrgb::from_color(Oklch::new(l, chroma, OklabHue::from_degrees(hue)))
+        }
+        CalcColorSpace::Lab => {
+            let l = b * LAB_L_MAX;
+            let a = decode_signed(r, LAB_AB_MAX);
+            let bb = decode_signed(g, LAB_AB_MAX);
+            LinSrgb::from_color(Lab::new(l, a, bb))
+        }
+        CalcColorSpace::Yiq => {
+            let y = b;
+            let i = decode_signed(r, YIQ_I_MAX);
+            let q = decode_signed(g, YIQ_Q_MAX);
+            let spec = format!("yiq({:.6},{:.6},{:.6})", y, i, q);
+            if let Ok(color) = ArtColor::from_str(&spec) {
+                let rgb = color.vec_of(ArtColorSpace::RGB);
+                Srgb::new(
+                    (rgb[0] / 255.0) as f32,
+                    (rgb[1] / 255.0) as f32,
+                    (rgb[2] / 255.0) as f32,
+                )
+                .into_linear()
+            } else {
+                Srgb::new(r, g, b).into_linear()
+            }
+        }
+        CalcColorSpace::Yuv => {
+            let y = b;
+            let u = decode_signed(r, YUV_U_MAX);
+            let v = decode_signed(g, YUV_V_MAX);
+            let spec = format!("yuv({:.6},{:.6},{:.6})", y, u, v);
+            if let Ok(color) = ArtColor::from_str(&spec) {
+                let rgb = color.vec_of(ArtColorSpace::RGB);
+                Srgb::new(
+                    (rgb[0] / 255.0) as f32,
+                    (rgb[1] / 255.0) as f32,
+                    (rgb[2] / 255.0) as f32,
+                )
+                .into_linear()
+            } else {
+                Srgb::new(r, g, b).into_linear()
+            }
+        }
+        CalcColorSpace::YCbCr => {
+            let y = decode_pos(b, YCBCR_MAX);
+            let cb = decode_pos(r, YCBCR_MAX);
+            let cr = decode_pos(g, YCBCR_MAX);
+            let spec = format!("ycbcr({:.3},{:.3},{:.3})", y, cb, cr);
+            if let Ok(color) = ArtColor::from_str(&spec) {
+                let rgb = color.vec_of(ArtColorSpace::RGB);
+                Srgb::new(
+                    (rgb[0] / 255.0) as f32,
+                    (rgb[1] / 255.0) as f32,
+                    (rgb[2] / 255.0) as f32,
+                )
+                .into_linear()
+            } else {
+                Srgb::new(r, g, b).into_linear()
+            }
+        }
+        CalcColorSpace::Hsl => {
+            let hue = wrap01(r) * 360.0;
+            let saturation = g;
+            let lightness = b;
+            LinSrgb::from_color(Hsl::new(RgbHue::from_degrees(hue), saturation, lightness))
+        }
+        CalcColorSpace::Hsv => {
+            let hue = wrap01(r) * 360.0;
+            let saturation = g;
+            let value = b;
+            LinSrgb::from_color(Hsv::new(RgbHue::from_degrees(hue), saturation, value))
+        }
+        CalcColorSpace::Cmyk => {
+            let c = r as f64;
+            let m = g as f64;
+            let y = b as f64;
+            let k = a as f64;
+            match ArtColor::from_cmyk(c, m, y, k) {
+                Ok(color) => {
+                    let rgb = color.vec_of(ArtColorSpace::RGB);
+                    Srgb::new(
+                        (rgb[0] / 255.0) as f32,
+                        (rgb[1] / 255.0) as f32,
+                        (rgb[2] / 255.0) as f32,
+                    )
+                    .into_linear()
+                }
+                Err(_) => Srgb::new(r, g, b).into_linear(),
+            }
+        }
+    }
+}
+
+fn encode_from_linear(space: CalcColorSpace, lin: LinSrgb<f32>) -> EncodedColor {
+    const OKLAB_AB_MAX: f32 = 0.5;
+    const OKLCH_CHROMA_MAX: f32 = 0.4;
+    const LAB_L_MAX: f32 = 100.0;
+    const LAB_AB_MAX: f32 = 128.0;
+    const YIQ_I_MAX: f32 = 0.5957;
+    const YIQ_Q_MAX: f32 = 0.5226;
+    const YUV_U_MAX: f32 = 0.436;
+    const YUV_V_MAX: f32 = 0.615;
+    const YCBCR_MAX: f32 = 255.0;
+
+    match space {
+        CalcColorSpace::Rgb => {
+            let srgb: Srgb<f32> = Srgb::from_linear(lin);
+            EncodedColor {
+                r: srgb.red,
+                g: srgb.green,
+                b: srgb.blue,
+                a_override: None,
+            }
+        }
+        CalcColorSpace::Oklab => {
+            let c: Oklab<f32> = Oklab::from_color(lin);
+            EncodedColor {
+                r: encode_signed(c.a, OKLAB_AB_MAX),
+                g: encode_signed(c.b, OKLAB_AB_MAX),
+                b: c.l,
+                a_override: None,
+            }
+        }
+        CalcColorSpace::Oklch => {
+            let c: Oklch<f32> = Oklch::from_color(lin);
+            EncodedColor {
+                r: wrap01(c.hue.into_degrees() / 360.0),
+                g: encode_pos(c.chroma, OKLCH_CHROMA_MAX),
+                b: c.l,
+                a_override: None,
+            }
+        }
+        CalcColorSpace::Lab => {
+            let c = Lab::from_color(lin);
+            EncodedColor {
+                r: encode_signed(c.a, LAB_AB_MAX),
+                g: encode_signed(c.b, LAB_AB_MAX),
+                b: c.l / LAB_L_MAX,
+                a_override: None,
+            }
+        }
+        CalcColorSpace::Yiq => {
+            let srgb: Srgb<f32> = Srgb::from_linear(lin);
+            let art = ArtColor::new(
+                (srgb.red as f64) * 255.0,
+                (srgb.green as f64) * 255.0,
+                (srgb.blue as f64) * 255.0,
+                1.0,
+            );
+            let yiq = art.vec_of(ArtColorSpace::YIQ);
+            EncodedColor {
+                r: encode_signed(yiq[1] as f32, YIQ_I_MAX),
+                g: encode_signed(yiq[2] as f32, YIQ_Q_MAX),
+                b: yiq[0] as f32,
+                a_override: None,
+            }
+        }
+        CalcColorSpace::Yuv => {
+            let srgb: Srgb<f32> = Srgb::from_linear(lin);
+            let art = ArtColor::new(
+                (srgb.red as f64) * 255.0,
+                (srgb.green as f64) * 255.0,
+                (srgb.blue as f64) * 255.0,
+                1.0,
+            );
+            let yuv = art.vec_of(ArtColorSpace::YUV);
+            EncodedColor {
+                r: encode_signed(yuv[1] as f32, YUV_U_MAX),
+                g: encode_signed(yuv[2] as f32, YUV_V_MAX),
+                b: yuv[0] as f32,
+                a_override: None,
+            }
+        }
+        CalcColorSpace::YCbCr => {
+            let srgb: Srgb<f32> = Srgb::from_linear(lin);
+            let art = ArtColor::new(
+                (srgb.red as f64) * 255.0,
+                (srgb.green as f64) * 255.0,
+                (srgb.blue as f64) * 255.0,
+                1.0,
+            );
+            let ycbcr = art.vec_of(ArtColorSpace::YCbCr);
+            EncodedColor {
+                r: encode_pos(ycbcr[1] as f32, YCBCR_MAX),
+                g: encode_pos(ycbcr[2] as f32, YCBCR_MAX),
+                b: encode_pos(ycbcr[0] as f32, YCBCR_MAX),
+                a_override: None,
+            }
+        }
+        CalcColorSpace::Hsl => {
+            let c = Hsl::from_color(lin);
+            EncodedColor {
+                r: wrap01(c.hue.into_degrees() / 360.0),
+                g: c.saturation,
+                b: c.lightness,
+                a_override: None,
+            }
+        }
+        CalcColorSpace::Hsv => {
+            let c = Hsv::from_color(lin);
+            EncodedColor {
+                r: wrap01(c.hue.into_degrees() / 360.0),
+                g: c.saturation,
+                b: c.value,
+                a_override: None,
+            }
+        }
+        CalcColorSpace::Cmyk => {
+            let srgb: Srgb<f32> = Srgb::from_linear(lin);
+            let art = ArtColor::new(
+                (srgb.red as f64) * 255.0,
+                (srgb.green as f64) * 255.0,
+                (srgb.blue as f64) * 255.0,
+                1.0,
+            );
+            let cmyk = art.vec_of(ArtColorSpace::CMYK);
+            EncodedColor {
+                r: cmyk[0] as f32,
+                g: cmyk[1] as f32,
+                b: cmyk[2] as f32,
+                a_override: Some(cmyk[3] as f32),
+            }
+        }
+    }
 }
 
 fn sample_input(

@@ -1,0 +1,28 @@
+[package]
+name = "image_scaler"
+description = "Scales layers with selectable interpolation modes, anchor point, edge handling, and optional reciprocal or separate X/Y scaling."
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+palette = "0.7.6"
+utils = { path = "../../crates/utils" }
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true

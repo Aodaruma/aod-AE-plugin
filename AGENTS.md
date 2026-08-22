@@ -46,6 +46,22 @@
    - `src/lib.rs` の `PLUGIN_DESCRIPTION`
 3) ルート `README.md` のプラグイン一覧に追加
 
+### cargo-generate 非対話実行メモ（知見）
+
+- `--template-values-file` を使う場合、ファイルは必ず `[values]` セクションを持つこと。  
+  例:
+  ```toml
+  [values]
+  description = "Short description."
+  features = []
+  with_deepcolor = true
+  with_thrededrender = true
+  with_smartrender = true
+  ```
+- `[values]` を付けないと `missing field 'values'` で生成に失敗する。
+- テンプレートのキー名は `with_thrededrender`（スペルそのまま）なので、values ファイル側も同名で指定する。
+- 新規生成直後は `cargo check -p <crate_name>` を実行し、テンプレート由来の構文崩れや置換漏れを早期検知する。
+
 ## ビルド・インストール
 
 - 全プラグイン: `just build` / `just release`
@@ -87,6 +103,8 @@
 ## ブランチ・PR 運用（必須）
 
 - `main` / `dev` への直接コミットは禁止（PR 経由のみ）。
+- トピックブランチは必ず最新の `dev` から作成する（作成前に `git switch dev` / `git pull --ff-only origin dev` を実行）。
+- `main` や他のトピックブランチを分岐元にしない。
 - 作業時は必ずトピックブランチを作成し、`dev` へ Pull Request を作成する。
 - 原則として1トピック1ブランチで管理し、無関係な変更を混在させない。
 - Codex は、ユーザーの明示確認があるまでコミットおよび PR 作成を行わない。

@@ -1,6 +1,6 @@
 [placeholders]
 description = { prompt = "Short description of the plugin", type = "string" }
-features = { prompt = "Select features", type = "array", choices = [
+features = { prompt = "Select features", type = "array", default = [], choices = [
     "imageproc",
     "rustfft",
     "nalgebra",

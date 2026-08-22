@@ -1,0 +1,28 @@
+[package]
+name = "displace_scatter"
+description = "Applies map-driven procedural displacement scatter to layers."
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+palette = "0.7.6"
+utils = { path = "../../crates/utils" }
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+winres = "0.1.12"
+
+[lints]
+workspace = true

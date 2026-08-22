@@ -1,0 +1,27 @@
+[package]
+name = "fft"
+description = "Performs 2D FFT on RGBA channels and outputs real or imaginary spectra."
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["gpu_wgpu"]
+catch-panics = []
+gpu_wgpu = ["utils/spectral_wgpu"]
+
+[dependencies]
+after-effects = { workspace = true }
+utils = { path = "../../crates/utils", features = ["spectral"] }
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true
