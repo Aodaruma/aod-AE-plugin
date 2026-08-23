@@ -27,6 +27,7 @@
         { name: "Singular Value Decompose", aod: "AOD_SingularValueDecompose", slug: "singular-value-decompose", category: "P", comp: "20 Singular Value Decompose" },
 
         { name: "Color Change", aod: "AOD_ColorChange", slug: "color-change", category: "A", match: "ColorChange" },
+        { name: "Color Boundary Blur", aod: "AOD_ColorBoundaryBlur", slug: "color-boundary-blur", category: "A", match: "ColorBoundaryBlur" },
         { name: "Color Select", aod: "AOD_ColorSelect", slug: "color-select", category: "A", comp: "05 Color Select" },
         { name: "Contour Generate", aod: "AOD_ContourGenerate", slug: "contour-generate", category: "A", match: "ContourGenerate" },
         { name: "Differential Generate", aod: "AOD_DifferentialGenerate", slug: "differential-generate", category: "A", match: "DifferentialGenerate" },
@@ -129,6 +130,21 @@
             setProperty(effect, "Number of Colors", 1);
             setProperty(effect, "Color1 From", [0.34, 0.30, 0.28, 1]);
             setProperty(effect, "Color1 To", [1.0, 0.24, 0.08, 1]);
+        } else if (item.match === "ColorBoundaryBlur") {
+            setProperty(effect, "Color Tolerance (%)", 18);
+            setProperty(effect, "Color Proximity (px)", 3);
+            setProperty(effect, "Number of Colors", 4);
+            setProperty(effect, "Color 1", [0.10, 0.08, 0.07, 1]);
+            setProperty(effect, "Color 2", [0.38, 0.31, 0.27, 1]);
+            setProperty(effect, "Color 3", [0.72, 0.60, 0.49, 1]);
+            setProperty(effect, "Color 4", [0.92, 0.84, 0.70, 1]);
+            setProperty(effect, "Blur Mode", 3);
+            setProperty(effect, "Blur Radius (px)", 12);
+            setProperty(effect, "Normal Samples", 25);
+            setProperty(effect, "Along-Boundary Radius (%)", 12);
+            setProperty(effect, "Post Smooth (px)", 1.5);
+            setProperty(effect, "Boundary Width (px)", 3);
+            setProperty(effect, "Mask Feather (px)", 3);
         } else if (item.match === "ColorConvert") {
             setProperty(effect, "From Color Space", 1);
             setProperty(effect, "To Color Space", 3);

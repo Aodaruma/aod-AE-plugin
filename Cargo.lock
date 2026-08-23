@@ -466,6 +466,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "color_boundary_blur"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "seq-macro",
+ "utils",
+]
+
+[[package]]
 name = "color_change"
 version = "0.1.1"
 dependencies = [

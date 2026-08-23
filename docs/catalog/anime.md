@@ -18,6 +18,24 @@
 - `Number of Colors`、`Add/Remove Color`: 置換ペア数を管理します。
 - 各`Color From/To`: 置換元と置換先の色を設定します。
 
+## AOD_ColorBoundaryBlur
+
+- **分類:** A：アニメ素材
+
+![AOD_ColorBoundaryBlur](assets/previews/color-boundary-blur.png)
+
+複数の指定色が近接する境界だけを検出し、等方または境界法線方向のブラーでなじませます。
+
+### パラメーター
+
+- `Color Tolerance`、`Minimum Alpha`、`Color Proximity`: 選択色との一致条件と、アンチエイリアス等の短い隙間をまたぐ距離を設定します。
+- `Number of Colors`、`Add/Remove Color`、各`Color`: 2～16色の選択色を動的に管理します。
+- `Blur Mode`: Box、Gaussian、境界法線方向の異方性ブラーを選択します。
+- `Blur Radius`、`Normal Samples`、`Along-Boundary Radius`: ブラー半径、法線方向の品質、接線方向へ広げる量を設定します。
+- `Post Smooth`: 法線方向ブラーへ追加のGaussianブラーをかけて筋状の結果をなじませます。
+- `Boundary Width`、`Mask Feather`、`Mix`: 適用範囲、境界マスクのぼかし、原画像との混合量を設定します。
+- `Edge Mode`、`Preserve Alpha`: 画像端のサンプリングと元アルファの保持を設定します。
+
 ## AOD_ColorSelect
 
 - **分類:** A：アニメ素材
