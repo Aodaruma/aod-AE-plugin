@@ -1,0 +1,28 @@
+[package]
+name = "space_convert"
+description = "Converts images between Cartesian, curvilinear coordinate, Radon, and channel-aware line Hough representations."
+version = "0.2.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+utils = { path = "../../crates/utils" }
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+winres = "0.1.12"
+
+[lints]
+workspace = true

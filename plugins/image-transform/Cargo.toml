@@ -1,0 +1,27 @@
+[package]
+name = "image_transform"
+description = "Applies affine image transforms with selectable reconstruction filters and outside-image sampling."
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+utils = { path = "../../crates/utils" }
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+winres = "0.1.12"
+
+[lints]
+workspace = true
