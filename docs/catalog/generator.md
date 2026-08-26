@@ -45,15 +45,18 @@
 
 ![AOD_RainbowGenerate](assets/previews/rainbow-generate.png)
 
-2点アンカーまたは中心・角度から得た座標を、OKLCH／HSV／HSL／CIELCh(ab)／CIELCh(uv)／JzCzHz／IPT IChの色成分へ直接変換して虹を生成します。
+2点アンカーまたは中心・角度から得た座標を、多様な知覚・円筒色空間へ変換して虹を生成します。パラメトリック生成を標準とし、二色補間にも切り替えられます。
 
 ### パラメーター
 
 - `Shape`、`Coordinates`: Linear、Reflected Linear、Radial (L2)、Diamond (L1)、Box (L∞)、Minkowski (Lp)、Conic、Spiral、Starburstと、Two Points／Parametric指定を切り替えます。
 - `Start/Center`、`End/Radius`または`Center/Angle/Length`: グラデーションの基準座標を設定します。
 - `Aspect (-Vertical / +Horizontal)`: `-1..1`の対称値を、縦方向／横方向の対数ストレッチへ変換します。
+- `Skew`: 全形状を水平方向へシアー変形します。`0%`では従来の形状を維持します。
 - `Minkowski Exponent`、`Spiral Turns`、`Ray Count`: 選択したプロシージャル形状を数値で調整します。
-- `Color Model`: 虹を直接生成するOKLCH、HSV、HSL、CIELCh(ab)、CIELCh(uv)、JzCzHz、IPT IChを選択します。二色のカラーピッカーは使用しません。従来の先頭3モードは番号と挙動を維持しています。
+- `Generation Mode`: 標準の`Parametric`と、始点／終点カラーを使う`Two Color`を切り替えます。
+- `Color Model`: ParametricではOKLCH、HSV、HSL、CIELCh(ab)、CIELCh(uv)、JzCzHz、IPT ICh、OkHSL、OkHSV、CAM16-UCS J'M'h'を選択します。既存7モードの番号と挙動は維持しています。
+- `Two Color Space`、`Start/End Color`: OKLab、OKLCH、CAM16-UCS J'a'b'、CAM16-UCS J'M'h'で二色を補間します。円筒空間では最短色相経路を使用します。
 - `Hue`と`Saturation/Chroma`、`Brightness/Lightness/Jz/Intensity`の各`Scale/Offset`: `成分(t) = Offset + Scale × t`として虹全体を制御します。Hue Scale 100%は色相1周です。知覚系モデルのChroma 100%は、OKLCH `0.2`、CIELCh(ab) `C*=80`、CIELCh(uv) `C*=100`、JzCzHz `Cz=0.08`、IPT ICh `C=0.30`に対応します。JzCzHzのLightness 100%は100 nit D65白の`Jz=0.167174`です。
 - `Split Range Start / End`: Scale／Offset UIを明示的な始点・終点成分へ切り替えます。色相値は複数周や逆方向も指定できます。
 - `Preset`、`Bezier X1/Y1/X2/Y2`: 補間カーブのプリセットまたはカスタム3次ベジェを設定します。

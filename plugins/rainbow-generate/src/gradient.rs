@@ -1,11 +1,24 @@
 use std::f32::consts::TAU;
 
+use palette::{
+    Okhsl, Okhsv, Srgb, Xyz,
+    cam16::{BakedParameters, Cam16Jmh, Cam16UcsJab, Cam16UcsJmh, Parameters, StaticWp},
+    convert::{FromColorUnclamped, IntoColorUnclamped},
+    white_point::D65,
+};
+
 const OKLCH_CHROMA_AT_100_PERCENT: f32 = 0.2;
 const CIELAB_CHROMA_AT_100_PERCENT: f32 = 80.0;
 const CIELUV_CHROMA_AT_100_PERCENT: f32 = 100.0;
 const JZ_CHROMA_AT_100_PERCENT: f32 = 0.08;
 const JZ_AT_100_PERCENT: f32 = 0.167_174;
 const IPT_CHROMA_AT_100_PERCENT: f32 = 0.3;
+const CAM16_UCS_COLORFULNESS_AT_100_PERCENT: f32 = 50.0;
+// CAM16's incomplete chromatic adaptation can assign a small residual M' to
+// display neutrals. Treat values below 2 as achromatic for hue interpolation.
+const CAM16_NEUTRAL_COLORFULNESS: f32 = 2.0;
+
+pub(crate) type Cam16ViewingConditions = BakedParameters<StaticWp<D65>, f32>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Shape {
@@ -29,6 +42,17 @@ pub(crate) enum ColorModel {
     CielchUv,
     Jzczhz,
     IptIch,
+    Okhsl,
+    Okhsv,
+    Cam16UcsJmh,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TwoColorSpace {
+    Oklab,
+    Oklch,
+    Cam16UcsJab,
+    Cam16UcsJmh,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,22 +79,50 @@ pub(crate) struct Geometry {
     pub start: [f32; 2],
     pub end: [f32; 2],
     pub aspect: f32,
+    /// Horizontal inverse shear, expressed as rise/run (`100% == 1.0`).
+    pub skew: f32,
     pub exponent: f32,
     pub spiral_turns: f32,
     pub ray_count: f32,
 }
 
-/// Parametric rainbow endpoints in cylindrical component order:
-/// `[unwrapped hue turns, saturation/chroma amount, value/lightness]`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
+pub(crate) struct PreparedTwoColor {
+    start: [f32; 3],
+    end: [f32; 3],
+    start_rgb: [f32; 3],
+    end_rgb: [f32; 3],
+    color_space: TwoColorSpace,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum GradientColors {
+    /// Cylindrical component order: `[unwrapped hue turns,
+    /// saturation/chroma amount, value/lightness]`.
+    Parametric {
+        start: [f32; 3],
+        end: [f32; 3],
+        color_model: ColorModel,
+    },
+    TwoColor(PreparedTwoColor),
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct Rainbow {
-    pub start: [f32; 3],
-    pub end: [f32; 3],
-    pub color_model: ColorModel,
+    pub colors: GradientColors,
     pub extend: ExtendMode,
     pub easing: Easing,
     pub bezier: [f32; 4],
     pub clamp_gamut: bool,
+    pub cam16_parameters: Cam16ViewingConditions,
+}
+
+/// Fixed viewing conditions for display-referred CAM16-UCS rendering: D65,
+/// 40 cd/m² adapting luminance, a 20% background, average surround, and
+/// automatic illuminant discounting. Baking once per render avoids rebuilding
+/// the CAM16 dependent parameters for each pixel.
+pub(crate) fn cam16_viewing_conditions() -> Cam16ViewingConditions {
+    Parameters::default_static_wp(40.0f32).bake()
 }
 
 pub(crate) fn geometry_value(point: [f32; 2], geometry: Geometry) -> f32 {
@@ -81,28 +133,32 @@ pub(crate) fn geometry_value(point: [f32; 2], geometry: Geometry) -> f32 {
         return 0.0;
     }
 
-    if geometry.shape == Shape::Linear {
-        return ((point[0] - geometry.start[0]) * dx + (point[1] - geometry.start[1]) * dy)
-            / length_sq;
-    }
-
     let length = length_sq.sqrt();
     let ux = dx / length;
     let uy = dy / length;
     let px = point[0] - geometry.start[0];
     let py = point[1] - geometry.start[1];
     let local_x = px * ux + py * uy;
+    let local_y = -px * uy + py * ux;
+    let skew = if geometry.skew.is_finite() {
+        geometry.skew.clamp(-10.0, 10.0)
+    } else {
+        0.0
+    };
+    // Coordinates are transformed back into the unskewed gradient domain. This
+    // is the inverse of the forward local-space shear x' = x + skew * y.
+    let local_x = local_x - skew * local_y;
     let aspect = if geometry.aspect.is_finite() {
         geometry.aspect.clamp(1.0e-4, 1.0e4)
     } else {
         1.0
     };
-    let local_y = (-px * uy + py * ux) * aspect;
+    let local_y = local_y * aspect;
     let normalized_x = local_x / length;
     let normalized_y = local_y / length;
 
     match geometry.shape {
-        Shape::Linear => unreachable!(),
+        Shape::Linear => normalized_x,
         Shape::Radial => normalized_x.hypot(normalized_y),
         Shape::Diamond => normalized_x.abs() + normalized_y.abs(),
         Shape::Box => normalized_x.abs().max(normalized_y.abs()),
@@ -155,14 +211,132 @@ pub(crate) fn aspect_ratio_from_balance(balance: f32) -> f32 {
     10.0_f32.powf(balance)
 }
 
-pub(crate) fn sample_rainbow(raw_t: f32, rainbow: Rainbow) -> [f32; 3] {
+pub(crate) fn sample_rainbow(raw_t: f32, rainbow: &Rainbow) -> [f32; 3] {
     let extended = extend_value(raw_t, rainbow.extend);
     let t = ease_value(extended, rainbow.easing, rainbow.bezier);
-    let components = lerp3(rainbow.start, rainbow.end, t);
-    components_to_rgb(components, rainbow.color_model, rainbow.clamp_gamut)
+    match rainbow.colors {
+        GradientColors::Parametric {
+            start,
+            end,
+            color_model,
+        } => components_to_rgb(
+            lerp3(start, end, t),
+            color_model,
+            rainbow.cam16_parameters,
+            rainbow.clamp_gamut,
+        ),
+        GradientColors::TwoColor(prepared) => interpolate_prepared_two_color(
+            prepared,
+            t,
+            rainbow.cam16_parameters,
+            rainbow.clamp_gamut,
+        ),
+    }
 }
 
-fn components_to_rgb(components: [f32; 3], color_model: ColorModel, clamp_gamut: bool) -> [f32; 3] {
+pub(crate) fn prepare_two_color(
+    start_rgb: [f32; 3],
+    end_rgb: [f32; 3],
+    color_space: TwoColorSpace,
+    cam16_parameters: Cam16ViewingConditions,
+) -> GradientColors {
+    let (start, end) = match color_space {
+        TwoColorSpace::Oklab | TwoColorSpace::Oklch => {
+            let start_oklab = linear_srgb_to_oklab(start_rgb.map(srgb_to_linear));
+            let end_oklab = linear_srgb_to_oklab(end_rgb.map(srgb_to_linear));
+            if color_space == TwoColorSpace::Oklab {
+                (start_oklab, end_oklab)
+            } else {
+                prepare_polar_endpoints(
+                    oklab_to_oklch(start_oklab),
+                    oklab_to_oklch(end_oklab),
+                    1.0e-7,
+                    1.0,
+                )
+            }
+        }
+        TwoColorSpace::Cam16UcsJab => (
+            srgb_to_cam16_ucs_jab(start_rgb, cam16_parameters),
+            srgb_to_cam16_ucs_jab(end_rgb, cam16_parameters),
+        ),
+        TwoColorSpace::Cam16UcsJmh => prepare_polar_endpoints(
+            srgb_to_cam16_ucs_jmh(start_rgb, cam16_parameters),
+            srgb_to_cam16_ucs_jmh(end_rgb, cam16_parameters),
+            CAM16_NEUTRAL_COLORFULNESS,
+            360.0,
+        ),
+    };
+    GradientColors::TwoColor(PreparedTwoColor {
+        start,
+        end,
+        start_rgb,
+        end_rgb,
+        color_space,
+    })
+}
+
+fn prepare_polar_endpoints(
+    mut start: [f32; 3],
+    mut end: [f32; 3],
+    neutral_threshold: f32,
+    hue_period: f32,
+) -> ([f32; 3], [f32; 3]) {
+    // The component order is [lightness, chroma/colorfulness, hue]. Hue is
+    // undefined on the neutral axis, so borrow it from the chromatic endpoint.
+    if start[1] <= neutral_threshold {
+        start[2] = end[2];
+    }
+    if end[1] <= neutral_threshold {
+        end[2] = start[2];
+    }
+    end[2] = start[2] + shortest_hue_delta(start[2], end[2], hue_period);
+    (start, end)
+}
+
+fn interpolate_prepared_two_color(
+    prepared: PreparedTwoColor,
+    t: f32,
+    cam16_parameters: Cam16ViewingConditions,
+    clamp_gamut: bool,
+) -> [f32; 3] {
+    let PreparedTwoColor {
+        start,
+        end,
+        start_rgb,
+        end_rgb,
+        color_space,
+    } = prepared;
+    if t <= 0.0 {
+        let mut rgb = start_rgb;
+        sanitize_rgb(&mut rgb, clamp_gamut);
+        return rgb;
+    }
+    if t >= 1.0 {
+        let mut rgb = end_rgb;
+        sanitize_rgb(&mut rgb, clamp_gamut);
+        return rgb;
+    }
+    let components = lerp3(start, end, t);
+    let mut rgb = match color_space {
+        TwoColorSpace::Oklab => linear_to_srgb3(oklab_to_linear_srgb(components)),
+        TwoColorSpace::Oklch => linear_to_srgb3(oklab_to_linear_srgb(oklch_to_oklab(components))),
+        TwoColorSpace::Cam16UcsJab => cam16_ucs_jab_to_srgb(components, cam16_parameters),
+        TwoColorSpace::Cam16UcsJmh => cam16_ucs_jmh_to_srgb(components, cam16_parameters),
+    };
+    sanitize_rgb(&mut rgb, clamp_gamut);
+    rgb
+}
+
+fn shortest_hue_delta(start: f32, end: f32, period: f32) -> f32 {
+    (end - start + period * 0.5).rem_euclid(period) - period * 0.5
+}
+
+fn components_to_rgb(
+    components: [f32; 3],
+    color_model: ColorModel,
+    cam16_parameters: Cam16ViewingConditions,
+    clamp_gamut: bool,
+) -> [f32; 3] {
     let hue = finite_or(components[0], 0.0).rem_euclid(1.0);
     let second = finite_or(components[1], 0.0).max(0.0);
     let third = finite_or(components[2], 0.0).max(0.0);
@@ -193,14 +367,26 @@ fn components_to_rgb(components: [f32; 3], color_model: ColorModel, clamp_gamut:
             second * IPT_CHROMA_AT_100_PERCENT,
             hue,
         ])),
+        ColorModel::Okhsl => palette_srgb_to_array(Srgb::from_color_unclamped(Okhsl::new(
+            hue * 360.0,
+            second,
+            third,
+        ))),
+        ColorModel::Okhsv => palette_srgb_to_array(Srgb::from_color_unclamped(Okhsv::new(
+            hue * 360.0,
+            second,
+            third,
+        ))),
+        ColorModel::Cam16UcsJmh => cam16_ucs_jmh_to_srgb(
+            [
+                third * 100.0,
+                second * CAM16_UCS_COLORFULNESS_AT_100_PERCENT,
+                hue * 360.0,
+            ],
+            cam16_parameters,
+        ),
     };
-    for channel in &mut rgb {
-        if !channel.is_finite() {
-            *channel = 0.0;
-        } else if clamp_gamut {
-            *channel = channel.clamp(0.0, 1.0);
-        }
-    }
+    sanitize_rgb(&mut rgb, clamp_gamut);
     rgb
 }
 
@@ -280,6 +466,71 @@ fn cubic_bezier_derivative(t: f32, p1: f32, p2: f32) -> f32 {
 fn oklch_to_oklab(lch: [f32; 3]) -> [f32; 3] {
     let angle = lch[2] * TAU;
     [lch[0], lch[1] * angle.cos(), lch[1] * angle.sin()]
+}
+
+fn oklab_to_oklch(lab: [f32; 3]) -> [f32; 3] {
+    [
+        lab[0],
+        lab[1].hypot(lab[2]),
+        lab[2].atan2(lab[1]).rem_euclid(TAU) / TAU,
+    ]
+}
+
+fn linear_srgb_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
+    let l = 0.412_221_46 * rgb[0] + 0.536_332_55 * rgb[1] + 0.051_445_995 * rgb[2];
+    let m = 0.211_903_5 * rgb[0] + 0.680_699_5 * rgb[1] + 0.107_396_96 * rgb[2];
+    let s = 0.088_302_46 * rgb[0] + 0.281_718_85 * rgb[1] + 0.629_978_7 * rgb[2];
+    let l = l.cbrt();
+    let m = m.cbrt();
+    let s = s.cbrt();
+    [
+        0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
+        1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
+        0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+    ]
+}
+
+fn srgb_to_cam16_ucs_jmh(rgb: [f32; 3], parameters: Cam16ViewingConditions) -> [f32; 3] {
+    let xyz: Xyz<D65, f32> = Srgb::from(rgb).into_color_unclamped();
+    let ucs = Cam16UcsJmh::from_color_unclamped(Cam16Jmh::from_xyz(xyz, parameters));
+    [
+        ucs.lightness,
+        ucs.colorfulness,
+        ucs.hue.into_positive_degrees(),
+    ]
+}
+
+fn srgb_to_cam16_ucs_jab(rgb: [f32; 3], parameters: Cam16ViewingConditions) -> [f32; 3] {
+    let xyz: Xyz<D65, f32> = Srgb::from(rgb).into_color_unclamped();
+    let ucs = Cam16UcsJab::from_color_unclamped(Cam16Jmh::from_xyz(xyz, parameters));
+    [ucs.lightness, ucs.a, ucs.b]
+}
+
+fn cam16_ucs_jmh_to_srgb(components: [f32; 3], parameters: Cam16ViewingConditions) -> [f32; 3] {
+    let ucs = Cam16UcsJmh::new(components[0], components[1], components[2]);
+    let cam16 = Cam16Jmh::from_color_unclamped(ucs);
+    palette_srgb_to_array(Srgb::from_color_unclamped(cam16.into_xyz(parameters)))
+}
+
+fn cam16_ucs_jab_to_srgb(components: [f32; 3], parameters: Cam16ViewingConditions) -> [f32; 3] {
+    let ucs = Cam16UcsJab::new(components[0], components[1], components[2]);
+    let cam16 = Cam16Jmh::from_color_unclamped(ucs);
+    palette_srgb_to_array(Srgb::from_color_unclamped(cam16.into_xyz(parameters)))
+}
+
+fn palette_srgb_to_array(rgb: Srgb<f32>) -> [f32; 3] {
+    let (red, green, blue) = rgb.into_components();
+    [red, green, blue]
+}
+
+fn sanitize_rgb(rgb: &mut [f32; 3], clamp_gamut: bool) {
+    for channel in rgb {
+        if !channel.is_finite() {
+            *channel = 0.0;
+        } else if clamp_gamut {
+            *channel = channel.clamp(0.0, 1.0);
+        }
+    }
 }
 
 fn oklab_to_linear_srgb(lab: [f32; 3]) -> [f32; 3] {
@@ -468,6 +719,14 @@ fn linear_to_srgb(value: f32) -> f32 {
     }
 }
 
+fn srgb_to_linear(value: f32) -> f32 {
+    if value <= 0.040_45 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 fn hsv_to_srgb(hsv: [f32; 3]) -> [f32; 3] {
     let hue = hsv[0].rem_euclid(1.0) * 6.0;
     let chroma = hsv[2] * hsv[1];
@@ -528,7 +787,7 @@ mod tests {
         assert!((a - b).abs() < tolerance, "{a} != {b} (tol {tolerance})");
     }
 
-    fn all_color_models() -> [ColorModel; 7] {
+    fn legacy_color_models() -> [ColorModel; 7] {
         [
             ColorModel::Oklch,
             ColorModel::Hsv,
@@ -540,12 +799,28 @@ mod tests {
         ]
     }
 
+    fn all_color_models() -> [ColorModel; 10] {
+        [
+            ColorModel::Oklch,
+            ColorModel::Hsv,
+            ColorModel::Hsl,
+            ColorModel::CielchAb,
+            ColorModel::CielchUv,
+            ColorModel::Jzczhz,
+            ColorModel::IptIch,
+            ColorModel::Okhsl,
+            ColorModel::Okhsv,
+            ColorModel::Cam16UcsJmh,
+        ]
+    }
+
     fn geometry(shape: Shape) -> Geometry {
         Geometry {
             shape,
             start: [0.0, 0.0],
             end: [10.0, 0.0],
             aspect: 1.0,
+            skew: 0.0,
             exponent: 2.0,
             spiral_turns: 3.0,
             ray_count: 4.0,
@@ -554,13 +829,28 @@ mod tests {
 
     fn rainbow(color_model: ColorModel) -> Rainbow {
         Rainbow {
-            start: [0.0, 1.0, 0.75],
-            end: [1.0, 1.0, 0.75],
-            color_model,
+            colors: GradientColors::Parametric {
+                start: [0.0, 1.0, 0.75],
+                end: [1.0, 1.0, 0.75],
+                color_model,
+            },
             extend: ExtendMode::Clamp,
             easing: Easing::Linear,
             bezier: [0.25, 0.1, 0.25, 1.0],
             clamp_gamut: true,
+            cam16_parameters: cam16_viewing_conditions(),
+        }
+    }
+
+    fn two_color_rainbow(start: [f32; 3], end: [f32; 3], color_space: TwoColorSpace) -> Rainbow {
+        let cam16_parameters = cam16_viewing_conditions();
+        Rainbow {
+            colors: prepare_two_color(start, end, color_space, cam16_parameters),
+            extend: ExtendMode::Clamp,
+            easing: Easing::Linear,
+            bezier: [0.25, 0.1, 0.25, 1.0],
+            clamp_gamut: true,
+            cam16_parameters,
         }
     }
 
@@ -569,6 +859,28 @@ mod tests {
         let geometry = geometry(Shape::Linear);
         close(geometry_value(geometry.start, geometry), 0.0);
         close(geometry_value(geometry.end, geometry), 1.0);
+    }
+
+    #[test]
+    fn skew_is_an_inverse_horizontal_shear_for_every_shape() {
+        for shape in [
+            Shape::Linear,
+            Shape::Radial,
+            Shape::Diamond,
+            Shape::Conic,
+            Shape::Box,
+            Shape::Minkowski,
+            Shape::ReflectedLinear,
+            Shape::Spiral,
+            Shape::Starburst,
+        ] {
+            let mut skewed = geometry(shape);
+            skewed.skew = 0.5;
+            let reference = geometry_value([5.0, 4.0], geometry(shape));
+            // Forward-shear the reference coordinate: x' = x + 0.5y.
+            let transformed = geometry_value([7.0, 4.0], skewed);
+            close(reference, transformed);
+        }
     }
 
     #[test]
@@ -643,9 +955,9 @@ mod tests {
     #[test]
     fn hsv_default_range_generates_a_full_rainbow() {
         let rainbow = rainbow(ColorModel::Hsv);
-        let start = sample_rainbow(0.0, rainbow);
-        let middle = sample_rainbow(0.5, rainbow);
-        let end = sample_rainbow(1.0, rainbow);
+        let start = sample_rainbow(0.0, &rainbow);
+        let middle = sample_rainbow(0.5, &rainbow);
+        let end = sample_rainbow(1.0, &rainbow);
         close(start[0], 0.75);
         close(start[1], 0.0);
         close(start[2], 0.0);
@@ -661,7 +973,7 @@ mod tests {
     fn all_color_models_generate_finite_colors() {
         for model in all_color_models() {
             for t in [0.0, 0.25, 0.5, 0.75, 1.0] {
-                let rgb = sample_rainbow(t, rainbow(model));
+                let rgb = sample_rainbow(t, &rainbow(model));
                 assert!(rgb.iter().all(|channel| channel.is_finite()));
                 assert!(rgb.iter().all(|channel| (0.0..=1.0).contains(channel)));
             }
@@ -676,9 +988,10 @@ mod tests {
             ColorModel::CielchUv,
             ColorModel::Jzczhz,
             ColorModel::IptIch,
+            ColorModel::Cam16UcsJmh,
         ] {
             let samples: Vec<_> = (0..8)
-                .map(|index| sample_rainbow(index as f32 / 8.0, rainbow(model)))
+                .map(|index| sample_rainbow(index as f32 / 8.0, &rainbow(model)))
                 .collect();
             let mut distinct = 0;
             for (index, sample) in samples.iter().enumerate() {
@@ -704,11 +1017,40 @@ mod tests {
     #[test]
     fn every_color_model_is_periodic_over_one_hue_turn() {
         for model in all_color_models() {
-            let start = components_to_rgb([0.137, 0.8, 0.65], model, true);
-            let end = components_to_rgb([1.137, 0.8, 0.65], model, true);
+            let parameters = cam16_viewing_conditions();
+            let start = components_to_rgb([0.137, 0.8, 0.65], model, parameters, true);
+            let end = components_to_rgb([1.137, 0.8, 0.65], model, parameters, true);
             for index in 0..3 {
                 close(start[index], end[index]);
             }
+        }
+    }
+
+    #[test]
+    fn legacy_color_models_retain_their_finite_periodic_mapping() {
+        for model in legacy_color_models() {
+            let parameters = cam16_viewing_conditions();
+            let start = components_to_rgb([0.271, 0.63, 0.71], model, parameters, true);
+            let end = components_to_rgb([1.271, 0.63, 0.71], model, parameters, true);
+            assert!(start.into_iter().all(f32::is_finite));
+            for (start, end) in start.into_iter().zip(end) {
+                close(start, end);
+            }
+        }
+    }
+
+    #[test]
+    fn ok_picker_spaces_keep_their_documented_black_and_white_endpoints() {
+        let parameters = cam16_viewing_conditions();
+        for model in [ColorModel::Okhsl, ColorModel::Okhsv] {
+            let black = components_to_rgb([0.33, 1.0, 0.0], model, parameters, true);
+            for channel in black {
+                close_within(channel, 0.0, 1.0e-6);
+            }
+        }
+        let white = components_to_rgb([0.71, 1.0, 1.0], ColorModel::Okhsl, parameters, true);
+        for channel in white {
+            close_within(channel, 1.0, 2.0e-5);
         }
     }
 
@@ -772,10 +1114,16 @@ mod tests {
             ColorModel::CielchUv,
             ColorModel::Jzczhz,
             ColorModel::IptIch,
+            ColorModel::Cam16UcsJmh,
         ] {
-            let rgb = components_to_rgb([0.42, 0.0, 1.0], model, true);
+            let rgb = components_to_rgb([0.42, 0.0, 1.0], model, cam16_viewing_conditions(), true);
+            let tolerance = if model == ColorModel::Cam16UcsJmh {
+                1.0e-2
+            } else {
+                2.0e-3
+            };
             for channel in rgb {
-                close_within(channel, 1.0, 2.0e-3);
+                close_within(channel, 1.0, tolerance);
             }
         }
     }
@@ -783,11 +1131,114 @@ mod tests {
     #[test]
     fn unwrapped_hue_supports_multiple_cycles() {
         let mut rainbow = rainbow(ColorModel::Hsv);
-        rainbow.end[0] = 3.0;
-        let at_one_third = sample_rainbow(1.0 / 3.0, rainbow);
-        let start = sample_rainbow(0.0, rainbow);
+        let GradientColors::Parametric { ref mut end, .. } = rainbow.colors else {
+            unreachable!();
+        };
+        end[0] = 3.0;
+        let at_one_third = sample_rainbow(1.0 / 3.0, &rainbow);
+        let start = sample_rainbow(0.0, &rainbow);
         for index in 0..3 {
             close(start[index], at_one_third[index]);
         }
+    }
+
+    #[test]
+    fn two_color_oklab_preserves_endpoints() {
+        let rainbow = two_color_rainbow([1.0, 0.1, 0.0], [0.0, 0.2, 1.0], TwoColorSpace::Oklab);
+        for (actual, expected) in sample_rainbow(0.0, &rainbow)
+            .into_iter()
+            .zip([1.0, 0.1, 0.0])
+        {
+            close_within(actual, expected, 3.0e-5);
+        }
+        for (actual, expected) in sample_rainbow(1.0, &rainbow)
+            .into_iter()
+            .zip([0.0, 0.2, 1.0])
+        {
+            close_within(actual, expected, 3.0e-5);
+        }
+    }
+
+    #[test]
+    fn two_color_oklch_uses_shortest_hue_path() {
+        let start = linear_to_srgb3(oklab_to_linear_srgb(oklch_to_oklab([
+            0.7,
+            0.1,
+            350.0 / 360.0,
+        ])));
+        let end = linear_to_srgb3(oklab_to_linear_srgb(oklch_to_oklab([
+            0.7,
+            0.1,
+            10.0 / 360.0,
+        ])));
+        let parameters = cam16_viewing_conditions();
+        let GradientColors::TwoColor(prepared) =
+            prepare_two_color(start, end, TwoColorSpace::Oklch, parameters)
+        else {
+            unreachable!()
+        };
+        let middle = interpolate_prepared_two_color(prepared, 0.5, parameters, false);
+        let middle_lch = oklab_to_oklch(linear_srgb_to_oklab(middle.map(srgb_to_linear)));
+        assert!(
+            middle_lch[2] < 0.01 || middle_lch[2] > 0.99,
+            "{:?}",
+            middle_lch
+        );
+    }
+
+    #[test]
+    fn every_two_color_space_preserves_endpoints_and_remains_finite() {
+        let start = [0.82, 0.24, 0.11];
+        let end = [0.08, 0.31, 0.88];
+        for color_space in [
+            TwoColorSpace::Oklab,
+            TwoColorSpace::Oklch,
+            TwoColorSpace::Cam16UcsJab,
+            TwoColorSpace::Cam16UcsJmh,
+        ] {
+            let rainbow = two_color_rainbow(start, end, color_space);
+            for (actual, expected) in sample_rainbow(0.0, &rainbow).into_iter().zip(start) {
+                close_within(actual, expected, 8.0e-4);
+            }
+            for (actual, expected) in sample_rainbow(1.0, &rainbow).into_iter().zip(end) {
+                close_within(actual, expected, 8.0e-4);
+            }
+            for step in 0..=8 {
+                assert!(
+                    sample_rainbow(step as f32 / 8.0, &rainbow)
+                        .into_iter()
+                        .all(f32::is_finite),
+                    "{color_space:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cam16_ucs_jmh_uses_shortest_hue_and_borrows_neutral_hue() {
+        let parameters = cam16_viewing_conditions();
+        let start_rgb = cam16_ucs_jmh_to_srgb([60.0, 18.0, 350.0], parameters);
+        let end_rgb = cam16_ucs_jmh_to_srgb([60.0, 18.0, 10.0], parameters);
+        let GradientColors::TwoColor(PreparedTwoColor { start, end, .. }) =
+            prepare_two_color(start_rgb, end_rgb, TwoColorSpace::Cam16UcsJmh, parameters)
+        else {
+            unreachable!()
+        };
+        assert!((end[2] - start[2]).abs() < 30.0, "{start:?} -> {end:?}");
+
+        let GradientColors::TwoColor(PreparedTwoColor {
+            start: neutral,
+            end: chromatic,
+            ..
+        }) = prepare_two_color(
+            [0.5, 0.5, 0.5],
+            [0.8, 0.1, 0.05],
+            TwoColorSpace::Cam16UcsJmh,
+            parameters,
+        )
+        else {
+            unreachable!()
+        };
+        close_within(neutral[2], chromatic[2], 1.0e-4);
     }
 }

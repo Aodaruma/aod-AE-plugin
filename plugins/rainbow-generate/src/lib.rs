@@ -8,8 +8,9 @@ use std::env;
 
 use ae::pf::*;
 use gradient::{
-    ColorModel, Easing, ExtendMode, Geometry, Rainbow, Shape, aspect_ratio_from_balance,
-    geometry_value, sample_rainbow,
+    ColorModel, Easing, ExtendMode, Geometry, GradientColors, Rainbow, Shape, TwoColorSpace,
+    aspect_ratio_from_balance, cam16_viewing_conditions, geometry_value, prepare_two_color,
+    sample_rainbow,
 };
 use params::Params;
 use utils::ToPixel;
@@ -40,6 +41,7 @@ const ENDPOINT_COLOR_PARAMS: [Params; 6] = [
     Params::EndComponent2,
     Params::EndComponent3,
 ];
+const TWO_COLOR_PARAMS: [Params; 3] = [Params::TwoColorSpace, Params::StartColor, Params::EndColor];
 
 impl AdobePluginGlobal for Plugin {
     fn params_setup(
@@ -126,6 +128,7 @@ impl AdobePluginGlobal for Plugin {
                         | Params::ColorModel
                         | Params::Easing
                         | Params::SplitRangeEnds
+                        | Params::GenerationMode
                 ) =>
             {
                 out_data.set_out_flag(OutFlags::RefreshUi, true);
@@ -150,6 +153,7 @@ impl Plugin {
         let two_points = params.get(Params::CoordinateMode)?.as_popup()?.value() == 1;
         let color_model =
             color_model_from_popup(params.get(Params::ColorModel)?.as_popup()?.value());
+        let parametric_generation = params.get(Params::GenerationMode)?.as_popup()?.value() != 2;
         let custom_easing = params.get(Params::Easing)?.as_popup()?.value() == 7;
         let split_range_ends = params.get(Params::SplitRangeEnds)?.as_checkbox()?.value();
         Self::set_component_names(params, color_model)?;
@@ -207,13 +211,23 @@ impl Plugin {
             self.set_param_visible(in_data, params, id, visible)?;
             Self::set_param_enabled(params, id, visible)?;
         }
+        for id in [Params::ColorModel, Params::SplitRangeEnds] {
+            self.set_param_visible(in_data, params, id, parametric_generation)?;
+            Self::set_param_enabled(params, id, parametric_generation)?;
+        }
         for id in AFFINE_COLOR_PARAMS {
-            self.set_param_visible(in_data, params, id, !split_range_ends)?;
-            Self::set_param_enabled(params, id, !split_range_ends)?;
+            let visible = parametric_generation && !split_range_ends;
+            self.set_param_visible(in_data, params, id, visible)?;
+            Self::set_param_enabled(params, id, visible)?;
         }
         for id in ENDPOINT_COLOR_PARAMS {
-            self.set_param_visible(in_data, params, id, split_range_ends)?;
-            Self::set_param_enabled(params, id, split_range_ends)?;
+            let visible = parametric_generation && split_range_ends;
+            self.set_param_visible(in_data, params, id, visible)?;
+            Self::set_param_enabled(params, id, visible)?;
+        }
+        for id in TWO_COLOR_PARAMS {
+            self.set_param_visible(in_data, params, id, !parametric_generation)?;
+            Self::set_param_enabled(params, id, !parametric_generation)?;
         }
 
         for id in [
@@ -359,7 +373,7 @@ impl Plugin {
                 (x as f32 + origin_x + 0.5) / downsample[0],
                 (y as f32 + origin_y + 0.5) / downsample[1],
             ];
-            let rainbow_rgb = sample_rainbow(geometry_value(point, geometry), rainbow);
+            let rainbow_rgb = sample_rainbow(geometry_value(point, geometry), &rainbow);
             let input = read_pixel(&in_layer, x as usize, y as usize);
             let output =
                 composite_rainbow(input, rainbow_rgb, mix, preserve_alpha, rainbow.clamp_gamut);
@@ -416,6 +430,7 @@ fn read_geometry(
         start,
         end,
         aspect: aspect_ratio_from_balance(slider(params, Params::Aspect, 0.0)),
+        skew: slider(params, Params::Skew, 0.0).clamp(-1000.0, 1000.0) * 0.01,
         exponent: slider(params, Params::ShapeExponent, 2.0).clamp(0.25, 64.0),
         spiral_turns: slider(params, Params::SpiralTurns, 3.0).clamp(-128.0, 128.0),
         ray_count: slider(params, Params::RayCount, 12.0).clamp(1.0, 512.0),
@@ -423,34 +438,49 @@ fn read_geometry(
 }
 
 fn read_rainbow(params: &Parameters<Params>) -> Result<Rainbow, Error> {
-    let split = params.get(Params::SplitRangeEnds)?.as_checkbox()?.value();
-    let (start, end) = if split {
-        (
-            [
-                slider(params, Params::StartHue, 0.0) / 360.0,
-                slider(params, Params::StartComponent2, 100.0) * 0.01,
-                slider(params, Params::StartComponent3, 75.0) * 0.01,
-            ],
-            [
-                slider(params, Params::EndHue, 360.0) / 360.0,
-                slider(params, Params::EndComponent2, 100.0) * 0.01,
-                slider(params, Params::EndComponent3, 75.0) * 0.01,
-            ],
+    let cam16_parameters = cam16_viewing_conditions();
+    let colors = if params.get(Params::GenerationMode)?.as_popup()?.value() == 2 {
+        prepare_two_color(
+            color_rgb(params, Params::StartColor)?,
+            color_rgb(params, Params::EndColor)?,
+            two_color_space_from_popup(params.get(Params::TwoColorSpace)?.as_popup()?.value()),
+            cam16_parameters,
         )
     } else {
-        affine_rainbow_endpoints(
-            slider(params, Params::HueScale, 100.0),
-            slider(params, Params::HueOffset, 0.0),
-            slider(params, Params::Component2Scale, 0.0),
-            slider(params, Params::Component2Offset, 100.0),
-            slider(params, Params::Component3Scale, 0.0),
-            slider(params, Params::Component3Offset, 75.0),
-        )
+        let split = params.get(Params::SplitRangeEnds)?.as_checkbox()?.value();
+        let (start, end) = if split {
+            (
+                [
+                    slider(params, Params::StartHue, 0.0) / 360.0,
+                    slider(params, Params::StartComponent2, 100.0) * 0.01,
+                    slider(params, Params::StartComponent3, 75.0) * 0.01,
+                ],
+                [
+                    slider(params, Params::EndHue, 360.0) / 360.0,
+                    slider(params, Params::EndComponent2, 100.0) * 0.01,
+                    slider(params, Params::EndComponent3, 75.0) * 0.01,
+                ],
+            )
+        } else {
+            affine_rainbow_endpoints(
+                slider(params, Params::HueScale, 100.0),
+                slider(params, Params::HueOffset, 0.0),
+                slider(params, Params::Component2Scale, 0.0),
+                slider(params, Params::Component2Offset, 100.0),
+                slider(params, Params::Component3Scale, 0.0),
+                slider(params, Params::Component3Offset, 75.0),
+            )
+        };
+        GradientColors::Parametric {
+            start,
+            end,
+            color_model: color_model_from_popup(
+                params.get(Params::ColorModel)?.as_popup()?.value(),
+            ),
+        }
     };
     Ok(Rainbow {
-        start,
-        end,
-        color_model: color_model_from_popup(params.get(Params::ColorModel)?.as_popup()?.value()),
+        colors,
         extend: extend_from_popup(params.get(Params::Extend)?.as_popup()?.value()),
         easing: easing_from_popup(params.get(Params::Easing)?.as_popup()?.value()),
         bezier: [
@@ -460,7 +490,17 @@ fn read_rainbow(params: &Parameters<Params>) -> Result<Rainbow, Error> {
             slider(params, Params::BezierY2, 1.0),
         ],
         clamp_gamut: params.get(Params::ClampGamut)?.as_checkbox()?.value(),
+        cam16_parameters,
     })
+}
+
+fn color_rgb(params: &Parameters<Params>, id: Params) -> Result<[f32; 3], Error> {
+    let color = params.get(id)?.as_color()?.float_value()?;
+    Ok([
+        finite_or(color.red, 0.0).clamp(0.0, 1.0),
+        finite_or(color.green, 0.0).clamp(0.0, 1.0),
+        finite_or(color.blue, 0.0).clamp(0.0, 1.0),
+    ])
 }
 
 fn affine_rainbow_endpoints(
@@ -539,7 +579,19 @@ fn color_model_from_popup(value: i32) -> ColorModel {
         5 => ColorModel::CielchUv,
         6 => ColorModel::Jzczhz,
         7 => ColorModel::IptIch,
+        8 => ColorModel::Okhsl,
+        9 => ColorModel::Okhsv,
+        10 => ColorModel::Cam16UcsJmh,
         _ => ColorModel::Oklch,
+    }
+}
+
+fn two_color_space_from_popup(value: i32) -> TwoColorSpace {
+    match value {
+        2 => TwoColorSpace::Oklch,
+        3 => TwoColorSpace::Cam16UcsJab,
+        4 => TwoColorSpace::Cam16UcsJmh,
+        _ => TwoColorSpace::Oklab,
     }
 }
 
@@ -551,6 +603,9 @@ fn component_names(color_model: ColorModel) -> (&'static str, &'static str) {
         ColorModel::CielchAb | ColorModel::CielchUv => ("Chroma", "Lightness"),
         ColorModel::Jzczhz => ("Chroma (Cz)", "Lightness (Jz)"),
         ColorModel::IptIch => ("Chroma", "Intensity"),
+        ColorModel::Okhsl => ("Saturation", "Lightness"),
+        ColorModel::Okhsv => ("Saturation", "Value"),
+        ColorModel::Cam16UcsJmh => ("Colorfulness (M')", "Lightness (J')"),
     }
 }
 
@@ -696,6 +751,17 @@ mod render_tests {
         assert_eq!(color_model_from_popup(5), ColorModel::CielchUv);
         assert_eq!(color_model_from_popup(6), ColorModel::Jzczhz);
         assert_eq!(color_model_from_popup(7), ColorModel::IptIch);
+        assert_eq!(color_model_from_popup(8), ColorModel::Okhsl);
+        assert_eq!(color_model_from_popup(9), ColorModel::Okhsv);
+        assert_eq!(color_model_from_popup(10), ColorModel::Cam16UcsJmh);
+    }
+
+    #[test]
+    fn two_color_space_popup_indices_are_append_only() {
+        assert_eq!(two_color_space_from_popup(1), TwoColorSpace::Oklab);
+        assert_eq!(two_color_space_from_popup(2), TwoColorSpace::Oklch);
+        assert_eq!(two_color_space_from_popup(3), TwoColorSpace::Cam16UcsJab);
+        assert_eq!(two_color_space_from_popup(4), TwoColorSpace::Cam16UcsJmh);
     }
 
     #[test]
@@ -722,5 +788,14 @@ mod render_tests {
             ("Chroma (Cz)", "Lightness (Jz)")
         );
         assert_eq!(component_names(ColorModel::IptIch), ("Chroma", "Intensity"));
+        assert_eq!(
+            component_names(ColorModel::Okhsl),
+            ("Saturation", "Lightness")
+        );
+        assert_eq!(component_names(ColorModel::Okhsv), ("Saturation", "Value"));
+        assert_eq!(
+            component_names(ColorModel::Cam16UcsJmh),
+            ("Colorfulness (M')", "Lightness (J')")
+        );
     }
 }

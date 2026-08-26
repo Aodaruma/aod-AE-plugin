@@ -46,6 +46,15 @@ pub(crate) enum Params {
     Mix,
     PreserveInputAlpha,
     OutputEnd,
+    GenerationStart,
+    GenerationMode,
+    TwoColorSpace,
+    StartColor,
+    EndColor,
+    GenerationEnd,
+    TransformStart,
+    Skew,
+    TransformEnd,
 }
 
 pub(crate) fn setup(params: &mut ae::Parameters<Params>) -> Result<(), Error> {
@@ -194,7 +203,7 @@ pub(crate) fn setup(params: &mut ae::Parameters<Params>) -> Result<(), Error> {
     params.add_group(
         Params::RainbowStart,
         Params::RainbowEnd,
-        "Parametric Rainbow",
+        "Gradient Mapping",
         false,
         |params| {
             params.add_with_flags(
@@ -210,6 +219,9 @@ pub(crate) fn setup(params: &mut ae::Parameters<Params>) -> Result<(), Error> {
                         "CIELCh(uv)",
                         "JzCzHz",
                         "IPT ICh",
+                        "OkHSL",
+                        "OkHSV",
+                        "CAM16-UCS J'M'h'",
                     ]);
                     d.set_default(1);
                 }),
@@ -475,6 +487,93 @@ pub(crate) fn setup(params: &mut ae::Parameters<Params>) -> Result<(), Error> {
                 "Preserve Input Alpha",
                 CheckBoxDef::setup(|d| {
                     d.set_default(false);
+                }),
+            )?;
+            Ok(())
+        },
+    )?;
+
+    // Keep all parameters above append-only for project compatibility. Generation
+    // mode and the two-color controls were introduced after the v0.3 parameter set.
+    params.add_group(
+        Params::GenerationStart,
+        Params::GenerationEnd,
+        "Generation",
+        false,
+        |params| {
+            params.add_with_flags(
+                Params::GenerationMode,
+                "Mode",
+                PopupDef::setup(|d| {
+                    d.set_options(&["Parametric", "Two Color"]);
+                    d.set_default(1);
+                }),
+                ae::ParamFlag::SUPERVISE,
+                ae::ParamUIFlags::empty(),
+            )?;
+            params.add_with_flags(
+                Params::TwoColorSpace,
+                "Interpolation Color Space",
+                PopupDef::setup(|d| {
+                    d.set_options(&[
+                        "OKLab",
+                        "OKLCH (Shortest Hue)",
+                        "CAM16-UCS J'a'b'",
+                        "CAM16-UCS J'M'h' (Shortest Hue)",
+                    ]);
+                    d.set_default(1);
+                }),
+                ae::ParamFlag::empty(),
+                ae::ParamUIFlags::DISABLED | ae::ParamUIFlags::INVISIBLE,
+            )?;
+            params.add_with_flags(
+                Params::StartColor,
+                "Start Color",
+                ColorDef::setup(|d| {
+                    d.set_default(Pixel8 {
+                        alpha: 255,
+                        red: 0,
+                        green: 0,
+                        blue: 0,
+                    });
+                }),
+                ae::ParamFlag::empty(),
+                ae::ParamUIFlags::DISABLED | ae::ParamUIFlags::INVISIBLE,
+            )?;
+            params.add_with_flags(
+                Params::EndColor,
+                "End Color",
+                ColorDef::setup(|d| {
+                    d.set_default(Pixel8 {
+                        alpha: 255,
+                        red: 255,
+                        green: 255,
+                        blue: 255,
+                    });
+                }),
+                ae::ParamFlag::empty(),
+                ae::ParamUIFlags::DISABLED | ae::ParamUIFlags::INVISIBLE,
+            )?;
+            Ok(())
+        },
+    )?;
+
+    params.add_group(
+        Params::TransformStart,
+        Params::TransformEnd,
+        "Transform",
+        false,
+        |params| {
+            params.add(
+                Params::Skew,
+                "Skew (%)",
+                FloatSliderDef::setup(|d| {
+                    d.set_valid_min(-1000.0);
+                    d.set_valid_max(1000.0);
+                    d.set_slider_min(-100.0);
+                    d.set_slider_max(100.0);
+                    d.set_default(0.0);
+                    d.set_precision(2);
                 }),
             )?;
             Ok(())
