@@ -9,8 +9,8 @@ use utils::image::{
 };
 
 use crate::glass::{
-    DebugView, EdgeMode, HeightSample, HeightSource, MapChannel, ProceduralSettings, Sampling,
-    Shape, central_difference, facet_color, map_level, procedural_height,
+    DebugView, EdgeMode, HeightSample, HeightSource, MapChannel, PreparedProcedural,
+    ProceduralSettings, Sampling, Shape, central_difference, facet_color, map_level,
 };
 use crate::params::Params;
 
@@ -20,6 +20,11 @@ const SPECTRUM_MAX_NM: f32 = 780.0;
 // glass. BK7's refractive index is approximately 1.5168 at this wavelength.
 const REFERENCE_WAVELENGTH_NM: f32 = 587.56;
 const DISPERSION_REFERENCE_WAVELENGTH_NM: f32 = SPECTRUM_MIN_NM;
+
+#[cfg(test)]
+thread_local! {
+    static REFRACTED_SCREEN_SLOPE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Clone)]
 pub(crate) struct LayerBuffer {
@@ -210,51 +215,55 @@ pub(crate) fn render(
     let origin_y = output_origin[1];
     let out_world_type = out_layer.world_type();
     let custom_map = maps.custom.as_ref();
+    let prepared_procedural = (settings.height_source == HeightSource::Procedural)
+        .then(|| PreparedProcedural::new(settings.procedural));
     let context = HeightContext {
         source: &source,
         custom_map,
         settings,
+        prepared_procedural,
     };
-    let optics = OpticalCalibration::bk7();
-    let spectral_bands = build_spectral_bands(settings, optics);
+    let (optics, spectral_bands) = prepare_render_optics(settings);
 
     out_layer.iterate(0, height as i32, None, |x, y, mut destination| {
         let global_x = (x as f32 + origin_x) / settings.downsample[0];
         let global_y = (y as f32 + origin_y) / settings.downsample[1];
-        let height_sample = context.height_sample(global_x, global_y);
-        let slope = central_difference(
-            global_x,
-            global_y,
-            settings.normal_radius,
-            settings.height_strength,
-            |sample_x, sample_y| context.height_sample(sample_x, sample_y).value,
-        );
-        let normal = surface_normal(slope);
-        let base = context.source_sample(global_x, global_y);
         let output = match settings.debug {
-            DebugView::Final => refracted_pixel(
-                [global_x, global_y],
-                normal,
-                base,
-                &source,
-                settings,
-                optics,
-                &spectral_bands,
-            ),
-            DebugView::Height => opaque_gray(height_sample.value),
-            DebugView::Normal => PixelF32 {
-                alpha: 1.0,
-                red: normal[0] * 0.5 + 0.5,
-                green: normal[1] * 0.5 + 0.5,
-                blue: normal[2],
-            },
+            DebugView::Final => {
+                let normal = context.normal(global_x, global_y);
+                let base = context.source_sample(global_x, global_y);
+                refracted_pixel(
+                    [global_x, global_y],
+                    normal,
+                    base,
+                    &source,
+                    settings,
+                    optics.expect("final view prepares optics"),
+                    &spectral_bands,
+                )
+            }
+            DebugView::Height => opaque_gray(context.height_sample(global_x, global_y).value),
+            DebugView::Normal => {
+                let normal = context.normal(global_x, global_y);
+                PixelF32 {
+                    alpha: 1.0,
+                    red: normal[0] * 0.5 + 0.5,
+                    green: normal[1] * 0.5 + 0.5,
+                    blue: normal[2],
+                }
+            }
             DebugView::Displacement => {
-                let offset = reference_refraction_offset(normal, settings.refraction, optics);
+                let normal = context.normal(global_x, global_y);
+                let offset = reference_refraction_offset(
+                    normal,
+                    settings.refraction,
+                    optics.expect("displacement view prepares optics"),
+                );
                 let magnitude = length2(offset);
                 opaque_gray((magnitude / 128.0).clamp(0.0, 1.0))
             }
             DebugView::FacetId => {
-                let color = facet_color(height_sample.facet_id);
+                let color = facet_color(context.facet_id(global_x, global_y));
                 PixelF32 {
                     alpha: 1.0,
                     red: color[0],
@@ -280,6 +289,7 @@ struct HeightContext<'a> {
     source: &'a LayerBuffer,
     custom_map: Option<&'a LayerBuffer>,
     settings: Settings,
+    prepared_procedural: Option<PreparedProcedural>,
 }
 
 impl HeightContext<'_> {
@@ -295,7 +305,11 @@ impl HeightContext<'_> {
     fn height_sample(&self, x: f32, y: f32) -> HeightSample {
         let raw = match self.settings.height_source {
             HeightSource::Procedural => {
-                return procedural_height(x, y, self.settings.procedural);
+                return self
+                    .prepared_procedural
+                    .as_ref()
+                    .expect("procedural height source prepares its constants")
+                    .height(x, y);
             }
             HeightSource::CustomMap => self
                 .custom_map
@@ -335,6 +349,44 @@ impl HeightContext<'_> {
             facet_id: 0,
         }
     }
+
+    fn normal(&self, x: f32, y: f32) -> [f32; 3] {
+        let slope = central_difference(
+            x,
+            y,
+            self.settings.normal_radius,
+            self.settings.height_strength,
+            |sample_x, sample_y| self.height_sample(sample_x, sample_y).value,
+        );
+        surface_normal(slope)
+    }
+
+    fn facet_id(&self, x: f32, y: f32) -> u32 {
+        if self.settings.height_source != HeightSource::Procedural
+            || !matches!(
+                self.settings.procedural.shape,
+                Shape::Facets | Shape::Shards | Shape::ImpactGlass
+            )
+        {
+            return 0;
+        }
+        self.prepared_procedural
+            .as_ref()
+            .expect("procedural height source prepares its constants")
+            .height(x, y)
+            .facet_id
+    }
+}
+
+fn prepare_render_optics(settings: Settings) -> (Option<OpticalCalibration>, Vec<SpectralBand>) {
+    let needs_optics = matches!(settings.debug, DebugView::Final | DebugView::Displacement);
+    let optics = needs_optics.then(OpticalCalibration::bk7);
+    let spectral_bands = if settings.debug == DebugView::Final {
+        build_spectral_bands(settings, optics.expect("final view prepares optics"))
+    } else {
+        Vec::new()
+    };
+    (optics, spectral_bands)
 }
 
 fn refracted_pixel(
@@ -386,14 +438,17 @@ fn spectral_refraction(
     let mut rgb_weight = [0.0_f32; 3];
     let mut alpha_sum = 0.0_f32;
     let mut alpha_weight = 0.0_f32;
+    let reference_ray = refracted_screen_slope(normal, optics.reference_index);
+    let reference_offset = mul2(reference_ray, settings.refraction * optics.projection_scale);
 
     for band in spectral_bands {
-        let offset = wavelength_refraction_offset(
+        let offset = wavelength_refraction_offset_from_reference(
             normal,
-            settings.refraction,
             settings.dispersion,
             band.refractive_index,
             optics,
+            reference_ray,
+            reference_offset,
         );
         let sample = displaced_sample(source, x, y, offset, settings);
         let rgb = unpremultiplied_rgb(sample);
@@ -574,6 +629,8 @@ fn refracted_ray(surface_normal: [f32; 3], refractive_index: f32) -> [f32; 3] {
 }
 
 fn refracted_screen_slope(surface_normal: [f32; 3], refractive_index: f32) -> [f32; 2] {
+    #[cfg(test)]
+    REFRACTED_SCREEN_SLOPE_CALLS.with(|calls| calls.set(calls.get() + 1));
     let ray = refracted_ray(surface_normal, refractive_index);
     let depth = (-ray[2]).max(1.0e-6);
     [
@@ -601,9 +658,28 @@ fn wavelength_refraction_offset(
     optics: OpticalCalibration,
 ) -> [f32; 2] {
     let reference_ray = refracted_screen_slope(surface_normal, optics.reference_index);
+    let reference_offset = mul2(reference_ray, refraction * optics.projection_scale);
+    wavelength_refraction_offset_from_reference(
+        surface_normal,
+        dispersion,
+        refractive_index,
+        optics,
+        reference_ray,
+        reference_offset,
+    )
+}
+
+fn wavelength_refraction_offset_from_reference(
+    surface_normal: [f32; 3],
+    dispersion: f32,
+    refractive_index: f32,
+    optics: OpticalCalibration,
+    reference_ray: [f32; 2],
+    reference_offset: [f32; 2],
+) -> [f32; 2] {
     let wavelength_ray = refracted_screen_slope(surface_normal, refractive_index);
     add2(
-        mul2(reference_ray, refraction * optics.projection_scale),
+        reference_offset,
         mul2(
             sub2(wavelength_ray, reference_ray),
             dispersion * optics.dispersion_scale,
@@ -857,6 +933,185 @@ fn length2(value: [f32; 2]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_settings(dispersion: f32) -> Settings {
+        Settings {
+            height_source: HeightSource::Procedural,
+            map_channel: MapChannel::Luma,
+            invert_map: false,
+            map_black: 0.0,
+            map_white: 1.0,
+            procedural: ProceduralSettings {
+                shape: Shape::Sphere,
+                center: [2.0, 2.0],
+                size: 8.0,
+                aspect: 1.0,
+                rotation: 0.0,
+                roundness: 0.5,
+                ring_width: 0.25,
+                facet_size: 4.0,
+                facet_amount: 1.0,
+                facet_jitter: 0.75,
+                crack_width: 1.0,
+                crack_depth: 0.9,
+                radial_cracks: 18,
+                crack_branching: 0.55,
+                crack_jitter: 0.45,
+                stress_rings: 6,
+                ring_jitter: 0.35,
+                impact_falloff: 0.2,
+                seed: 1,
+            },
+            height_strength: 100.0,
+            normal_radius: 1.0,
+            refraction: 7.25,
+            dispersion,
+            dispersion_steps: 8,
+            auto_spectral_steps: false,
+            sampling: Sampling::Bilinear,
+            edge: EdgeMode::Clamp,
+            mix: 1.0,
+            preserve_alpha: false,
+            debug: DebugView::Final,
+            clamp_32: false,
+            downsample: [1.0, 1.0],
+        }
+    }
+
+    fn test_source() -> LayerBuffer {
+        let mut pixels = Vec::new();
+        for y in 0..6 {
+            for x in 0..7 {
+                let alpha = 0.35 + (x + y) as f32 * 0.04;
+                pixels.push(PixelF32 {
+                    alpha,
+                    red: alpha * (x as f32 / 6.0),
+                    green: alpha * (y as f32 / 5.0),
+                    blue: alpha * ((x + y) as f32 / 11.0),
+                });
+            }
+        }
+        LayerBuffer {
+            pixels,
+            width: 7,
+            height: 6,
+            origin: [0.0, 0.0],
+        }
+    }
+
+    fn legacy_wavelength_refraction_offset(
+        surface_normal: [f32; 3],
+        refraction: f32,
+        dispersion: f32,
+        refractive_index: f32,
+        optics: OpticalCalibration,
+    ) -> [f32; 2] {
+        let reference_ray = refracted_screen_slope(surface_normal, optics.reference_index);
+        let wavelength_ray = refracted_screen_slope(surface_normal, refractive_index);
+        add2(
+            mul2(reference_ray, refraction * optics.projection_scale),
+            mul2(
+                sub2(wavelength_ray, reference_ray),
+                dispersion * optics.dispersion_scale,
+            ),
+        )
+    }
+
+    fn legacy_spectral_refraction(
+        x: f32,
+        y: f32,
+        normal: [f32; 3],
+        source: &LayerBuffer,
+        settings: Settings,
+        optics: OpticalCalibration,
+        spectral_bands: &[SpectralBand],
+    ) -> ([f32; 3], f32) {
+        let mut rgb_sum = [0.0_f32; 3];
+        let mut rgb_weight = [0.0_f32; 3];
+        let mut alpha_sum = 0.0_f32;
+        let mut alpha_weight = 0.0_f32;
+        for band in spectral_bands {
+            let offset = legacy_wavelength_refraction_offset(
+                normal,
+                settings.refraction,
+                settings.dispersion,
+                band.refractive_index,
+                optics,
+            );
+            let sample = displaced_sample(source, x, y, offset, settings);
+            let rgb = unpremultiplied_rgb(sample);
+            for channel in 0..3 {
+                rgb_sum[channel] += rgb[channel] * band.rgb_response[channel];
+                rgb_weight[channel] += band.rgb_response[channel];
+            }
+            alpha_sum += sample.alpha.clamp(0.0, 1.0) * band.luminance_response;
+            alpha_weight += band.luminance_response;
+        }
+        (
+            [
+                rgb_sum[0] / rgb_weight[0].max(1.0e-8),
+                rgb_sum[1] / rgb_weight[1].max(1.0e-8),
+                rgb_sum[2] / rgb_weight[2].max(1.0e-8),
+            ],
+            alpha_sum / alpha_weight.max(1.0e-8),
+        )
+    }
+
+    #[test]
+    fn shared_reference_ray_preserves_legacy_spectral_result_bitwise() {
+        let settings = test_settings(4.75);
+        let optics = OpticalCalibration::bk7();
+        let bands = build_spectral_bands(settings, optics);
+        let source = test_source();
+        for slope in [[-1.25, 0.4], [0.0, 0.0], [0.35, -2.0]] {
+            let normal = surface_normal(slope);
+            let expected =
+                legacy_spectral_refraction(3.125, 2.75, normal, &source, settings, optics, &bands);
+            let actual =
+                spectral_refraction(3.125, 2.75, normal, &source, settings, optics, &bands);
+            for channel in 0..3 {
+                assert_eq!(actual.0[channel].to_bits(), expected.0[channel].to_bits());
+            }
+            assert_eq!(actual.1.to_bits(), expected.1.to_bits());
+        }
+    }
+
+    #[test]
+    fn spectral_refraction_computes_reference_ray_once_per_pixel() {
+        let settings = test_settings(4.75);
+        let optics = OpticalCalibration::bk7();
+        let bands = build_spectral_bands(settings, optics);
+        let source = test_source();
+        let normal = surface_normal([-0.75, 0.25]);
+
+        REFRACTED_SCREEN_SLOPE_CALLS.with(|calls| calls.set(0));
+        let _ = spectral_refraction(3.0, 2.0, normal, &source, settings, optics, &bands);
+        REFRACTED_SCREEN_SLOPE_CALLS.with(|calls| assert_eq!(calls.get(), bands.len() + 1));
+
+        REFRACTED_SCREEN_SLOPE_CALLS.with(|calls| calls.set(0));
+        let _ = legacy_spectral_refraction(3.0, 2.0, normal, &source, settings, optics, &bands);
+        REFRACTED_SCREEN_SLOPE_CALLS.with(|calls| assert_eq!(calls.get(), bands.len() * 2));
+    }
+
+    #[test]
+    fn debug_views_only_prepare_optical_work_they_use() {
+        for (view, expects_optics, expected_bands, expected_ray_calls) in [
+            (DebugView::Final, true, 8, 2),
+            (DebugView::Height, false, 0, 0),
+            (DebugView::Normal, false, 0, 0),
+            (DebugView::Displacement, true, 0, 2),
+            (DebugView::FacetId, false, 0, 0),
+        ] {
+            let mut settings = test_settings(4.75);
+            settings.debug = view;
+            REFRACTED_SCREEN_SLOPE_CALLS.with(|calls| calls.set(0));
+            let (optics, bands) = prepare_render_optics(settings);
+            assert_eq!(optics.is_some(), expects_optics, "{view:?}");
+            assert_eq!(bands.len(), expected_bands, "{view:?}");
+            REFRACTED_SCREEN_SLOPE_CALLS
+                .with(|calls| assert_eq!(calls.get(), expected_ray_calls, "{view:?}"));
+        }
+    }
 
     #[test]
     fn scaled_coordinates_preserve_endpoints() {
