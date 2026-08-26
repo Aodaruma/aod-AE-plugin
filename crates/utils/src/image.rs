@@ -16,6 +16,22 @@ pub const TRANSPARENT: PixelF32 = PixelF32 {
 // cannot describe a meaningful image sample and may overflow neighbour math.
 const MAX_SAFE_SAMPLE_COORDINATE: f32 = 4_503_599_627_370_496.0;
 
+// Separable filters currently top out at 8-lobe Lanczos. A non-integral
+// coordinate can cover one more tap than the two inclusive radius endpoints.
+const MAX_SEPARABLE_RADIUS: usize = 8;
+const MAX_SEPARABLE_TAPS: usize = MAX_SEPARABLE_RADIUS * 2 + 2;
+
+#[derive(Clone, Copy)]
+struct SeparableTap {
+    coordinate: i64,
+    weight: f32,
+}
+
+const EMPTY_SEPARABLE_TAP: SeparableTap = SeparableTap {
+    coordinate: 0,
+    weight: 0.0,
+};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SampleEdge {
     Transparent,
@@ -164,7 +180,7 @@ pub fn sample_filtered(
             })
         }
         SampleFilter::Lanczos { lobes } => {
-            let lobes = finite_or(lobes, 3.0).clamp(1.0, 8.0);
+            let lobes = finite_or(lobes, 3.0).clamp(1.0, MAX_SEPARABLE_RADIUS as f32);
             sample_separable(pixels, width, height, x, y, edge, lobes, |d| {
                 lanczos_weight(d, lobes)
             })
@@ -201,6 +217,66 @@ where
     if width == 0 || height == 0 || !coordinates_are_safe(x, y) {
         return TRANSPARENT;
     }
+    let min_x = (x - radius).floor() as i64;
+    let max_x = (x + radius).ceil() as i64;
+    let min_y = (y - radius).floor() as i64;
+    let max_y = (y + radius).ceil() as i64;
+    let x_tap_count = max_x.saturating_sub(min_x).saturating_add(1);
+    let Ok(x_tap_count) = usize::try_from(x_tap_count) else {
+        return sample_separable_uncached(pixels, width, height, x, y, edge, radius, &weight);
+    };
+    if x_tap_count > MAX_SEPARABLE_TAPS {
+        // At very large f32 coordinates, rounding can make x +/- radius span
+        // more integer taps than the nominal kernel diameter. Preserve the
+        // previous behavior without allocating or indexing past the stack.
+        return sample_separable_uncached(pixels, width, height, x, y, edge, radius, &weight);
+    }
+
+    let mut x_taps = [EMPTY_SEPARABLE_TAP; MAX_SEPARABLE_TAPS];
+    for (tap, sx) in x_taps.iter_mut().zip(min_x..=max_x) {
+        *tap = SeparableTap {
+            coordinate: sx,
+            weight: weight(x - sx as f32),
+        };
+    }
+
+    let mut sum = TRANSPARENT;
+    let mut weight_sum = 0.0;
+    for sy in min_y..=max_y {
+        let wy = weight(y - sy as f32);
+        if wy == 0.0 {
+            continue;
+        }
+        for tap in &x_taps[..x_tap_count] {
+            let sample_weight = wy * tap.weight;
+            if sample_weight == 0.0 || !sample_weight.is_finite() {
+                continue;
+            }
+            add_weighted(
+                &mut sum,
+                sample_integer(pixels, width, height, tap.coordinate, sy, edge),
+                sample_weight,
+            );
+            weight_sum += sample_weight;
+        }
+    }
+    normalized_pixel(sum, weight_sum)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn sample_separable_uncached<F>(
+    pixels: &[PixelF32],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    edge: SampleEdge,
+    radius: f32,
+    weight: &F,
+) -> PixelF32
+where
+    F: Fn(f32) -> f32,
+{
     let min_x = (x - radius).floor() as i64;
     let max_x = (x + radius).ceil() as i64;
     let min_y = (y - radius).floor() as i64;
@@ -410,6 +486,7 @@ fn resolve_coordinate(value: i64, length: usize, edge: SampleEdge) -> Option<usi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     fn pixel(value: f32) -> PixelF32 {
         PixelF32 {
@@ -417,6 +494,53 @@ mod tests {
             red: value,
             green: value,
             blue: value,
+        }
+    }
+
+    fn assert_pixel_bits_eq(actual: PixelF32, expected: PixelF32) {
+        assert_eq!(actual.alpha.to_bits(), expected.alpha.to_bits(), "alpha");
+        assert_eq!(actual.red.to_bits(), expected.red.to_bits(), "red");
+        assert_eq!(actual.green.to_bits(), expected.green.to_bits(), "green");
+        assert_eq!(actual.blue.to_bits(), expected.blue.to_bits(), "blue");
+    }
+
+    fn sample_filtered_uncached(
+        pixels: &[PixelF32],
+        width: usize,
+        height: usize,
+        x: f32,
+        y: f32,
+        edge: SampleEdge,
+        filter: SampleFilter,
+    ) -> PixelF32 {
+        match filter {
+            SampleFilter::Bicubic => {
+                sample_separable_uncached(pixels, width, height, x, y, edge, 2.0, &|d| {
+                    cubic_keys_weight(d, -0.5)
+                })
+            }
+            SampleFilter::Mitchell { b, c } => {
+                sample_separable_uncached(pixels, width, height, x, y, edge, 2.0, &|d| {
+                    mitchell_weight(d, b, c)
+                })
+            }
+            SampleFilter::Lanczos { lobes } => {
+                let lobes = finite_or(lobes, 3.0).clamp(1.0, MAX_SEPARABLE_RADIUS as f32);
+                sample_separable_uncached(pixels, width, height, x, y, edge, lobes, &|d| {
+                    lanczos_weight(d, lobes)
+                })
+            }
+            SampleFilter::CubicBSpline => sample_separable_uncached(
+                pixels,
+                width,
+                height,
+                x,
+                y,
+                edge,
+                2.0,
+                &cubic_bspline_weight,
+            ),
+            _ => panic!("test helper only supports separable filters"),
         }
     }
 
@@ -487,5 +611,71 @@ mod tests {
             assert!((result.red - 0.625).abs() < 1.0e-5, "{filter:?}");
             assert!((result.alpha - 1.0).abs() < 1.0e-5, "{filter:?}");
         }
+    }
+
+    #[test]
+    fn cached_separable_taps_are_bitwise_identical_to_previous_loop() {
+        let pixels = (0..35)
+            .map(|index| PixelF32 {
+                alpha: 0.25 + index as f32 * 0.017,
+                red: ((index * 17 + 3) % 29) as f32 / 19.0,
+                green: ((index * 11 + 5) % 31) as f32 / 23.0,
+                blue: ((index * 7 + 13) % 37) as f32 / 17.0,
+            })
+            .collect::<Vec<_>>();
+        let filters = [
+            SampleFilter::Bicubic,
+            SampleFilter::Mitchell { b: 0.21, c: 0.47 },
+            SampleFilter::Lanczos { lobes: 1.0 },
+            SampleFilter::Lanczos { lobes: 3.0 },
+            SampleFilter::Lanczos { lobes: 8.0 },
+            SampleFilter::CubicBSpline,
+        ];
+        let coordinates = [
+            (-2.25, -1.75),
+            (-0.5, 0.0),
+            (0.125, 0.875),
+            (2.5, 3.25),
+            (5.75, 4.5),
+            (8.25, 7.125),
+        ];
+
+        for edge in [
+            SampleEdge::Transparent,
+            SampleEdge::Clamp,
+            SampleEdge::Tile,
+            SampleEdge::Mirror,
+        ] {
+            for filter in filters {
+                for (x, y) in coordinates {
+                    let actual = sample_filtered(&pixels, 7, 5, x, y, edge, filter);
+                    let expected = sample_filtered_uncached(&pixels, 7, 5, x, y, edge, filter);
+                    assert_pixel_bits_eq(actual, expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn separable_x_kernel_is_evaluated_once_per_tap() {
+        let pixels = vec![pixel(0.5); 25];
+        let evaluations = Cell::new(0);
+        let _ = sample_separable(
+            &pixels,
+            5,
+            5,
+            2.25,
+            1.75,
+            SampleEdge::Clamp,
+            2.0,
+            |distance| {
+                evaluations.set(evaluations.get() + 1);
+                cubic_keys_weight(distance, -0.5)
+            },
+        );
+
+        let x_taps = ((2.25_f32 + 2.0).ceil() - (2.25_f32 - 2.0).floor()) as usize + 1;
+        let y_taps = ((1.75_f32 + 2.0).ceil() - (1.75_f32 - 2.0).floor()) as usize + 1;
+        assert_eq!(evaluations.get(), x_taps + y_taps);
     }
 }

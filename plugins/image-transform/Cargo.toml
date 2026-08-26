@@ -1,7 +1,7 @@
 [package]
 name = "image_transform"
 description = "Applies affine image transforms with selectable reconstruction filters and outside-image sampling."
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [lib]
