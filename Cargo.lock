@@ -1336,6 +1336,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_relight"
+version = "0.5.0"
+dependencies = [
+ "after-effects",
+ "bytemuck",
+ "chrono",
+ "futures-intrusive",
+ "pipl",
+ "pollster",
+ "utils",
+ "wgpu",
+ "winres",
+]
+
+[[package]]
 name = "image_scaler"
 version = "0.1.0"
 dependencies = [
