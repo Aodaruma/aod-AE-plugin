@@ -39,6 +39,26 @@
 - `Gain`、`Bias`、`Clamp`: 出力のコントラスト、基準値、範囲を調整します。
 - `Use Original Alpha`: 入力レイヤーのアルファを保持します。
 
+## AOD_RainbowGenerate
+
+- **分類:** G：生成用キャンバス
+
+![AOD_RainbowGenerate](assets/previews/rainbow-generate.png)
+
+2点アンカーまたは中心・角度から得た座標を、OKLCH／HSV／HSL／CIELCh(ab)／CIELCh(uv)／JzCzHz／IPT IChの色成分へ直接変換して虹を生成します。
+
+### パラメーター
+
+- `Shape`、`Coordinates`: Linear、Reflected Linear、Radial (L2)、Diamond (L1)、Box (L∞)、Minkowski (Lp)、Conic、Spiral、Starburstと、Two Points／Parametric指定を切り替えます。
+- `Start/Center`、`End/Radius`または`Center/Angle/Length`: グラデーションの基準座標を設定します。
+- `Aspect (-Vertical / +Horizontal)`: `-1..1`の対称値を、縦方向／横方向の対数ストレッチへ変換します。
+- `Minkowski Exponent`、`Spiral Turns`、`Ray Count`: 選択したプロシージャル形状を数値で調整します。
+- `Color Model`: 虹を直接生成するOKLCH、HSV、HSL、CIELCh(ab)、CIELCh(uv)、JzCzHz、IPT IChを選択します。二色のカラーピッカーは使用しません。従来の先頭3モードは番号と挙動を維持しています。
+- `Hue`と`Saturation/Chroma`、`Brightness/Lightness/Jz/Intensity`の各`Scale/Offset`: `成分(t) = Offset + Scale × t`として虹全体を制御します。Hue Scale 100%は色相1周です。知覚系モデルのChroma 100%は、OKLCH `0.2`、CIELCh(ab) `C*=80`、CIELCh(uv) `C*=100`、JzCzHz `Cz=0.08`、IPT ICh `C=0.30`に対応します。JzCzHzのLightness 100%は100 nit D65白の`Jz=0.167174`です。
+- `Split Range Start / End`: Scale／Offset UIを明示的な始点・終点成分へ切り替えます。色相値は複数周や逆方向も指定できます。
+- `Preset`、`Bezier X1/Y1/X2/Y2`: 補間カーブのプリセットまたはカスタム3次ベジェを設定します。
+- `Extend`、`Clamp to Display Gamut`、`Mix`、`Preserve Input Alpha`: 範囲外の繰り返し、色域、入力との合成を制御します。
+
 ## AOD_VoronoiGenerate
 
 - **分類:** G：生成用キャンバス（補助入力: D）
