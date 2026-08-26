@@ -30,6 +30,20 @@ resampling. `Radon` inverse uses finite Ram-Lak filtered backprojection and `Lin
 normalized backprojection. Both are labelled **Inverse (Approximate)** in the UI and are not exact
 reconstruction methods.
 
+## Post Transform
+
+The appended **Post Transform** group transforms the result of the selected space conversion. It
+uses the familiar AE controls `Anchor Point`, `Position`, uniform or separated `Scale`, `Rotation`,
+`Skew`, and `Skew Axis`. Enabling `Separate Dimensions` dynamically replaces the single scale
+control with `Scale X` and `Scale Y`.
+
+Rendering inverse-maps each output pixel through the post transform before evaluating the selected
+space equation. Coordinate modes therefore continue their analytic equations beyond the visible
+output rectangle where the equation has a valid extension; they do not tile or mirror a bounded
+intermediate image. Forward Radon and Line Hough likewise evaluate the inverse-mapped angle and
+detector distance directly on their analysis lattice. Inverse projection modes apply the same
+mapping before backprojection. The identity defaults take the original rendering path unchanged.
+
 `Angle Samples`, `Detector Samples`, and `Samples per Ray` explicitly trade analysis quality for CPU
 cost. At extreme combinations the effective ray count, filter radius, and inverse working resolution
 are reduced to a fixed safe work budget. The analysis buffer is resampled to the layer dimensions for

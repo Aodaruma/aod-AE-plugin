@@ -46,6 +46,19 @@ enum Params {
     CoordinateExtent,
     HoughChannels,
     SpaceSpecificEnd,
+    // Post-transform parameters are deliberately append-only. Reordering any
+    // parameter above this point would break projects saved by earlier builds.
+    PostTransformStart,
+    PostAnchorPoint,
+    PostPosition,
+    PostSeparateScale,
+    PostScale,
+    PostScaleX,
+    PostScaleY,
+    PostRotation,
+    PostSkew,
+    PostSkewAxis,
+    PostTransformEnd,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -126,6 +139,103 @@ enum HoughChannels {
     Alpha,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Matrix2 {
+    m00: f32,
+    m01: f32,
+    m10: f32,
+    m11: f32,
+}
+
+impl Matrix2 {
+    fn rotation(angle: f32) -> Self {
+        let (sin, cos) = angle.sin_cos();
+        Self {
+            m00: cos,
+            m01: -sin,
+            m10: sin,
+            m11: cos,
+        }
+    }
+
+    const fn scale(x: f32, y: f32) -> Self {
+        Self {
+            m00: x,
+            m01: 0.0,
+            m10: 0.0,
+            m11: y,
+        }
+    }
+
+    fn shear_x(angle: f32) -> Self {
+        Self {
+            m00: 1.0,
+            m01: angle.tan(),
+            m10: 0.0,
+            m11: 1.0,
+        }
+    }
+
+    const fn mul(self, rhs: Self) -> Self {
+        Self {
+            m00: self.m00 * rhs.m00 + self.m01 * rhs.m10,
+            m01: self.m00 * rhs.m01 + self.m01 * rhs.m11,
+            m10: self.m10 * rhs.m00 + self.m11 * rhs.m10,
+            m11: self.m10 * rhs.m01 + self.m11 * rhs.m11,
+        }
+    }
+
+    fn transform(self, point: (f32, f32)) -> (f32, f32) {
+        (
+            self.m00 * point.0 + self.m01 * point.1,
+            self.m10 * point.0 + self.m11 * point.1,
+        )
+    }
+
+    fn inverse(self) -> Option<Self> {
+        let determinant = self.m00 * self.m11 - self.m01 * self.m10;
+        if !determinant.is_finite() || determinant.abs() <= 1.0e-8 {
+            return None;
+        }
+        let reciprocal = determinant.recip();
+        Some(Self {
+            m00: self.m11 * reciprocal,
+            m01: -self.m01 * reciprocal,
+            m10: -self.m10 * reciprocal,
+            m11: self.m00 * reciprocal,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PostTransform {
+    anchor: (f32, f32),
+    position: (f32, f32),
+    scale: (f32, f32),
+    rotation: f32,
+    skew: f32,
+    skew_axis: f32,
+}
+
+impl PostTransform {
+    fn is_identity(self) -> bool {
+        self.anchor.0 == self.position.0
+            && self.anchor.1 == self.position.1
+            && self.scale.0 == 1.0
+            && self.scale.1 == 1.0
+            && self.rotation == 0.0
+            && self.skew == 0.0
+    }
+
+    fn matrix(self) -> Matrix2 {
+        let scale = Matrix2::scale(self.scale.0, self.scale.1);
+        let skew = Matrix2::rotation(self.skew_axis)
+            .mul(Matrix2::shear_x(self.skew))
+            .mul(Matrix2::rotation(-self.skew_axis));
+        Matrix2::rotation(self.rotation).mul(skew).mul(scale)
+    }
+}
+
 impl HoughChannels {
     fn from_popup(value: i32) -> Self {
         match value {
@@ -169,6 +279,7 @@ struct Settings {
     focus_ratio: f32,
     coordinate_extent: f32,
     hough_channels: HoughChannels,
+    post_transform: PostTransform,
 }
 
 #[derive(Default)]
@@ -509,6 +620,63 @@ impl AdobePluginGlobal for Plugin {
                 Ok(())
             },
         )?;
+
+        params.add_group(
+            Params::PostTransformStart,
+            Params::PostTransformEnd,
+            "Post Transform",
+            true,
+            |params| {
+                params.add(
+                    Params::PostAnchorPoint,
+                    "Anchor Point",
+                    PointDef::setup(|d| {
+                        d.set_default((50.0, 50.0));
+                    }),
+                )?;
+                params.add(
+                    Params::PostPosition,
+                    "Position",
+                    PointDef::setup(|d| {
+                        d.set_default((50.0, 50.0));
+                    }),
+                )?;
+                params.add_with_flags(
+                    Params::PostSeparateScale,
+                    "Separate Dimensions",
+                    CheckBoxDef::setup(|d| {
+                        d.set_default(false);
+                    }),
+                    ae::ParamFlag::SUPERVISE,
+                    ae::ParamUIFlags::empty(),
+                )?;
+                add_post_scale_slider(params, Params::PostScale, "Scale", true)?;
+                add_post_scale_slider(params, Params::PostScaleX, "Scale X", false)?;
+                add_post_scale_slider(params, Params::PostScaleY, "Scale Y", false)?;
+                params.add(
+                    Params::PostRotation,
+                    "Rotation",
+                    AngleDef::setup(|d| {
+                        d.set_default(0.0);
+                    }),
+                )?;
+                params.add(
+                    Params::PostSkew,
+                    "Skew",
+                    AngleDef::setup(|d| {
+                        d.set_default(0.0);
+                    }),
+                )?;
+                params.add(
+                    Params::PostSkewAxis,
+                    "Skew Axis",
+                    AngleDef::setup(|d| {
+                        d.set_default(0.0);
+                    }),
+                )?;
+                Ok(())
+            },
+        )?;
         Ok(())
     }
 
@@ -587,7 +755,11 @@ impl AdobePluginGlobal for Plugin {
             ae::Command::UserChangedParam { param_index } => {
                 if matches!(
                     params.type_at(param_index),
-                    Params::Space | Params::Direction | Params::CenterMode | Params::RadiusMode
+                    Params::Space
+                        | Params::Direction
+                        | Params::CenterMode
+                        | Params::RadiusMode
+                        | Params::PostSeparateScale
                 ) {
                     out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
@@ -662,6 +834,16 @@ impl Plugin {
             Params::HoughChannels,
             space == Space::LineHough,
         )?;
+        let separate_scale = params
+            .get(Params::PostSeparateScale)?
+            .as_checkbox()?
+            .value();
+        self.set_param_visible(in_data, params, Params::PostScale, !separate_scale)?;
+        self.set_param_visible(in_data, params, Params::PostScaleX, separate_scale)?;
+        self.set_param_visible(in_data, params, Params::PostScaleY, separate_scale)?;
+        Self::set_param_enabled(params, Params::PostScale, !separate_scale)?;
+        Self::set_param_enabled(params, Params::PostScaleX, separate_scale)?;
+        Self::set_param_enabled(params, Params::PostScaleY, separate_scale)?;
         Ok(())
     }
 
@@ -707,6 +889,14 @@ impl Plugin {
         Ok(())
     }
 
+    fn set_param_enabled(
+        params: &mut Parameters<Params>,
+        id: Params,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        Self::set_param_ui_flag(params, id, ParamUIFlags::DISABLED, !enabled)
+    }
+
     fn do_render(
         &self,
         in_data: InData,
@@ -725,6 +915,10 @@ impl Plugin {
         if settings.center_mode == CenterMode::Custom {
             settings.center = point_in_checkout_world(settings.center, in_layer.origin());
         }
+        settings.post_transform.anchor =
+            point_in_checkout_world(settings.post_transform.anchor, out_layer.origin());
+        settings.post_transform.position =
+            point_in_checkout_world(settings.post_transform.position, out_layer.origin());
 
         let source = read_layer(&in_layer);
         let output = if settings.space.is_integral() {
@@ -773,9 +967,63 @@ fn add_integer_slider(
     Ok(())
 }
 
+fn add_post_scale_slider(
+    params: &mut Parameters<Params>,
+    id: Params,
+    name: &str,
+    visible: bool,
+) -> Result<(), Error> {
+    let mut ui_flags = ParamUIFlags::empty();
+    if !visible {
+        ui_flags |= ParamUIFlags::INVISIBLE | ParamUIFlags::DISABLED;
+    }
+    params.add_with_flags(
+        id,
+        name,
+        FloatSliderDef::setup(|d| {
+            d.set_valid_min(-10000.0);
+            d.set_valid_max(10000.0);
+            d.set_slider_min(-1000.0);
+            d.set_slider_max(1000.0);
+            d.set_default(100.0);
+            d.set_precision(2);
+        }),
+        ParamFlag::empty(),
+        ui_flags,
+    )?;
+    Ok(())
+}
+
 fn read_settings(params: &Parameters<Params>, in_data: InData) -> Result<Settings, Error> {
     let popup = |id| params.get(id)?.as_popup().map(|p| p.value());
     let slider = |id| params.get(id)?.as_float_slider().map(|p| p.value() as f32);
+    let angle = |id| {
+        params
+            .get(id)?
+            .as_angle()?
+            .float_value()
+            .map(|value| finite_or(value as f32, 0.0).to_radians())
+    };
+    let point = |id| {
+        params
+            .get(id)?
+            .as_point()
+            .map(|point| point.value())
+            .map(|(x, y)| (finite_or(x, 0.0), finite_or(y, 0.0)))
+    };
+    let separate_scale = params
+        .get(Params::PostSeparateScale)?
+        .as_checkbox()?
+        .value();
+    let post_scale = if separate_scale {
+        (
+            finite_or(slider(Params::PostScaleX)?, 100.0) * 0.01,
+            finite_or(slider(Params::PostScaleY)?, 100.0) * 0.01,
+        )
+    } else {
+        let uniform = finite_or(slider(Params::PostScale)?, 100.0) * 0.01;
+        (uniform, uniform)
+    };
     Ok(Settings {
         space: Space::from_popup(popup(Params::Space)?),
         direction: Direction::from_popup(popup(Params::Direction)?),
@@ -819,7 +1067,19 @@ fn read_settings(params: &Parameters<Params>, in_data: InData) -> Result<Setting
         focus_ratio: slider(Params::FocusRatio)?.clamp(0.001, 0.999),
         coordinate_extent: slider(Params::CoordinateExtent)?.clamp(0.05, 20.0),
         hough_channels: HoughChannels::from_popup(popup(Params::HoughChannels)?),
+        post_transform: PostTransform {
+            anchor: point(Params::PostAnchorPoint)?,
+            position: point(Params::PostPosition)?,
+            scale: post_scale,
+            rotation: angle(Params::PostRotation)?,
+            skew: angle(Params::PostSkew)?,
+            skew_axis: angle(Params::PostSkewAxis)?,
+        },
     })
+}
+
+fn finite_or(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() { value } else { fallback }
 }
 
 fn render_pixel_scale(in_data: InData) -> (f32, f32) {
@@ -849,6 +1109,40 @@ fn square_pixel_scale(pixel_aspect: f32, downsample_x: f32, downsample_y: f32) -
 
 fn point_in_checkout_world(point: (f32, f32), origin: ae::Point) -> (f32, f32) {
     (point.0 - origin.h as f32, point.1 - origin.v as f32)
+}
+
+fn inverse_post_transform_point(
+    destination: (f32, f32),
+    post_transform: PostTransform,
+    pixel_scale: (f32, f32),
+    inverse: Matrix2,
+) -> (f32, f32) {
+    let destination_physical = (
+        (destination.0 - post_transform.position.0) * pixel_scale.0,
+        (destination.1 - post_transform.position.1) * pixel_scale.1,
+    );
+    let source_physical = inverse.transform(destination_physical);
+    (
+        post_transform.anchor.0 + source_physical.0 / pixel_scale.0,
+        post_transform.anchor.1 + source_physical.1 / pixel_scale.1,
+    )
+}
+
+#[cfg(test)]
+fn forward_post_transform_point(
+    source: (f32, f32),
+    post_transform: PostTransform,
+    pixel_scale: (f32, f32),
+) -> (f32, f32) {
+    let source_physical = (
+        (source.0 - post_transform.anchor.0) * pixel_scale.0,
+        (source.1 - post_transform.anchor.1) * pixel_scale.1,
+    );
+    let destination_physical = post_transform.matrix().transform(source_physical);
+    (
+        post_transform.position.0 + destination_physical.0 / pixel_scale.0,
+        post_transform.position.1 + destination_physical.1 / pixel_scale.1,
+    )
 }
 
 fn resolve_geometry(width: usize, height: usize, settings: Settings) -> ((f32, f32), f32) {
@@ -902,27 +1196,108 @@ fn render_coordinates(
     settings: Settings,
 ) -> Vec<PixelF32> {
     let (center, radius) = resolve_geometry(out_width, out_height, settings);
+    let post_identity = settings.post_transform.is_identity();
+    let post_inverse = if post_identity {
+        None
+    } else {
+        settings.post_transform.matrix().inverse()
+    };
+    if !post_identity && post_inverse.is_none() {
+        return vec![TRANSPARENT; out_width * out_height];
+    }
+    let (forward_polar_trigonometry, forward_polar_radii) = if matches!(
+        (settings.space, settings.direction),
+        (Space::Polar | Space::LogPolar, Direction::Forward)
+    ) && post_identity
+    {
+        let trigonometry = (0..out_width)
+            .map(|x| {
+                let theta = settings.angle_offset + normalized_index(x, out_width) * TAU;
+                (theta.cos(), theta.sin())
+            })
+            .collect::<Vec<_>>();
+        let radii = (0..out_height)
+            .map(|y| {
+                let v = normalized_index(y, out_height);
+                if settings.space == Space::LogPolar {
+                    let min_radius = settings.log_min_radius.min(radius * 0.999).max(0.001);
+                    min_radius * (radius / min_radius).powf(v)
+                } else {
+                    v * radius
+                }
+            })
+            .collect::<Vec<_>>();
+        (trigonometry, radii)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let (inverse_polar_dx, inverse_polar_dy) = if matches!(
+        (settings.space, settings.direction),
+        (
+            Space::Polar | Space::LogPolar | Space::SpiralPolar,
+            Direction::Inverse
+        )
+    ) && post_identity
+    {
+        let dx = (0..out_width)
+            .map(|x| (x as f32 - center.0) * settings.pixel_scale.0)
+            .collect::<Vec<_>>();
+        let dy = (0..out_height)
+            .map(|y| (y as f32 - center.1) * settings.pixel_scale.1)
+            .collect::<Vec<_>>();
+        (dx, dy)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let (inverse_log_min_radius, inverse_log_radius_range) =
+        if settings.space == Space::LogPolar && settings.direction == Direction::Inverse {
+            let min_radius = settings.log_min_radius.min(radius * 0.999).max(0.001);
+            (min_radius, (radius / min_radius).ln())
+        } else {
+            (0.0, 0.0)
+        };
     let mut output = vec![TRANSPARENT; out_width * out_height];
     for y in 0..out_height {
-        let v = normalized_index(y, out_height);
         for x in 0..out_width {
-            let u = normalized_index(x, out_width);
+            let (post_x, post_y) = if post_identity {
+                (x as f32, y as f32)
+            } else {
+                inverse_post_transform_point(
+                    (x as f32, y as f32),
+                    settings.post_transform,
+                    settings.pixel_scale,
+                    post_inverse.expect("non-identity transform was checked for invertibility"),
+                )
+            };
+            let u = normalized_coordinate(post_x, out_width);
+            let v = normalized_coordinate(post_y, out_height);
             let coordinate = match (settings.space, settings.direction) {
                 (Space::Polar, Direction::Forward) => {
-                    let theta = settings.angle_offset + u * TAU;
-                    let r = v * radius;
+                    let ((cos, sin), r) = if post_identity {
+                        (forward_polar_trigonometry[x], forward_polar_radii[y])
+                    } else {
+                        let theta = settings.angle_offset + u * TAU;
+                        ((theta.cos(), theta.sin()), v * radius)
+                    };
                     Some((
-                        center.0 + r * theta.cos() / settings.pixel_scale.0,
-                        center.1 + r * theta.sin() / settings.pixel_scale.1,
+                        center.0 + r * cos / settings.pixel_scale.0,
+                        center.1 + r * sin / settings.pixel_scale.1,
                     ))
                 }
                 (Space::LogPolar, Direction::Forward) => {
-                    let theta = settings.angle_offset + u * TAU;
-                    let min_radius = settings.log_min_radius.min(radius * 0.999).max(0.001);
-                    let r = min_radius * (radius / min_radius).powf(v);
+                    let ((cos, sin), r) = if post_identity {
+                        (forward_polar_trigonometry[x], forward_polar_radii[y])
+                    } else {
+                        let theta = settings.angle_offset + u * TAU;
+                        let min_radius = settings.log_min_radius.min(radius * 0.999).max(0.001);
+                        (
+                            (theta.cos(), theta.sin()),
+                            min_radius * (radius / min_radius).powf(v),
+                        )
+                    };
                     Some((
-                        center.0 + r * theta.cos() / settings.pixel_scale.0,
-                        center.1 + r * theta.sin() / settings.pixel_scale.1,
+                        center.0 + r * cos / settings.pixel_scale.0,
+                        center.1 + r * sin / settings.pixel_scale.1,
                     ))
                 }
                 (Space::SpiralPolar, Direction::Forward) => {
@@ -934,8 +1309,14 @@ fn render_coordinates(
                     ))
                 }
                 (Space::Polar | Space::LogPolar | Space::SpiralPolar, Direction::Inverse) => {
-                    let dx = (x as f32 - center.0) * settings.pixel_scale.0;
-                    let dy = (y as f32 - center.1) * settings.pixel_scale.1;
+                    let (dx, dy) = if post_identity {
+                        (inverse_polar_dx[x], inverse_polar_dy[y])
+                    } else {
+                        (
+                            (post_x - center.0) * settings.pixel_scale.0,
+                            (post_y - center.1) * settings.pixel_scale.1,
+                        )
+                    };
                     let r = dx.hypot(dy);
                     if r > radius {
                         None
@@ -950,11 +1331,10 @@ fn render_coordinates(
                             .rem_euclid(TAU)
                             / TAU;
                         let radius_v = if settings.space == Space::LogPolar {
-                            let min_radius = settings.log_min_radius.min(radius * 0.999).max(0.001);
-                            if r < min_radius {
+                            if r < inverse_log_min_radius {
                                 return_coordinate_none()
                             } else {
-                                (r / min_radius).ln() / (radius / min_radius).ln()
+                                (r / inverse_log_min_radius).ln() / inverse_log_radius_range
                             }
                         } else {
                             r / radius
@@ -970,8 +1350,8 @@ fn render_coordinates(
                     }
                 }
                 (Space::SquareDisc, Direction::Forward) => {
-                    let dx = (x as f32 - center.0) * settings.pixel_scale.0 / radius;
-                    let dy = (y as f32 - center.1) * settings.pixel_scale.1 / radius;
+                    let dx = (post_x - center.0) * settings.pixel_scale.0 / radius;
+                    let dy = (post_y - center.1) * settings.pixel_scale.1 / radius;
                     if dx * dx + dy * dy > 1.0 {
                         None
                     } else {
@@ -1002,8 +1382,8 @@ fn render_coordinates(
                     ))
                 }
                 (Space::Elliptic, Direction::Inverse) => {
-                    let dx = (x as f32 - center.0) * settings.pixel_scale.0;
-                    let dy = (y as f32 - center.1) * settings.pixel_scale.1;
+                    let dx = (post_x - center.0) * settings.pixel_scale.0;
+                    let dy = (post_y - center.1) * settings.pixel_scale.1;
                     let focus = (radius * settings.focus_ratio).max(1.0e-6);
                     let d_positive = (dx - focus).hypot(dy);
                     let d_negative = (dx + focus).hypot(dy);
@@ -1036,8 +1416,8 @@ fn render_coordinates(
                     ))
                 }
                 (Space::Parabolic, Direction::Inverse) => {
-                    let dx = (x as f32 - center.0) * settings.pixel_scale.0;
-                    let dy = (y as f32 - center.1) * settings.pixel_scale.1;
+                    let dx = (post_x - center.0) * settings.pixel_scale.0;
+                    let dy = (post_y - center.1) * settings.pixel_scale.1;
                     let radial = dx.hypot(dy);
                     let sigma = (radial + dx).max(0.0).sqrt();
                     let tau_magnitude = (radial - dx).max(0.0).sqrt();
@@ -1078,8 +1458,8 @@ fn render_coordinates(
                     }
                 }
                 (Space::Bipolar, Direction::Inverse) => {
-                    let dx = (x as f32 - center.0) * settings.pixel_scale.0;
-                    let dy = (y as f32 - center.1) * settings.pixel_scale.1;
+                    let dx = (post_x - center.0) * settings.pixel_scale.0;
+                    let dy = (post_y - center.1) * settings.pixel_scale.1;
                     let focus = (radius * settings.focus_ratio).max(1.0e-6);
                     let numerator = (dx + focus) * (dx + focus) + dy * dy;
                     let denominator = (dx - focus) * (dx - focus) + dy * dy;
@@ -1135,8 +1515,18 @@ fn render_integral(
     settings: Settings,
 ) -> Vec<PixelF32> {
     let analysis = match (settings.space, settings.direction) {
+        (Space::Radon, Direction::Forward) if !settings.post_transform.is_identity() => {
+            forward_radon_post_transformed(
+                source, src_width, src_height, out_width, out_height, settings,
+            )
+        }
         (Space::Radon, Direction::Forward) => {
             forward_radon(source, src_width, src_height, settings)
+        }
+        (Space::LineHough, Direction::Forward) if !settings.post_transform.is_identity() => {
+            forward_hough_post_transformed(
+                source, src_width, src_height, out_width, out_height, settings,
+            )
         }
         (Space::LineHough, Direction::Forward) => {
             forward_hough(source, src_width, src_height, settings)
@@ -1177,6 +1567,206 @@ fn effective_ray_samples(settings: Settings) -> usize {
     settings.ray_samples.min(budgeted)
 }
 
+struct ProjectionGeometry {
+    trigonometry: Vec<(f32, f32)>,
+    detector_rhos: Vec<f32>,
+    ray_positions: Vec<f32>,
+}
+
+fn projection_trigonometry(angle_offset: f32, angle_samples: usize) -> Vec<(f32, f32)> {
+    (0..angle_samples)
+        .map(|angle| {
+            let theta = angle_offset + angle as f32 * PI / angle_samples as f32;
+            (theta.cos(), theta.sin())
+        })
+        .collect()
+}
+
+impl ProjectionGeometry {
+    fn new(
+        angle_offset: f32,
+        angle_samples: usize,
+        detector_samples: usize,
+        ray_samples: usize,
+        radius: f32,
+    ) -> Self {
+        let trigonometry = projection_trigonometry(angle_offset, angle_samples);
+        let detector_rhos = (0..detector_samples)
+            .map(|detector| detector_rho(detector, detector_samples, radius))
+            .collect();
+        let ray_positions = (0..ray_samples)
+            .map(|ray| detector_rho(ray, ray_samples, radius))
+            .collect();
+        Self {
+            trigonometry,
+            detector_rhos,
+            ray_positions,
+        }
+    }
+}
+
+fn transformed_projection_coordinate(
+    angle_index: usize,
+    detector_index: usize,
+    out_width: usize,
+    out_height: usize,
+    settings: Settings,
+    inverse: Matrix2,
+) -> (f32, f32) {
+    let destination = (
+        resize_coordinate(angle_index, settings.angle_samples, out_width),
+        resize_coordinate(detector_index, settings.detector_samples, out_height),
+    );
+    let source = inverse_post_transform_point(
+        destination,
+        settings.post_transform,
+        settings.pixel_scale,
+        inverse,
+    );
+    (
+        settings.angle_offset + normalized_coordinate(source.0, out_width) * PI,
+        normalized_coordinate(source.1, out_height),
+    )
+}
+
+fn forward_radon_post_transformed(
+    source: &[PixelF32],
+    width: usize,
+    height: usize,
+    out_width: usize,
+    out_height: usize,
+    settings: Settings,
+) -> Vec<PixelF32> {
+    let Some(inverse) = settings.post_transform.matrix().inverse() else {
+        return vec![TRANSPARENT; settings.angle_samples * settings.detector_samples];
+    };
+    let (center, radius) = resolve_geometry(width, height, settings);
+    let ray_samples = effective_ray_samples(settings);
+    let ray_positions = (0..ray_samples)
+        .map(|ray| detector_rho(ray, ray_samples, radius))
+        .collect::<Vec<_>>();
+    let mut result = vec![TRANSPARENT; settings.angle_samples * settings.detector_samples];
+    for detector in 0..settings.detector_samples {
+        for angle in 0..settings.angle_samples {
+            let (theta, detector_v) = transformed_projection_coordinate(
+                angle, detector, out_width, out_height, settings, inverse,
+            );
+            let rho = (detector_v * 2.0 - 1.0) * radius;
+            let (sin, cos) = theta.sin_cos();
+            let mut sum = TRANSPARENT;
+            for (ray, &t) in ray_positions.iter().enumerate() {
+                let pixel = sample_bilinear(
+                    source,
+                    width,
+                    height,
+                    center.0 + (rho * cos - t * sin) / settings.pixel_scale.0,
+                    center.1 + (rho * sin + t * cos) / settings.pixel_scale.1,
+                    SampleEdge::Transparent,
+                );
+                let endpoint_weight = if ray == 0 || ray + 1 == ray_samples {
+                    0.5
+                } else {
+                    1.0
+                };
+                sum = add_pixel(sum, scale_pixel(pixel, endpoint_weight));
+            }
+            result[detector * settings.angle_samples + angle] =
+                scale_pixel(sum, 1.0 / ray_samples.saturating_sub(1).max(1) as f32);
+        }
+    }
+    result
+}
+
+fn forward_hough_post_transformed(
+    source: &[PixelF32],
+    width: usize,
+    height: usize,
+    out_width: usize,
+    out_height: usize,
+    settings: Settings,
+) -> Vec<PixelF32> {
+    let Some(inverse) = settings.post_transform.matrix().inverse() else {
+        return vec![TRANSPARENT; settings.angle_samples * settings.detector_samples];
+    };
+    let (center, radius) = resolve_geometry(width, height, settings);
+    let ray_samples = effective_ray_samples(settings);
+    let ray_positions = (0..ray_samples)
+        .map(|ray| detector_rho(ray, ray_samples, radius))
+        .collect::<Vec<_>>();
+    let edges = sobel_edge_channels(
+        source,
+        width,
+        height,
+        settings.pixel_scale,
+        settings.hough_channels,
+    );
+    let mut votes = vec![[0.0_f32; 4]; settings.angle_samples * settings.detector_samples];
+    let mut maximum = [0.0_f32; 4];
+    let alpha_fallback = if source.is_empty() {
+        0.0
+    } else {
+        source.iter().map(|pixel| pixel.alpha).sum::<f32>() / source.len() as f32
+    };
+    for detector in 0..settings.detector_samples {
+        for angle in 0..settings.angle_samples {
+            let (theta, detector_v) = transformed_projection_coordinate(
+                angle, detector, out_width, out_height, settings, inverse,
+            );
+            let rho = (detector_v * 2.0 - 1.0) * radius;
+            let (sin, cos) = theta.sin_cos();
+            let mut sum = [0.0_f32; 4];
+            for &t in &ray_positions {
+                let magnitude = sample_channel_bilinear(
+                    &edges,
+                    width,
+                    height,
+                    center.0 + (rho * cos - t * sin) / settings.pixel_scale.0,
+                    center.1 + (rho * sin + t * cos) / settings.pixel_scale.1,
+                );
+                for channel in 0..4 {
+                    if magnitude[channel] >= settings.hough_threshold {
+                        sum[channel] += if settings.weighted_hough {
+                            magnitude[channel]
+                        } else {
+                            1.0
+                        };
+                    }
+                }
+            }
+            let vote = sum.map(|value| value / ray_samples as f32);
+            votes[detector * settings.angle_samples + angle] = vote;
+            for channel in 0..4 {
+                maximum[channel] = maximum[channel].max(vote[channel]);
+            }
+        }
+    }
+    votes
+        .into_iter()
+        .map(|value| {
+            let normalized = [
+                value[0] / maximum[0].max(1.0e-8),
+                value[1] / maximum[1].max(1.0e-8),
+                value[2] / maximum[2].max(1.0e-8),
+                if maximum[3] <= 1.0e-8 {
+                    alpha_fallback
+                } else {
+                    value[3] / maximum[3]
+                },
+            ];
+            if settings.hough_channels.is_rgba() {
+                PixelF32 {
+                    alpha: normalized[3],
+                    red: normalized[0],
+                    green: normalized[1],
+                    blue: normalized[2],
+                }
+            } else {
+                gray_pixel(normalized[0])
+            }
+        })
+        .collect()
+}
+
 fn forward_radon(
     source: &[PixelF32],
     width: usize,
@@ -1185,16 +1775,21 @@ fn forward_radon(
 ) -> Vec<PixelF32> {
     let (center, radius) = resolve_geometry(width, height, settings);
     let ray_samples = effective_ray_samples(settings);
+    let geometry = ProjectionGeometry::new(
+        settings.angle_offset,
+        settings.angle_samples,
+        settings.detector_samples,
+        ray_samples,
+        radius,
+    );
     let mut result = vec![TRANSPARENT; settings.angle_samples * settings.detector_samples];
     for detector in 0..settings.detector_samples {
-        let rho = detector_rho(detector, settings.detector_samples, radius);
+        let rho = geometry.detector_rhos[detector];
         for angle in 0..settings.angle_samples {
-            let theta = settings.angle_offset + angle as f32 * PI / settings.angle_samples as f32;
-            let cos = theta.cos();
-            let sin = theta.sin();
+            let (cos, sin) = geometry.trigonometry[angle];
             let mut sum = TRANSPARENT;
             for ray in 0..ray_samples {
-                let t = detector_rho(ray, ray_samples, radius);
+                let t = geometry.ray_positions[ray];
                 let pixel = sample_bilinear(
                     source,
                     width,
@@ -1225,6 +1820,13 @@ fn forward_hough(
 ) -> Vec<PixelF32> {
     let (center, radius) = resolve_geometry(width, height, settings);
     let ray_samples = effective_ray_samples(settings);
+    let geometry = ProjectionGeometry::new(
+        settings.angle_offset,
+        settings.angle_samples,
+        settings.detector_samples,
+        ray_samples,
+        radius,
+    );
     let edges = sobel_edge_channels(
         source,
         width,
@@ -1240,14 +1842,12 @@ fn forward_hough(
         source.iter().map(|pixel| pixel.alpha).sum::<f32>() / source.len() as f32
     };
     for detector in 0..settings.detector_samples {
-        let rho = detector_rho(detector, settings.detector_samples, radius);
+        let rho = geometry.detector_rhos[detector];
         for angle in 0..settings.angle_samples {
-            let theta = settings.angle_offset + angle as f32 * PI / settings.angle_samples as f32;
-            let cos = theta.cos();
-            let sin = theta.sin();
+            let (cos, sin) = geometry.trigonometry[angle];
             let mut sum = [0.0_f32; 4];
             for ray in 0..ray_samples {
-                let t = detector_rho(ray, ray_samples, radius);
+                let t = geometry.ray_positions[ray];
                 let magnitude = sample_channel_bilinear(
                     &edges,
                     width,
@@ -1441,6 +2041,10 @@ fn scaled_geometry_settings(mut settings: Settings, scale_x: f32, scale_y: f32) 
         settings.center.0 *= scale_x;
         settings.center.1 *= scale_y;
     }
+    settings.post_transform.anchor.0 *= scale_x;
+    settings.post_transform.anchor.1 *= scale_y;
+    settings.post_transform.position.0 *= scale_x;
+    settings.post_transform.position.1 *= scale_y;
     settings.pixel_scale.0 /= scale_x.max(1.0e-6);
     settings.pixel_scale.1 /= scale_y.max(1.0e-6);
     settings
@@ -1457,16 +2061,35 @@ fn backproject(
     normalize: bool,
 ) -> Vec<PixelF32> {
     let (center, radius) = resolve_geometry(width, height, settings);
+    let trigonometry = projection_trigonometry(settings.angle_offset, angles);
+    let post_identity = settings.post_transform.is_identity();
+    let post_inverse = if post_identity {
+        None
+    } else {
+        settings.post_transform.matrix().inverse()
+    };
+    if !post_identity && post_inverse.is_none() {
+        return vec![TRANSPARENT; width * height];
+    }
     let mut result = vec![TRANSPARENT; width * height];
     let mut maximum = 0.0_f32;
     for y in 0..height {
         for x in 0..width {
-            let dx = (x as f32 - center.0) * settings.pixel_scale.0;
-            let dy = (y as f32 - center.1) * settings.pixel_scale.1;
+            let (post_x, post_y) = if post_identity {
+                (x as f32, y as f32)
+            } else {
+                inverse_post_transform_point(
+                    (x as f32, y as f32),
+                    settings.post_transform,
+                    settings.pixel_scale,
+                    post_inverse.expect("non-identity transform was checked for invertibility"),
+                )
+            };
+            let dx = (post_x - center.0) * settings.pixel_scale.0;
+            let dy = (post_y - center.1) * settings.pixel_scale.1;
             let mut sum = TRANSPARENT;
-            for angle in 0..angles {
-                let theta = settings.angle_offset + angle as f32 * PI / angles as f32;
-                let rho = dx * theta.cos() + dy * theta.sin();
+            for (angle, &(cos, sin)) in trigonometry.iter().enumerate() {
+                let rho = dx * cos + dy * sin;
                 let detector = rho_to_detector(rho, detectors, radius);
                 sum = add_pixel(
                     sum,
@@ -1507,6 +2130,9 @@ fn ram_lak_filter(
     radius: usize,
 ) -> Vec<PixelF32> {
     let mut result = vec![TRANSPARENT; sinogram.len()];
+    let coefficients = (-(radius as isize)..=(radius as isize))
+        .map(ram_lak_coefficient)
+        .collect::<Vec<_>>();
     for detector in 0..detectors {
         for angle in 0..angles {
             let mut sum = TRANSPARENT;
@@ -1515,7 +2141,7 @@ fn ram_lak_filter(
                 if !(0..detectors as isize).contains(&source_detector) {
                     continue;
                 }
-                let coefficient = ram_lak_coefficient(offset);
+                let coefficient = coefficients[(offset + radius as isize) as usize];
                 sum = add_pixel(
                     sum,
                     scale_pixel(
@@ -1588,11 +2214,16 @@ fn sobel_edge_channels(
     mode: HoughChannels,
 ) -> Vec<[f32; 4]> {
     let mut result = vec![[0.0; 4]; width * height];
+    if width == 0 || height == 0 {
+        return result;
+    }
+    let components = (0..width * height)
+        .map(|index| analysis_components(source.get(index).copied().unwrap_or(TRANSPARENT), mode))
+        .collect::<Vec<_>>();
     let get = |x: i64, y: i64| {
-        analysis_components(
-            sample_nearest(source, width, height, x as f32, y as f32, SampleEdge::Clamp),
-            mode,
-        )
+        let x = x.clamp(0, width as i64 - 1) as usize;
+        let y = y.clamp(0, height as i64 - 1) as usize;
+        components[y * width + x]
     };
     for y in 0..height {
         for x in 0..width {
@@ -1736,6 +2367,14 @@ fn normalized_index(index: usize, length: usize) -> f32 {
     }
 }
 
+fn normalized_coordinate(coordinate: f32, length: usize) -> f32 {
+    if length <= 1 {
+        0.0
+    } else {
+        coordinate / (length - 1) as f32
+    }
+}
+
 fn detector_rho(index: usize, count: usize, radius: f32) -> f32 {
     (normalized_index(index, count) * 2.0 - 1.0) * radius
 }
@@ -1786,6 +2425,372 @@ fn finish_pixel(mut pixel: PixelF32, settings: Settings) -> PixelF32 {
 mod tests {
     use super::*;
 
+    fn assert_pixels_bits_eq(actual: &[PixelF32], expected: &[PixelF32]) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            assert_eq!(
+                actual.alpha.to_bits(),
+                expected.alpha.to_bits(),
+                "pixel {index} alpha"
+            );
+            assert_eq!(
+                actual.red.to_bits(),
+                expected.red.to_bits(),
+                "pixel {index} red"
+            );
+            assert_eq!(
+                actual.green.to_bits(),
+                expected.green.to_bits(),
+                "pixel {index} green"
+            );
+            assert_eq!(
+                actual.blue.to_bits(),
+                expected.blue.to_bits(),
+                "pixel {index} blue"
+            );
+        }
+    }
+
+    fn render_polar_reference(
+        source: &[PixelF32],
+        src_width: usize,
+        src_height: usize,
+        out_width: usize,
+        out_height: usize,
+        settings: Settings,
+    ) -> Vec<PixelF32> {
+        let (center, radius) = resolve_geometry(out_width, out_height, settings);
+        let mut output = vec![TRANSPARENT; out_width * out_height];
+        for y in 0..out_height {
+            let v = normalized_index(y, out_height);
+            for x in 0..out_width {
+                let u = normalized_index(x, out_width);
+                let coordinate = match (settings.space, settings.direction) {
+                    (Space::Polar, Direction::Forward) => {
+                        let theta = settings.angle_offset + u * TAU;
+                        let r = v * radius;
+                        Some((
+                            center.0 + r * theta.cos() / settings.pixel_scale.0,
+                            center.1 + r * theta.sin() / settings.pixel_scale.1,
+                        ))
+                    }
+                    (Space::LogPolar, Direction::Forward) => {
+                        let theta = settings.angle_offset + u * TAU;
+                        let min_radius = settings.log_min_radius.min(radius * 0.999).max(0.001);
+                        let r = min_radius * (radius / min_radius).powf(v);
+                        Some((
+                            center.0 + r * theta.cos() / settings.pixel_scale.0,
+                            center.1 + r * theta.sin() / settings.pixel_scale.1,
+                        ))
+                    }
+                    (Space::SpiralPolar, Direction::Forward) => {
+                        let theta = settings.angle_offset + (u + v * settings.spiral_turns) * TAU;
+                        let r = v * radius;
+                        Some((
+                            center.0 + r * theta.cos() / settings.pixel_scale.0,
+                            center.1 + r * theta.sin() / settings.pixel_scale.1,
+                        ))
+                    }
+                    (Space::Polar | Space::LogPolar | Space::SpiralPolar, Direction::Inverse) => {
+                        let dx = (x as f32 - center.0) * settings.pixel_scale.0;
+                        let dy = (y as f32 - center.1) * settings.pixel_scale.1;
+                        let r = dx.hypot(dy);
+                        if r > radius {
+                            None
+                        } else {
+                            let radial_position = r / radius;
+                            let spiral_phase = if settings.space == Space::SpiralPolar {
+                                radial_position * settings.spiral_turns * TAU
+                            } else {
+                                0.0
+                            };
+                            let angle_u = (dy.atan2(dx) - settings.angle_offset - spiral_phase)
+                                .rem_euclid(TAU)
+                                / TAU;
+                            let radius_v = if settings.space == Space::LogPolar {
+                                let min_radius =
+                                    settings.log_min_radius.min(radius * 0.999).max(0.001);
+                                if r < min_radius {
+                                    return_coordinate_none()
+                                } else {
+                                    (r / min_radius).ln() / (radius / min_radius).ln()
+                                }
+                            } else {
+                                r / radius
+                            };
+                            if radius_v.is_finite() {
+                                Some((
+                                    angle_u * src_width.saturating_sub(1) as f32,
+                                    radius_v * src_height.saturating_sub(1) as f32,
+                                ))
+                            } else {
+                                None
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+                let pixel = coordinate
+                    .map(|(sx, sy)| {
+                        sample(
+                            source,
+                            src_width,
+                            src_height,
+                            sx,
+                            sy,
+                            settings.interpolation,
+                            settings.edge,
+                        )
+                    })
+                    .unwrap_or(TRANSPARENT);
+                output[y * out_width + x] = finish_pixel(pixel, settings);
+            }
+        }
+        output
+    }
+
+    fn sobel_edge_channels_reference(
+        source: &[PixelF32],
+        width: usize,
+        height: usize,
+        pixel_scale: (f32, f32),
+        mode: HoughChannels,
+    ) -> Vec<[f32; 4]> {
+        let mut result = vec![[0.0; 4]; width * height];
+        let get = |x: i64, y: i64| {
+            analysis_components(
+                sample_nearest(source, width, height, x as f32, y as f32, SampleEdge::Clamp),
+                mode,
+            )
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let x = x as i64;
+                let y = y as i64;
+                let p00 = get(x - 1, y - 1);
+                let p10 = get(x, y - 1);
+                let p20 = get(x + 1, y - 1);
+                let p01 = get(x - 1, y);
+                let p21 = get(x + 1, y);
+                let p02 = get(x - 1, y + 1);
+                let p12 = get(x, y + 1);
+                let p22 = get(x + 1, y + 1);
+                let mut magnitude = [0.0; 4];
+                for channel in 0..4 {
+                    let gx = (-p00[channel] + p20[channel] - 2.0 * p01[channel]
+                        + 2.0 * p21[channel]
+                        - p02[channel]
+                        + p22[channel])
+                        / pixel_scale.0.max(1.0e-6);
+                    let gy = (-p00[channel] - 2.0 * p10[channel] - p20[channel]
+                        + p02[channel]
+                        + 2.0 * p12[channel]
+                        + p22[channel])
+                        / pixel_scale.1.max(1.0e-6);
+                    magnitude[channel] = (gx.hypot(gy) * 0.25).clamp(0.0, 1.0);
+                }
+                result[y as usize * width + x as usize] = magnitude;
+            }
+        }
+        result
+    }
+
+    fn forward_radon_reference(
+        source: &[PixelF32],
+        width: usize,
+        height: usize,
+        settings: Settings,
+    ) -> Vec<PixelF32> {
+        let (center, radius) = resolve_geometry(width, height, settings);
+        let ray_samples = effective_ray_samples(settings);
+        let mut result = vec![TRANSPARENT; settings.angle_samples * settings.detector_samples];
+        for detector in 0..settings.detector_samples {
+            let rho = detector_rho(detector, settings.detector_samples, radius);
+            for angle in 0..settings.angle_samples {
+                let theta =
+                    settings.angle_offset + angle as f32 * PI / settings.angle_samples as f32;
+                let cos = theta.cos();
+                let sin = theta.sin();
+                let mut sum = TRANSPARENT;
+                for ray in 0..ray_samples {
+                    let t = detector_rho(ray, ray_samples, radius);
+                    let pixel = sample_bilinear(
+                        source,
+                        width,
+                        height,
+                        center.0 + (rho * cos - t * sin) / settings.pixel_scale.0,
+                        center.1 + (rho * sin + t * cos) / settings.pixel_scale.1,
+                        SampleEdge::Transparent,
+                    );
+                    let endpoint_weight = if ray == 0 || ray + 1 == ray_samples {
+                        0.5
+                    } else {
+                        1.0
+                    };
+                    sum = add_pixel(sum, scale_pixel(pixel, endpoint_weight));
+                }
+                result[detector * settings.angle_samples + angle] =
+                    scale_pixel(sum, 1.0 / ray_samples.saturating_sub(1).max(1) as f32);
+            }
+        }
+        result
+    }
+
+    fn forward_hough_reference(
+        source: &[PixelF32],
+        width: usize,
+        height: usize,
+        settings: Settings,
+    ) -> Vec<PixelF32> {
+        let (center, radius) = resolve_geometry(width, height, settings);
+        let ray_samples = effective_ray_samples(settings);
+        let edges = sobel_edge_channels_reference(
+            source,
+            width,
+            height,
+            settings.pixel_scale,
+            settings.hough_channels,
+        );
+        let mut votes = vec![[0.0_f32; 4]; settings.angle_samples * settings.detector_samples];
+        let mut maximum = [0.0_f32; 4];
+        let alpha_fallback = if source.is_empty() {
+            0.0
+        } else {
+            source.iter().map(|pixel| pixel.alpha).sum::<f32>() / source.len() as f32
+        };
+        for detector in 0..settings.detector_samples {
+            let rho = detector_rho(detector, settings.detector_samples, radius);
+            for angle in 0..settings.angle_samples {
+                let theta =
+                    settings.angle_offset + angle as f32 * PI / settings.angle_samples as f32;
+                let cos = theta.cos();
+                let sin = theta.sin();
+                let mut sum = [0.0_f32; 4];
+                for ray in 0..ray_samples {
+                    let t = detector_rho(ray, ray_samples, radius);
+                    let magnitude = sample_channel_bilinear(
+                        &edges,
+                        width,
+                        height,
+                        center.0 + (rho * cos - t * sin) / settings.pixel_scale.0,
+                        center.1 + (rho * sin + t * cos) / settings.pixel_scale.1,
+                    );
+                    for channel in 0..4 {
+                        if magnitude[channel] >= settings.hough_threshold {
+                            sum[channel] += if settings.weighted_hough {
+                                magnitude[channel]
+                            } else {
+                                1.0
+                            };
+                        }
+                    }
+                }
+                let vote = sum.map(|value| value / ray_samples as f32);
+                votes[detector * settings.angle_samples + angle] = vote;
+                for channel in 0..4 {
+                    maximum[channel] = maximum[channel].max(vote[channel]);
+                }
+            }
+        }
+        votes
+            .into_iter()
+            .map(|value| {
+                let normalized = [
+                    value[0] / maximum[0].max(1.0e-8),
+                    value[1] / maximum[1].max(1.0e-8),
+                    value[2] / maximum[2].max(1.0e-8),
+                    if maximum[3] <= 1.0e-8 {
+                        alpha_fallback
+                    } else {
+                        value[3] / maximum[3]
+                    },
+                ];
+                if settings.hough_channels.is_rgba() {
+                    PixelF32 {
+                        alpha: normalized[3],
+                        red: normalized[0],
+                        green: normalized[1],
+                        blue: normalized[2],
+                    }
+                } else {
+                    gray_pixel(normalized[0])
+                }
+            })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn backproject_reference(
+        sinogram: &[PixelF32],
+        angles: usize,
+        detectors: usize,
+        width: usize,
+        height: usize,
+        settings: Settings,
+        normalize: bool,
+    ) -> Vec<PixelF32> {
+        let (center, radius) = resolve_geometry(width, height, settings);
+        let mut result = vec![TRANSPARENT; width * height];
+        let mut maximum = 0.0_f32;
+        for y in 0..height {
+            for x in 0..width {
+                let dx = (x as f32 - center.0) * settings.pixel_scale.0;
+                let dy = (y as f32 - center.1) * settings.pixel_scale.1;
+                let mut sum = TRANSPARENT;
+                for angle in 0..angles {
+                    let theta = settings.angle_offset + angle as f32 * PI / angles as f32;
+                    let rho = dx * theta.cos() + dy * theta.sin();
+                    let detector = rho_to_detector(rho, detectors, radius);
+                    sum = add_pixel(
+                        sum,
+                        sample_sinogram_detector(sinogram, angles, detectors, angle, detector),
+                    );
+                }
+                let pixel = scale_pixel(sum, PI / angles as f32);
+                maximum = maximum.max(pixel.red.max(pixel.green).max(pixel.blue).abs());
+                result[y * width + x] = pixel;
+            }
+        }
+        if normalize {
+            let scale = 1.0 / maximum.max(1.0e-8);
+            for pixel in &mut result {
+                *pixel = scale_pixel(*pixel, scale);
+                pixel.alpha = 1.0;
+            }
+        }
+        result
+    }
+
+    fn ram_lak_filter_reference(
+        sinogram: &[PixelF32],
+        angles: usize,
+        detectors: usize,
+        radius: usize,
+    ) -> Vec<PixelF32> {
+        let mut result = vec![TRANSPARENT; sinogram.len()];
+        for detector in 0..detectors {
+            for angle in 0..angles {
+                let mut sum = TRANSPARENT;
+                for offset in -(radius as isize)..=(radius as isize) {
+                    let source_detector = detector as isize + offset;
+                    if !(0..detectors as isize).contains(&source_detector) {
+                        continue;
+                    }
+                    let coefficient = ram_lak_coefficient(offset);
+                    sum = add_pixel(
+                        sum,
+                        scale_pixel(
+                            sinogram[source_detector as usize * angles + angle],
+                            coefficient,
+                        ),
+                    );
+                }
+                result[detector * angles + angle] = sum;
+            }
+        }
+        result
+    }
+
     fn test_settings(space: Space) -> Settings {
         Settings {
             space,
@@ -1812,7 +2817,314 @@ mod tests {
             focus_ratio: 0.5,
             coordinate_extent: 3.0,
             hough_channels: HoughChannels::Luminance,
+            post_transform: PostTransform {
+                anchor: (4.0, 3.0),
+                position: (4.0, 3.0),
+                scale: (1.0, 1.0),
+                rotation: 0.0,
+                skew: 0.0,
+                skew_axis: 0.0,
+            },
         }
+    }
+
+    fn representative_pixels(width: usize, height: usize) -> Vec<PixelF32> {
+        (0..width * height)
+            .map(|index| {
+                let x = index % width;
+                let y = index / width;
+                PixelF32 {
+                    alpha: 0.35 + ((x * 7 + y * 3) % 11) as f32 / 17.0,
+                    red: ((x * 5 + y * 2) % 13) as f32 / 12.0,
+                    green: ((x * 3 + y * 7) % 17) as f32 / 16.0,
+                    blue: ((x * 11 + y * 5) % 19) as f32 / 18.0,
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn post_transform_inverse_undoes_full_affine_mapping() {
+        let post_transform = PostTransform {
+            anchor: (47.0, 31.0),
+            position: (123.0, -18.0),
+            scale: (-1.25, 0.65),
+            rotation: 37.0_f32.to_radians(),
+            skew: -21.0_f32.to_radians(),
+            skew_axis: 14.0_f32.to_radians(),
+        };
+        let pixel_scale = (2.4, 3.0);
+        let inverse = post_transform
+            .matrix()
+            .inverse()
+            .expect("non-zero scale must be invertible");
+        for source in [(0.0, 0.0), (47.0, 31.0), (103.0, -18.0)] {
+            let destination = forward_post_transform_point(source, post_transform, pixel_scale);
+            let rebuilt =
+                inverse_post_transform_point(destination, post_transform, pixel_scale, inverse);
+            assert!((rebuilt.0 - source.0).abs() < 1.0e-4);
+            assert!((rebuilt.1 - source.1).abs() < 1.0e-4);
+        }
+    }
+
+    #[test]
+    fn identity_post_transform_is_bitwise_compatible_in_every_space() {
+        let width = 9;
+        let height = 7;
+        let source = representative_pixels(width, height);
+        for space in [
+            Space::Polar,
+            Space::LogPolar,
+            Space::SquareDisc,
+            Space::SpiralPolar,
+            Space::Elliptic,
+            Space::Parabolic,
+            Space::Bipolar,
+            Space::Radon,
+            Space::LineHough,
+        ] {
+            for direction in [Direction::Forward, Direction::Inverse] {
+                let mut baseline_settings = test_settings(space);
+                baseline_settings.direction = direction;
+                baseline_settings.angle_samples = width;
+                baseline_settings.detector_samples = height;
+                baseline_settings.ray_samples = 9;
+                baseline_settings.filter_radius = 3;
+                let baseline = if space.is_integral() {
+                    render_integral(&source, width, height, width, height, baseline_settings)
+                } else {
+                    render_coordinates(&source, width, height, width, height, baseline_settings)
+                };
+
+                let moved_identity = Settings {
+                    post_transform: PostTransform {
+                        anchor: (812.5, -209.25),
+                        position: (812.5, -209.25),
+                        ..baseline_settings.post_transform
+                    },
+                    ..baseline_settings
+                };
+                let actual = if space.is_integral() {
+                    render_integral(&source, width, height, width, height, moved_identity)
+                } else {
+                    render_coordinates(&source, width, height, width, height, moved_identity)
+                };
+                assert_pixels_bits_eq(&actual, &baseline);
+            }
+        }
+    }
+
+    #[test]
+    fn post_translation_is_composed_before_each_coordinate_formula() {
+        let width = 9;
+        let height = 7;
+        let source = representative_pixels(width, height);
+        for space in [
+            Space::Polar,
+            Space::LogPolar,
+            Space::SquareDisc,
+            Space::SpiralPolar,
+            Space::Elliptic,
+            Space::Parabolic,
+            Space::Bipolar,
+        ] {
+            for direction in [Direction::Forward, Direction::Inverse] {
+                let baseline_settings = Settings {
+                    direction,
+                    ..test_settings(space)
+                };
+                let baseline =
+                    render_coordinates(&source, width, height, width, height, baseline_settings);
+                let translated_settings = Settings {
+                    post_transform: PostTransform {
+                        position: (
+                            baseline_settings.post_transform.position.0 + 1.0,
+                            baseline_settings.post_transform.position.1,
+                        ),
+                        ..baseline_settings.post_transform
+                    },
+                    ..baseline_settings
+                };
+                let translated =
+                    render_coordinates(&source, width, height, width, height, translated_settings);
+                for y in 0..height {
+                    for x in 1..width {
+                        assert_pixels_bits_eq(
+                            &translated[y * width + x..=y * width + x],
+                            &baseline[y * width + x - 1..=y * width + x - 1],
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transformed_radon_evaluates_unclamped_projection_coordinates() {
+        let width = 9;
+        let height = 7;
+        let settings = Settings {
+            angle_samples: width,
+            detector_samples: height,
+            ray_samples: 9,
+            post_transform: PostTransform {
+                position: (13.0, 3.0),
+                ..test_settings(Space::Radon).post_transform
+            },
+            ..test_settings(Space::Radon)
+        };
+        let inverse = settings
+            .post_transform
+            .matrix()
+            .inverse()
+            .expect("translation is invertible");
+        let (theta, detector_v) =
+            transformed_projection_coordinate(0, 0, width, height, settings, inverse);
+        // A nine-pixel right translation maps the first output sample to x=-9.
+        // The angle remains outside the nominal [0, PI] interval instead of
+        // being clamped or tiled from a finite accumulator image.
+        assert!((theta - (-9.0 / 8.0 * PI)).abs() < 1.0e-6);
+        assert_eq!(detector_v.to_bits(), 0.0_f32.to_bits());
+
+        let source = representative_pixels(width, height);
+        let transformed =
+            forward_radon_post_transformed(&source, width, height, width, height, settings);
+        assert_eq!(transformed.len(), width * height);
+        assert!(transformed.iter().all(|pixel| {
+            pixel.alpha.is_finite()
+                && pixel.red.is_finite()
+                && pixel.green.is_finite()
+                && pixel.blue.is_finite()
+        }));
+    }
+
+    #[test]
+    fn polar_coordinate_caches_match_reference_bitwise() {
+        let width = 11;
+        let height = 9;
+        let source = representative_pixels(width, height);
+        for space in [Space::Polar, Space::LogPolar, Space::SpiralPolar] {
+            for direction in [Direction::Forward, Direction::Inverse] {
+                let settings = Settings {
+                    direction,
+                    center_mode: CenterMode::Custom,
+                    center: (4.25, 3.75),
+                    radius_mode: RadiusMode::Custom,
+                    radius: 5.125,
+                    log_min_radius: 0.625,
+                    angle_offset: 0.371,
+                    pixel_scale: (1.125, 0.875),
+                    ..test_settings(space)
+                };
+                let actual = render_coordinates(&source, width, height, width, height, settings);
+                let expected =
+                    render_polar_reference(&source, width, height, width, height, settings);
+                assert_pixels_bits_eq(&actual, &expected);
+            }
+        }
+    }
+
+    #[test]
+    fn projection_geometry_caches_match_reference_bitwise() {
+        let width = 9;
+        let height = 7;
+        let source = representative_pixels(width, height);
+        let settings = Settings {
+            angle_samples: 13,
+            detector_samples: 11,
+            ray_samples: 15,
+            angle_offset: -0.217,
+            center_mode: CenterMode::Custom,
+            center: (3.75, 2.625),
+            radius_mode: RadiusMode::Custom,
+            radius: 4.875,
+            pixel_scale: (1.25, 0.8),
+            ..test_settings(Space::Radon)
+        };
+
+        let actual_sinogram = forward_radon(&source, width, height, settings);
+        let expected_sinogram = forward_radon_reference(&source, width, height, settings);
+        assert_pixels_bits_eq(&actual_sinogram, &expected_sinogram);
+
+        let actual_backprojection = backproject(
+            &actual_sinogram,
+            settings.angle_samples,
+            settings.detector_samples,
+            width,
+            height,
+            settings,
+            false,
+        );
+        let expected_backprojection = backproject_reference(
+            &expected_sinogram,
+            settings.angle_samples,
+            settings.detector_samples,
+            width,
+            height,
+            settings,
+            false,
+        );
+        assert_pixels_bits_eq(&actual_backprojection, &expected_backprojection);
+
+        let actual_filtered = ram_lak_filter(
+            &actual_sinogram,
+            settings.angle_samples,
+            settings.detector_samples,
+            5,
+        );
+        let expected_filtered = ram_lak_filter_reference(
+            &expected_sinogram,
+            settings.angle_samples,
+            settings.detector_samples,
+            5,
+        );
+        assert_pixels_bits_eq(&actual_filtered, &expected_filtered);
+    }
+
+    #[test]
+    fn rgba_hough_and_sobel_cache_match_reference_bitwise() {
+        let width = 9;
+        let height = 7;
+        let source = representative_pixels(width, height);
+        let settings = Settings {
+            angle_samples: 13,
+            detector_samples: 11,
+            ray_samples: 15,
+            angle_offset: 0.413,
+            hough_threshold: 0.08,
+            hough_channels: HoughChannels::Rgba,
+            pixel_scale: (1.125, 0.75),
+            ..test_settings(Space::LineHough)
+        };
+
+        for mode in [
+            HoughChannels::Luminance,
+            HoughChannels::Rgba,
+            HoughChannels::Red,
+            HoughChannels::Green,
+            HoughChannels::Blue,
+            HoughChannels::Alpha,
+        ] {
+            let actual_edges =
+                sobel_edge_channels(&source, width, height, settings.pixel_scale, mode);
+            let expected_edges =
+                sobel_edge_channels_reference(&source, width, height, settings.pixel_scale, mode);
+            assert_eq!(actual_edges.len(), expected_edges.len());
+            for (index, (actual, expected)) in actual_edges.iter().zip(&expected_edges).enumerate()
+            {
+                for channel in 0..4 {
+                    assert_eq!(
+                        actual[channel].to_bits(),
+                        expected[channel].to_bits(),
+                        "mode {mode:?}, edge {index}, channel {channel}"
+                    );
+                }
+            }
+        }
+
+        let actual = forward_hough(&source, width, height, settings);
+        let expected = forward_hough_reference(&source, width, height, settings);
+        assert_pixels_bits_eq(&actual, &expected);
     }
 
     #[test]
