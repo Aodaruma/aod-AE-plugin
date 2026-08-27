@@ -156,7 +156,7 @@ Canny法で色や明度の境界を検出し、輪郭線画像を生成します
 ### パラメーター
 
 - `Method`: SDFまたはPoisson方式を選択します。
-- `Normal Strength`、`Invert`、`Flip Y`: 法線強度、凹凸反転、DirectX形式を設定します。
+- `Normal Strength`、`Invert`、`Flip Y`: 法線強度、凹凸反転、DirectX形式を設定します。`Flip Y`は既定で有効です。
 - `Alpha Threshold`、`Label Tolerance`、`Boundary Condition`: 領域と境界の解釈を設定します。
 - `Edge Softness`、`SDF Radius/Exponent`: SDF方式の形状を調整します。
 - `Poisson Iters`、`Divergence`、`Damping`、`Edge Feather`: Poisson方式の収束と滑らかさを調整します。
