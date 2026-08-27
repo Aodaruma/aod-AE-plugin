@@ -469,6 +469,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        target_os = "windows",
+        ignore = "requires an interactive Windows GPU driver; run explicitly with --ignored"
+    )]
     fn gpu_dirichlet_solve_keeps_the_boundary_fixed() {
         let Ok(context) = WgpuContext::new() else {
             eprintln!("Skipping ImageRelight GPU test because wgpu is unavailable");

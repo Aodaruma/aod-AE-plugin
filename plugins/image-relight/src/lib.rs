@@ -3534,6 +3534,10 @@ mod tests {
 
     #[cfg(feature = "gpu_wgpu")]
     #[test]
+    #[cfg_attr(
+        target_os = "windows",
+        ignore = "requires an interactive Windows GPU driver; run explicitly with --ignored"
+    )]
     fn gpu_screened_poisson_tracks_the_cpu_reference() {
         let Ok(context) = WgpuContext::new() else {
             eprintln!("Skipping ImageRelight CPU/GPU comparison because wgpu is unavailable");
