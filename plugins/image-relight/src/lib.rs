@@ -2438,7 +2438,7 @@ fn normals_from_regions(
             let dy = (bottom - top) * 0.5 / step_y;
             normals[index] = normalize3([
                 -dx * strength * edge_weight,
-                -dy * strength * edge_weight,
+                dy * strength * edge_weight,
                 1.0,
             ]);
         }
@@ -2533,7 +2533,7 @@ fn normals_from_height(
             let dy_span = (bottom - top).max(1) as f32 * pixel_scale.1;
             let dx = (heights[y * width + right] - heights[y * width + left]) / dx_span;
             let dy = (heights[bottom * width + x] - heights[top * width + x]) / dy_span;
-            normals[y * width + x] = normalize3([-dx * strength, -dy * strength, 1.0]);
+            normals[y * width + x] = normalize3([-dx * strength, dy * strength, 1.0]);
         }
     }
     normals
@@ -2950,6 +2950,33 @@ mod tests {
             assert!((normal[1]).abs() < 1.0e-6);
             assert!((normal[2] - 1.0).abs() < 1.0e-6);
         }
+    }
+
+    #[test]
+    fn generated_normals_convert_image_y_to_tangent_y() {
+        let heights = vec![0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0];
+        let height_normal = normals_from_height(&heights, 3, 3, 1.0, (1.0, 1.0))[4];
+        assert!(height_normal[1] > 0.0);
+
+        let labels = vec![0; 9];
+        let distance = vec![2.0; 9];
+        let region_normal = normals_from_regions(
+            &heights,
+            &labels,
+            &distance,
+            3,
+            3,
+            1.0,
+            0.0,
+            false,
+            true,
+            (1.0, 1.0),
+        )[4];
+        assert!(region_normal[1] > 0.0);
+
+        let light_from_above = blinn_terms(height_normal, [0.0, 1.0, 1.0], 32.0).0;
+        let light_from_below = blinn_terms(height_normal, [0.0, -1.0, 1.0], 32.0).0;
+        assert!(light_from_above > light_from_below);
     }
 
     #[test]
