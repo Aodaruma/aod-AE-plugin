@@ -1,0 +1,29 @@
+[package]
+name = "rainbow_generate"
+description = "Generates parametric rainbows directly in perceptual and cylindrical color models across multiple geometric shapes."
+version = "0.4.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+utils = { path = "../../crates/utils" }
+palette.workspace = true
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+winres = "0.1.12"
+
+[lints]
+workspace = true
