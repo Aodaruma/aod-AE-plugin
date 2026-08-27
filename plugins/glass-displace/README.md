@@ -2,6 +2,8 @@
 
 Applies map-driven glass refraction with configurable fracture fields, impact cracks, and spectral dispersion.
 
+![AOD_GlassDisplace preview](../../docs/catalog/assets/previews/glass-displace.png)
+
 This is the After Effects plugin **AOD_GlassDisplace**, which provides the **AOD_GlassDisplace.aex** plugin file for Adobe After Effects.
 
 ## Controls

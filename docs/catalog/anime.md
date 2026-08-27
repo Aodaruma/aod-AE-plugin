@@ -111,6 +111,32 @@ Canny法で色や明度の境界を検出し、輪郭線画像を生成します
 - `Connectivity`: 4近傍／8近傍の連結条件を選択します。
 - `Add/Remove Point`と各Point: スポイト位置、対象色、適用不透明度を管理します。
 
+## AOD_ImageRelight
+
+- **分類:** A：アニメ素材（補助入力: D）
+
+![AOD_ImageRelight](assets/previews/image-relight.png)
+
+入力画像の色領域・高さチャンネル、または別レイヤーの法線マップから面形状を得て、Principledマテリアルで画像をリライトします。既定のColor Regionsは、同系色でつながった領域ごとに独立した高さ面を生成します。
+
+### パラメーター
+
+- `Source`、`Layer`、`XY Scale`、`Y Convention`: 生成法線と外部Normal Map、OpenGL／DirectX方式を切り替えます。
+- `Method`: 既定の`Color Regions`と`Height Channel`を切り替えます。
+- `Color Tolerance`、`Alpha Threshold`、`Edge Softness`: 色領域の分割と境界法線を設定します。
+- `Surface Solver`: `Distance Field (SDF)`と、既定の滑らかな`Poisson / Neumann`を切り替えます。
+- `Region Radius`、`Height Shape`: SDF方式の高さ形状を設定します。
+- `Boundary Condition`、`Iterations`、`Divergence / Curvature`、`Screened Damping`、`Edge Feather`: Poisson方式のDirichlet／Neumann境界と数値解法を設定します。Neumannが既定です。
+- `Channel`、`Height Blur`、`Normal Strength`、`Invert Height`: 高さチャンネル方式と生成法線に共通する強度・反転を設定します。
+- `Type`、`Color`、`Intensity`、`Azimuth/Elevation`または`Position/Height/Falloff Radius`: Directional／Point光源を設定します。
+- `Surface`: 既定の`Principled (GGX)`と`Legacy Blinn-Phong`を切り替えます。
+- `Base Tint`、`Metallic`、`Roughness`、`IOR`、`Specular IOR Level`、`Environment Strength`: GGX／Smith／Schlick Fresnelによるマテリアル応答を調整します。
+- `Output`、`Exposure`、`Clamp Output`: Relit、Normal、Height、Diffuse、Specular、Lightingの表示と出力範囲を制御します。
+
+### 補足
+
+大きなscreened Poisson計算はWGPUを自動使用し、小規模・純Neumann・GPU利用不可時はCPUへフォールバックします。
+
 ## AOD_LightWrap
 
 - **分類:** A：アニメ素材

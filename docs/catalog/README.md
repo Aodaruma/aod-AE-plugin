@@ -1,13 +1,13 @@
 # AOD After Effects Plugin Catalog
 
-用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる32プラグインを4分類に整理しています。
+用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる38プラグインを4分類に整理しています。
 
 | 分類 | 適した素材 | 収録数 | 詳細 |
 |---|---|---:|---|
-| P | Photo：一般写真・連続階調画像 | 14 | [Photo / 一般画像](photo.md) |
-| A | Anime：アニメ素材（セル塗り・線画・透過キャラクター） | 12 | [Anime / アニメ素材](anime.md) |
-| D | Data & Map：データ・マップ画像 | 3 | [Data & Map / データ・マップ](map-data.md) |
-| G | Generator：生成用キャンバス | 3 | [Generator / 生成系](generator.md) |
+| P | Photo：一般写真・連続階調画像 | 17 | [Photo / 一般画像](photo.md) |
+| A | Anime：アニメ素材（セル塗り・線画・透過キャラクター） | 13 | [Anime / アニメ素材](anime.md) |
+| D | Data & Map：データ・マップ画像 | 4 | [Data & Map / データ・マップ](map-data.md) |
+| G | Generator：生成用キャンバス | 4 | [Generator / 生成系](generator.md) |
 
 分類は「最も分かりやすく効果を確認できる主入力」を示します。たとえば `AOD_ScatterMap` はP分類ですが、Amount Mapなどの補助入力としてD分類の画像を併用できます。
 
@@ -30,3 +30,13 @@
 ### G：生成用キャンバス
 
 [![G：生成用キャンバス](assets/overview/generator.png)](generator.md)
+
+## カタログ画像の再生成
+
+After Effects 2025で[`catalog/ae2025-plugin-catalog/aod-plugin-catalog-ae2025.aep`](../../catalog/ae2025-plugin-catalog/aod-plugin-catalog-ae2025.aep)を開き、`ファイル > スクリプト > スクリプトファイルを実行`から次の順に実行します。プラグイン追加時は、このAEPにプレビュー用コンポジションを追加してから再生成してください。
+
+1. `run-build.jsx`: プレビューコンポジションと一覧グリッドを構築します。
+2. `run-previews.jsx`: 更新対象エフェクトの個別PNGを保存します。
+3. `run-overviews.jsx`: P／A／D／G分類と全エフェクト一覧のPNGを保存します。
+
+生成先は`docs/catalog/assets/`です。素材プロジェクトに`Cat Crop 512x512`がない場合は、比較用の手続きテスト素材を自動生成します。

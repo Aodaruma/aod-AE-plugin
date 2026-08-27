@@ -23,3 +23,8 @@ target/
 /plugins/scatter-map/tests/ae_smoke_output/
 
 /*.rcgu.o
+
+# After Effects catalog working files
+/catalog/ae2025-plugin-catalog/Adobe After Effects Auto-Save/
+/catalog/ae2025-plugin-catalog/build-report.txt
+/catalog/ae2025-plugin-catalog/aod-plugin-catalog-ae2025.*.*.aep

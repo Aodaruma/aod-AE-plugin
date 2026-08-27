@@ -3,6 +3,8 @@
 Affine image transform for After Effects with independent anchor, position, scale, rotation, skew,
 skew axis, and opacity controls.
 
+![AOD_ImageTransform preview](../../docs/catalog/assets/previews/image-transform.png)
+
 ## Sampling
 
 - Nearest, Bilinear, Bicubic (Catmull-Rom), Mitchell-Netravali, Lanczos, Cubic B-spline, and
