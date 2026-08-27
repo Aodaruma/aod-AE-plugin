@@ -1,0 +1,27 @@
+[package]
+name = "color_boundary_blur"
+description = "Blurs boundaries where selected colors meet using isotropic or boundary-normal kernels."
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+seq-macro = "0.3.6"
+utils = { path = "../../crates/utils" }
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true
