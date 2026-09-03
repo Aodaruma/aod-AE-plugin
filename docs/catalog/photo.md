@@ -149,6 +149,24 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 - `Distance`、`Strength`: 移動距離と効果量を設定します。
 - `Edge Mode`、`Preserve Alpha`: 画像外の扱いとアルファ保持を制御します。
 
+## AOD_GlassDisplace
+
+- **分類:** P：一般写真・連続階調画像（補助入力: D）
+
+![AOD_GlassDisplace](assets/previews/glass-displace.png)
+
+手続き形状または任意マップから高さと法線を求め、光学的なガラス屈折、割れ・破片形状、連続スペクトルの色分散を画像へ適用します。
+
+### パラメーター
+
+- `Height Source`、`Custom Map Layer`、`Map Channel/Black/White/Invert`: 手続き形状、入力画像、別レイヤーから高さ場を選択します。
+- `Shape`、`Center`、`Size/Aspect/Rotation`: 基本形状、全画面Facet／Fractured Field、中心衝撃型Impact Glassを設定します。
+- `Cell Size/Relief/Irregularity`、`Crack Width/Depth`、`Radial Cracks/Branching/Stress Rings`: セル面と放射亀裂・分岐・応力リングを調整します。
+- `Normal Strength/Radius`、`Refraction`: 高さ勾配から界面法線を作り、Snellの法則に基づく屈折変位を設定します。
+- `Chromatic Dispersion`、`Auto Spectral Steps`、`Spectral Steps (Manual)`: N-BK7相当の波長依存屈折率とCIE 1931応答を使う色分散の強さ・積分精度を設定します。自動時は手動段数が無効になります。
+- `Sampling`、`Edge`、`Mix`、`Preserve Input Alpha`: 補間、画像外処理、最終合成を制御します。
+- `View`、`Clamp (32bpc)`: Final、Height、Normal、Displacement、Facet IDの確認出力と範囲を切り替えます。
+
 ## AOD_ImageCalculate
 
 - **分類:** P：一般写真・連続階調画像
@@ -165,6 +183,27 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 - `Channel`、`Calculation Color Space`: 対象チャンネルと演算空間を選択します。
 - `Clamp Result`、`Use Original Alpha`: 出力範囲とアルファを制御します。
 
+## AOD_ImageCrypt
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_ImageCrypt](assets/previews/image-encrypt-decrypt.png)
+
+同じ画像寸法とキーを使い、画素位置・ブロック・チャンネル・ビットプレーンを決定的にスクランブル／復元します。破損耐性を優先する非可逆の視覚フォーマットも備えます。
+
+### パラメーター
+
+- `Operation`: Encode／Decodeを切り替えます。
+- `Algorithm`: Coordinate Shear、Block Permutation、Affine Channel Cipher、Combined Legacy、Linear Interleave、Bit-Plane Cipher、Interleave + Bit-Plane、Resilient Replicasを選択します。
+- `Key A–D`、`Rounds`: 4語のキーと反復回数を設定します。
+- `Block Size`: Block Permutation／Combined Legacyのブロック単位を設定します。
+- `Cipher Precision`、`Channels`: チャンネル暗号化の量子化精度とRGB／RGBA対象を指定します。
+- `Recovery Redundancy`、`Recovery Interleave`: Resilient Replicasの多重化数と空間分散回数を指定します。
+
+### 補足
+
+機密保護用の暗号ではなく、モーショングラフィックスやグリッチ表現向けの可逆変換です。厳密な復元には同一寸法・ビット深度・キー・設定と、途中で未加工のエンコード画像が必要です。Resilient Replicasは論理解像度を下げる代わりに、局所的な画素破損を中央値で復元するlossy方式です。
+
 ## AOD_ImageScaler
 
 - **分類:** P：一般写真・連続階調画像
@@ -180,6 +219,22 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 - `Anchor XY`、`Outside Pixels`: 拡縮中心と画像外ピクセルの扱いを指定します。
 - `Interpolation`: 最近傍、バイリニア、バイキュービック、Lanczosなどを選択します。
 - `Mitchell B/C`、`Lanczos Lobes`、`EQA Radius`: 選択した補間カーネルを調整します。
+
+## AOD_ImageTransform
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_ImageTransform](assets/previews/image-transform.png)
+
+AE標準Transformに近いアフィン変換を、多様な再構成フィルターと画像外サンプリングで適用します。
+
+### パラメーター
+
+- `Anchor Point`、`Position`、`Scale`／`Separate Dimensions`: 変換基準、移動、均一またはX／Y個別倍率を指定します。
+- `Rotation`、`Skew`、`Skew Axis`、`Opacity`: 回転、傾斜方向、不透明度を設定します。
+- `Interpolation`: Nearest、Bilinear、Bicubic、Mitchell-Netravali、Lanczos、Cubic B-Spline、EWA Quadraticを選択します。
+- `Mitchell B/C`、`Lanczos Lobes`、`EWA Radius`: 選択中カーネルの形状を動的UIで調整します。
+- `Sample Outside Image`、`Outside Pixels`: 画像外を透明にするか、Clamp／Tile／Mirrorで補間するかを切り替えます。
 
 ## AOD_MobiusTransform
 

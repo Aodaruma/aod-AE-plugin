@@ -3,6 +3,8 @@
 Relights images using color-region, channel-generated, or supplied normal maps with configurable
 material and light controls.
 
+![AOD_ImageRelight preview](../../docs/catalog/assets/previews/image-relight.png)
+
 ## Normal sources and outputs
 
 - **Generated / Color Regions** is the default. It separates a cel-painted image by its straight

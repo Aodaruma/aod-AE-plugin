@@ -2,6 +2,8 @@
 
 Applies reversible image-domain permutations and channel transforms, plus a corruption-tolerant visual format.
 
+![AOD_ImageCrypt preview](../../docs/catalog/assets/previews/image-encrypt-decrypt.png)
+
 This After Effects effect provides deterministic visual encoding for motion-graphics and glitch workflows. It is not a cryptographic security product and must not be used to protect confidential information.
 
 ## Algorithms

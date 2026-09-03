@@ -1,5 +1,7 @@
 (function () {
-    var phase = (typeof AOD_CATALOG_PHASE !== "undefined") ? AOD_CATALOG_PHASE : "build";
+    var environmentPhase = $.getenv("AOD_CATALOG_PHASE");
+    var phase = (typeof AOD_CATALOG_PHASE !== "undefined") ? AOD_CATALOG_PHASE : (environmentPhase || "build");
+    var headless = $.getenv("AOD_CATALOG_HEADLESS") === "1";
     var repoRoot = new Folder(File($.fileName).parent.parent.parent.fsName);
     var docsRoot = new Folder(repoRoot.fsName + "/docs/catalog");
     var previewRoot = new Folder(docsRoot.fsName + "/assets/previews");
@@ -7,8 +9,17 @@
     var projectRoot = new Folder(repoRoot.fsName + "/catalog/ae2025-plugin-catalog");
     var reportFile = new File(projectRoot.fsName + "/build-report.txt");
     var projectFile = new File(projectRoot.fsName + "/aod-plugin-catalog-ae2025.aep");
+    var seedProjectPath = $.getenv("AOD_CATALOG_SEED_PROJECT");
     var log = [];
     var warnings = [];
+
+    function notify(message) {
+        if (headless) {
+            $.writeln(message);
+        } else {
+            alert(message);
+        }
+    }
 
     var catalog = [
         { name: "Color Ajust", aod: "AOD_ColorAjust", slug: "color-ajust", category: "P", match: "ColorAjust" },
@@ -20,8 +31,11 @@
         { name: "Fourier Filter", aod: "AOD_FourierFilter", slug: "fourier-filter", category: "P", comp: "10 Fourier Filter" },
         { name: "Gradient Blur", aod: "AOD_GradientBlur", slug: "gradient-blur", category: "P", comp: "12 Gradient Blur" },
         { name: "Gradient Displace", aod: "AOD_GradientDisplace", slug: "gradient-displace", category: "P", comp: "13 Gradient Displace" },
+        { name: "Glass Displace", aod: "AOD_GlassDisplace", slug: "glass-displace", category: "P", match: "GlassDisplace", fresh: true },
         { name: "Image Calculate", aod: "AOD_ImageCalculate", slug: "image-calculate", category: "P", match: "ImageCalculate" },
+        { name: "Image Crypt", aod: "AOD_ImageCrypt", slug: "image-encrypt-decrypt", category: "P", match: "ImageEncryptDecrypt", fresh: true },
         { name: "Image Scaler", aod: "AOD_ImageScaler", slug: "image-scaler", category: "P", comp: "15 Image Scaler" },
+        { name: "Image Transform", aod: "AOD_ImageTransform", slug: "image-transform", category: "P", match: "ImageTransform", fresh: true },
         { name: "Mobius Transform", aod: "AOD_MobiusTransform", slug: "mobius-transform", category: "P", match: "MobiusTransform" },
         { name: "Scatter Map", aod: "AOD_ScatterMap", slug: "scatter-map", category: "P", comp: "19 Scatter Map" },
         { name: "Singular Value Decompose", aod: "AOD_SingularValueDecompose", slug: "singular-value-decompose", category: "P", comp: "20 Singular Value Decompose" },
@@ -33,6 +47,7 @@
         { name: "Differential Generate", aod: "AOD_DifferentialGenerate", slug: "differential-generate", category: "A", match: "DifferentialGenerate" },
         { name: "Distance Generate", aod: "AOD_DistanceGenerate", slug: "distance-generate", category: "A", match: "DistanceGenerate" },
         { name: "Eyedropper Mask", aod: "AOD_EyedropperMask", slug: "eyedropper-mask", category: "A", comp: "08 Eyedropper Mask" },
+        { name: "Image Relight", aod: "AOD_ImageRelight", slug: "image-relight", category: "A", match: "ImageRelight", fresh: true },
         { name: "Light Wrap", aod: "AOD_LightWrap", slug: "light-wrap", category: "A", comp: "16 Light Wrap" },
         { name: "Line Repaint", aod: "AOD_LineRepaint", slug: "line-repaint", category: "A", comp: "17 Line Repaint" },
         { name: "Normal Generate", aod: "AOD_NormalGenerate", slug: "normal-generate", category: "A", match: "NormalGenerate" },
@@ -42,9 +57,11 @@
         { name: "Channel Remap", aod: "AOD_ChannelRemap", slug: "channel-remap", category: "D", comp: "01 Channel Remap" },
         { name: "Depth Fog", aod: "AOD_DepthFog", slug: "depth-fog", category: "D", comp: "06 Depth Fog" },
         { name: "IFFT", aod: "AOD_IFFT", slug: "ifft", category: "D", comp: "14 IFFT" },
+        { name: "Space Convert", aod: "AOD_SpaceConvert", slug: "space-convert", category: "D", match: "SpaceConvert", fresh: true },
 
         { name: "Checker Generate", aod: "AOD_CheckerGenerate", slug: "checker-generate", category: "G", comp: "02 Checker Generate" },
         { name: "Gabor Generate", aod: "AOD_GaborGenerate", slug: "gabor-generate", category: "G", comp: "11 Gabor Generate" },
+        { name: "Rainbow Generate", aod: "AOD_RainbowGenerate", slug: "rainbow-generate", category: "G", match: "RainbowGenerate", fresh: true },
         { name: "Voronoi Generate", aod: "AOD_VoronoiGenerate", slug: "voronoi-generate", category: "G", match: "VoronoiGenerate" }
     ];
 
@@ -101,10 +118,46 @@
         return effect;
     }
 
+    function addMaskedSolid(comp, name, color, vertices, opacity) {
+        var layer = comp.layers.addSolid(color, name, comp.width, comp.height, 1, comp.duration);
+        var mask = layer.property("ADBE Mask Parade").addProperty("ADBE Mask Atom");
+        var shape = new Shape();
+        shape.vertices = vertices;
+        shape.inTangents = [];
+        shape.outTangents = [];
+        for (var i = 0; i < vertices.length; i++) {
+            shape.inTangents.push([0, 0]);
+            shape.outTangents.push([0, 0]);
+        }
+        shape.closed = true;
+        mask.property("ADBE Mask Shape").setValue(shape);
+        layer.property("ADBE Transform Group").property("ADBE Opacity").setValue(opacity);
+        return layer;
+    }
+
+    function createFallbackSourceComp() {
+        var comp = app.project.items.addComp("Cat Crop 512x512", 512, 512, 1, 1, 30);
+        comp.bgColor = [0.025, 0.035, 0.065];
+        comp.layers.addSolid([0.025, 0.035, 0.065], "Procedural Background", 512, 512, 1, comp.duration);
+        addMaskedSolid(comp, "Warm Diagonal", [0.95, 0.25, 0.08], [[-40, 390], [385, -35], [555, 135], [130, 560]], 82);
+        addMaskedSolid(comp, "Cool Plane", [0.02, 0.48, 0.95], [[-30, 80], [275, 25], [390, 255], [60, 335]], 76);
+        addMaskedSolid(comp, "Green Diamond", [0.08, 0.86, 0.48], [[350, 115], [485, 250], [350, 385], [215, 250]], 88);
+
+        var circle = [];
+        for (var i = 0; i < 32; i++) {
+            var angle = Math.PI * 2 * i / 32;
+            circle.push([174 + Math.cos(angle) * 104, 330 + Math.sin(angle) * 104]);
+        }
+        addMaskedSolid(comp, "Soft Circle", [1.0, 0.82, 0.16], circle, 92);
+        addMaskedSolid(comp, "Highlight", [0.96, 0.98, 1.0], [[210, 110], [315, 95], [330, 165], [225, 180]], 86);
+        log.push("CREATED procedural fallback source: " + comp.name);
+        return comp;
+    }
+
     function addCatLayer(comp, preparedForAnime) {
         var cat = findComp("Cat Crop 512x512");
         if (!cat) {
-            throw new Error("Source composition not found: Cat Crop 512x512");
+            cat = createFallbackSourceComp();
         }
         comp.layers.addSolid([0.035, 0.045, 0.065], "Preview Background", 512, 512, 1, comp.duration);
         var layer = comp.layers.add(cat);
@@ -170,12 +223,82 @@
             setProperty(effect, "Offset", 0.04);
             setProperty(effect, "Label Tolerance", 0.035);
             setProperty(effect, "Use Original Alpha", 0);
+        } else if (item.match === "GlassDisplace") {
+            setProperty(effect, "Height Source", 1);
+            setProperty(effect, "Shape", 7);
+            setProperty(effect, "Size / Impact Diameter (px)", 390.0);
+            setProperty(effect, "Cell Size (px)", 54.0);
+            setProperty(effect, "Facet Relief (%)", 100.0);
+            setProperty(effect, "Cell Irregularity (%)", 72.0);
+            setProperty(effect, "Crack Width (px)", 2.2);
+            setProperty(effect, "Crack Depth (%)", 94.0);
+            setProperty(effect, "Radial Cracks", 22);
+            setProperty(effect, "Branching (%)", 68.0);
+            setProperty(effect, "Crack Jitter (%)", 52.0);
+            setProperty(effect, "Stress Rings", 7);
+            setProperty(effect, "Normal Strength", 132.0);
+            setProperty(effect, "Normal Radius (px)", 1.35);
+            setProperty(effect, "Refraction (px)", 58.0);
+            setProperty(effect, "Chromatic Dispersion (px)", 6.0);
+            setProperty(effect, "Spectral Steps (Manual)", 12);
+            setProperty(effect, "Auto Spectral Steps", 1);
+            setProperty(effect, "Sampling", 2);
+            setProperty(effect, "Edge", 2);
         } else if (item.match === "ImageCalculate") {
             setProperty(effect, "Operation", 3);
             setProperty(effect, "Input B (Operand)", 1);
             setProperty(effect, "Value B (Operand)", 1.75);
             setProperty(effect, "Clamp Result 0..1", 1);
             setProperty(effect, "Use Original Alpha", 1);
+        } else if (item.match === "ImageEncryptDecrypt") {
+            setProperty(effect, "Operation", 1);
+            setProperty(effect, "Algorithm", 7);
+            setProperty(effect, "Key A", 48131);
+            setProperty(effect, "Key B", 9277);
+            setProperty(effect, "Key C", 31847);
+            setProperty(effect, "Key D", 60101);
+            setProperty(effect, "Rounds", 7);
+            setProperty(effect, "Cipher Precision", 1);
+            setProperty(effect, "Channels", 1);
+        } else if (item.match === "ImageRelight") {
+            setProperty(effect, "Source", 1);
+            setProperty(effect, "Method", 1);
+            setProperty(effect, "Color Tolerance", 0.035);
+            setProperty(effect, "Alpha Threshold", 0.01);
+            setProperty(effect, "Region Radius (px)", 44.0);
+            setProperty(effect, "Height Shape", 1.6);
+            setProperty(effect, "Edge Softness (px)", 1.5);
+            setProperty(effect, "Surface Solver", 2);
+            setProperty(effect, "Boundary Condition", 2);
+            setProperty(effect, "Iterations", 128);
+            setProperty(effect, "Divergence / Curvature", 2.8);
+            setProperty(effect, "Screened Damping", 0.035);
+            setProperty(effect, "Edge Feather (px)", 7.0);
+            setProperty(effect, "Normal Strength", 7.5);
+            setProperty(effect, "Type", 1);
+            setProperty(effect, "Color", [1.0, 0.93, 0.82, 1]);
+            setProperty(effect, "Intensity", 1.65);
+            setProperty(effect, "Azimuth", -38.0);
+            setProperty(effect, "Elevation", 32.0);
+            setProperty(effect, "Surface", 1);
+            setProperty(effect, "Metallic", 0.12);
+            setProperty(effect, "Roughness", 0.28);
+            setProperty(effect, "IOR", 1.5);
+            setProperty(effect, "Specular IOR Level", 0.72);
+            setProperty(effect, "Environment Strength", 0.16);
+            setProperty(effect, "Exposure (EV)", -0.15);
+            setProperty(effect, "Output", 1);
+        } else if (item.match === "ImageTransform") {
+            setProperty(effect, "Separate Dimensions", 1);
+            setProperty(effect, "Scale X", 136.0);
+            setProperty(effect, "Scale Y", 82.0);
+            setProperty(effect, "Rotation", 18.0);
+            setProperty(effect, "Skew", 15.0);
+            setProperty(effect, "Skew Axis", -22.0);
+            setProperty(effect, "Interpolation", 5);
+            setProperty(effect, "Lanczos Lobes", 3.0);
+            setProperty(effect, "Sample Outside Image", 1);
+            setProperty(effect, "Outside Pixels", 3);
         } else if (item.match === "MobiusTransform") {
             setProperty(effect, "b.re", 0.18);
             setProperty(effect, "b.im", -0.08);
@@ -185,6 +308,17 @@
             setProperty(effect, "Edge", 2);
             setProperty(effect, "Interpolation", 2);
             setProperty(effect, "Anti-alias", 3);
+        } else if (item.match === "SpaceConvert") {
+            setProperty(effect, "Space", 2);
+            setProperty(effect, "Direction", 1);
+            setProperty(effect, "Angle Offset", -90.0);
+            setProperty(effect, "Interpolation", 2);
+            setProperty(effect, "Edge", 2);
+            setProperty(effect, "Separate Dimensions", 1);
+            setProperty(effect, "Scale X", 112.0);
+            setProperty(effect, "Scale Y", 92.0);
+            setProperty(effect, "Rotation", 9.0);
+            setProperty(effect, "Skew", -8.0);
         } else if (item.match === "NormalGenerate") {
             setProperty(effect, "Method", 2);
             setProperty(effect, "Normal Strength", 7.5);
@@ -198,6 +332,22 @@
             setProperty(effect, "Mode", 1);
             setProperty(effect, "Seed", 73);
             setProperty(effect, "Use Original Alpha", 1);
+        } else if (item.match === "RainbowGenerate") {
+            setProperty(effect, "Shape", 9);
+            setProperty(effect, "Coordinates", 2);
+            setProperty(effect, "Aspect (-Vertical/+Horizontal)", 0.18);
+            setProperty(effect, "Skew", 12.0);
+            setProperty(effect, "Ray Count", 18.0);
+            setProperty(effect, "Hue Scale (%)", 175.0);
+            setProperty(effect, "Hue Offset (deg)", -18.0);
+            setProperty(effect, "Chroma Scale (%)", -25.0);
+            setProperty(effect, "Chroma Offset (%)", 115.0);
+            setProperty(effect, "Lightness Scale (%)", -12.0);
+            setProperty(effect, "Lightness Offset (%)", 82.0);
+            setProperty(effect, "Color Model", 1);
+            setProperty(effect, "Extend", 2);
+            setProperty(effect, "Preset", 6);
+            setProperty(effect, "Mix (%)", 100.0);
         } else if (item.match === "VoronoiGenerate") {
             setProperty(effect, "Output", 1);
             setProperty(effect, "Mode", 1);
@@ -238,6 +388,22 @@
         return result;
     }
 
+    function importExistingPreview(item) {
+        var previewFile = new File(previewRoot.fsName + "/" + item.slug + ".png");
+        if (!previewFile.exists) {
+            return null;
+        }
+        try {
+            var footage = app.project.importFile(new ImportOptions(previewFile));
+            footage.name = "CATASSET - " + item.name;
+            log.push("IMPORTED existing preview asset: " + previewFile.fsName);
+            return footage;
+        } catch (error) {
+            warnings.push("Could not import preview asset: " + previewFile.fsName + " (" + error.toString() + ")");
+            return null;
+        }
+    }
+
     function makeGrid(category) {
         var items = category === "ALL" ? catalog : categoryItems(category);
         var columns = Math.min(4, items.length);
@@ -255,12 +421,15 @@
             var card = comp.layers.addSolid([0.035, 0.045, 0.065], "Card - " + items[i].name, 560, 560, 1, comp.duration);
             card.property("ADBE Transform Group").property("ADBE Position").setValue([x, y]);
 
-            var sourceComp = findComp(items[i].comp);
-            if (!sourceComp) {
-                warnings.push("Missing preview comp: " + items[i].comp);
+            var previewSource = findComp(items[i].comp);
+            if (!previewSource) {
+                previewSource = importExistingPreview(items[i]);
+            }
+            if (!previewSource) {
+                warnings.push("Missing preview source: " + items[i].comp);
                 continue;
             }
-            var preview = comp.layers.add(sourceComp);
+            var preview = comp.layers.add(previewSource);
             preview.name = "Preview - " + items[i].name;
             preview.property("ADBE Transform Group").property("ADBE Scale").setValue([82, 82]);
             preview.property("ADBE Transform Group").property("ADBE Position").setValue([x, y - 35]);
@@ -315,6 +484,17 @@
     ensureFolder(overviewRoot);
     ensureFolder(projectRoot);
 
+    if (phase === "build" && seedProjectPath) {
+        var seedProjectFile = new File(seedProjectPath);
+        if (seedProjectFile.exists) {
+            app.open(seedProjectFile);
+        } else {
+            warnings.push("Seed project not found: " + seedProjectPath);
+        }
+    } else if (phase !== "build" && projectFile.exists) {
+        app.open(projectFile);
+    }
+
     if (!app.project) {
         throw new Error("No After Effects project is open.");
     }
@@ -329,7 +509,12 @@
                     createOldPreview(catalog[i]);
                     log.push("BUILT " + catalog[i].aod + " -> " + catalog[i].comp);
                 } else if (!findComp(catalog[i].comp)) {
-                    warnings.push("Existing preview comp not found: " + catalog[i].comp);
+                    var existingPreview = new File(previewRoot.fsName + "/" + catalog[i].slug + ".png");
+                    if (existingPreview.exists) {
+                        log.push("USING existing preview asset: " + existingPreview.fsName);
+                    } else {
+                        warnings.push("Existing preview comp and asset not found: " + catalog[i].comp);
+                    }
                 } else {
                     log.push("REUSED " + catalog[i].aod + " -> " + catalog[i].comp);
                 }
@@ -342,21 +527,29 @@
             app.project.save(projectFile);
             log.push("SAVED " + projectFile.fsName);
             writeReport("Build complete; run render-previews and render-overviews phases next.");
-            alert("AOD catalog project built.\n" + projectFile.fsName);
+            notify("AOD catalog project built.\n" + projectFile.fsName);
         } else if (phase === "render-previews") {
             for (var p = 0; p < catalog.length; p++) {
-                var previewComp = findComp(catalog[p].comp);
-                if (!previewComp) {
-                    warnings.push("Missing preview comp: " + catalog[p].comp);
+                var previewFile = new File(previewRoot.fsName + "/" + catalog[p].slug + ".png");
+                if (!catalog[p].fresh) {
+                    log.push("KEPT existing preview: " + previewFile.fsName);
                     continue;
                 }
-                var previewFile = new File(previewRoot.fsName + "/" + catalog[p].slug + ".png");
+                var previewComp = findComp(catalog[p].comp);
+                if (!previewComp) {
+                    if (previewFile.exists) {
+                        log.push("KEPT existing preview: " + previewFile.fsName);
+                    } else {
+                        warnings.push("Missing preview comp and asset: " + catalog[p].comp);
+                    }
+                    continue;
+                }
                 previewComp.saveFrameToPng(Math.min(7 / 30, previewComp.duration / 2), previewFile);
                 log.push("RENDERED " + previewFile.fsName);
             }
             app.project.save(projectFile);
             writeReport("Individual previews rendered.");
-            alert("AOD catalog previews rendered.\n" + previewRoot.fsName);
+            notify("AOD catalog previews rendered.\n" + previewRoot.fsName);
         } else if (phase === "render-overviews") {
             var categories = ["P", "A", "D", "G", "ALL"];
             var names = { P: "photo", A: "anime", D: "map-data", G: "generator", ALL: "all-effects" };
@@ -372,11 +565,14 @@
             }
             app.project.save(projectFile);
             writeReport("Overview grids rendered.");
-            alert("AOD catalog overview grids rendered.\n" + overviewRoot.fsName);
+            notify("AOD catalog overview grids rendered.\n" + overviewRoot.fsName);
         } else {
             throw new Error("Unknown catalog phase: " + phase);
         }
     } finally {
         app.endUndoGroup();
+        if (headless) {
+            app.scheduleTask("app.quit()", 500, false);
+        }
     }
 }());

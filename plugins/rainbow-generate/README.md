@@ -2,6 +2,8 @@
 
 Generates parametric gradients in perceptual and cylindrical color spaces across multiple geometric shapes.
 
+![AOD_RainbowGenerate preview](../../docs/catalog/assets/previews/rainbow-generate.png)
+
 This is the After Effects plugin **AOD_RainbowGenerate**, which provides the **AOD_RainbowGenerate.aex** plugin file for Adobe After Effects.
 
 ## Controls

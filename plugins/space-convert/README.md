@@ -2,6 +2,8 @@
 
 Converts images between Cartesian, curvilinear coordinate, Radon, and line Hough representations.
 
+![AOD_SpaceConvert preview](../../docs/catalog/assets/previews/space-convert.png)
+
 ## Modes
 
 - **Polar / Log-Polar**: angle is horizontal and radius is vertical.
