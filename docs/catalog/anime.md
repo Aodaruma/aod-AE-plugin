@@ -18,6 +18,24 @@
 - `Number of Colors`、`Add/Remove Color`: 置換ペア数を管理します。
 - 各`Color From/To`: 置換元と置換先の色を設定します。
 
+## AOD_ColorBoundaryBlur
+
+- **分類:** A：アニメ素材
+
+![AOD_ColorBoundaryBlur](assets/previews/color-boundary-blur.png)
+
+複数の指定色が近接する境界だけを検出し、等方または境界法線方向のブラーでなじませます。
+
+### パラメーター
+
+- `Color Tolerance`、`Minimum Alpha`、`Color Proximity`: 選択色との一致条件と、アンチエイリアス等の短い隙間をまたぐ距離を設定します。
+- `Number of Colors`、`Add/Remove Color`、各`Color`: 2～16色の選択色を動的に管理します。
+- `Blur Mode`: Box、Gaussian、境界法線方向の異方性ブラーを選択します。
+- `Blur Radius`、`Normal Samples`、`Along-Boundary Radius`: ブラー半径、法線方向の品質、接線方向へ広げる量を設定します。
+- `Post Smooth`: 法線方向ブラーへ追加のGaussianブラーをかけて筋状の結果をなじませます。
+- `Boundary Width`、`Mask Feather`、`Mix`: 適用範囲、境界マスクのぼかし、原画像との混合量を設定します。
+- `Edge Mode`、`Preserve Alpha`: 画像端のサンプリングと元アルファの保持を設定します。
+
 ## AOD_ColorSelect
 
 - **分類:** A：アニメ素材
@@ -93,6 +111,32 @@ Canny法で色や明度の境界を検出し、輪郭線画像を生成します
 - `Connectivity`: 4近傍／8近傍の連結条件を選択します。
 - `Add/Remove Point`と各Point: スポイト位置、対象色、適用不透明度を管理します。
 
+## AOD_ImageRelight
+
+- **分類:** A：アニメ素材（補助入力: D）
+
+![AOD_ImageRelight](assets/previews/image-relight.png)
+
+入力画像の色領域・高さチャンネル、または別レイヤーの法線マップから面形状を得て、Principledマテリアルで画像をリライトします。既定のColor Regionsは、同系色でつながった領域ごとに独立した高さ面を生成します。
+
+### パラメーター
+
+- `Source`、`Layer`、`XY Scale`、`Y Convention`: 生成法線と外部Normal Map、OpenGL／DirectX方式を切り替えます。
+- `Method`: 既定の`Color Regions`と`Height Channel`を切り替えます。
+- `Color Tolerance`、`Alpha Threshold`、`Edge Softness`: 色領域の分割と境界法線を設定します。
+- `Surface Solver`: `Distance Field (SDF)`と、既定の滑らかな`Poisson / Neumann`を切り替えます。
+- `Region Radius`、`Height Shape`: SDF方式の高さ形状を設定します。
+- `Boundary Condition`、`Iterations`、`Divergence / Curvature`、`Screened Damping`、`Edge Feather`: Poisson方式のDirichlet／Neumann境界と数値解法を設定します。Neumannが既定です。
+- `Channel`、`Height Blur`、`Normal Strength`、`Invert Height`: 高さチャンネル方式と生成法線に共通する強度・反転を設定します。
+- `Type`、`Color`、`Intensity`、`Azimuth/Elevation`または`Position/Height/Falloff Radius`: Directional／Point光源を設定します。
+- `Surface`: 既定の`Principled (GGX)`と`Legacy Blinn-Phong`を切り替えます。
+- `Base Tint`、`Metallic`、`Roughness`、`IOR`、`Specular IOR Level`、`Environment Strength`: GGX／Smith／Schlick Fresnelによるマテリアル応答を調整します。
+- `Output`、`Exposure`、`Clamp Output`: Relit、Normal、Height、Diffuse、Specular、Lightingの表示と出力範囲を制御します。
+
+### 補足
+
+大きなscreened Poisson計算はWGPUを自動使用し、小規模・純Neumann・GPU利用不可時はCPUへフォールバックします。
+
 ## AOD_LightWrap
 
 - **分類:** A：アニメ素材
@@ -138,7 +182,7 @@ Canny法で色や明度の境界を検出し、輪郭線画像を生成します
 ### パラメーター
 
 - `Method`: SDFまたはPoisson方式を選択します。
-- `Normal Strength`、`Invert`、`Flip Y`: 法線強度、凹凸反転、DirectX形式を設定します。
+- `Normal Strength`、`Invert`、`Flip Y`: 法線強度、凹凸反転、DirectX形式を設定します。`Flip Y`は既定で有効です。
 - `Alpha Threshold`、`Label Tolerance`、`Boundary Condition`: 領域と境界の解釈を設定します。
 - `Edge Softness`、`SDF Radius/Exponent`: SDF方式の形状を調整します。
 - `Poisson Iters`、`Divergence`、`Damping`、`Edge Feather`: Poisson方式の収束と滑らかさを調整します。

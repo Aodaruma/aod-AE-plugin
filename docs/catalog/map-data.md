@@ -52,3 +52,27 @@ RGBA各出力チャンネルを、入力チャンネル・定数・別レイヤ�
 ### 補足
 
 プレビューは入力未接続時のニュートラル表示です。実用時は同じ条件で書き出した`AOD_FFT`のReal／Imaginaryレイヤーを接続し、32bpc Raw Modeを推奨します。
+
+## AOD_SpaceConvert
+
+- **分類:** D：データ・マップ画像
+
+![AOD_SpaceConvert](assets/previews/space-convert.png)
+
+画像を極座標、曲線座標、円盤写像、Radon、直線Houghなどの表現へ変換し、対応モードでは逆変換します。
+
+### パラメーター
+
+- `Space`、`Direction`: Polar、Log-Polar、Spiral Polar、Square-Disc、Elliptic、Parabolic、Bipolar、Radon、Line HoughとForward／Inverseを選択します。
+- `Center`、`Custom Center`、`Radius`、`Custom Radius`、`Angle Offset`: Polar／Log-Polar系の座標範囲を設定します。
+- `Spiral Turns`、`Focus / Radius`、`Coordinate Extent`: Spiral、Elliptic、Bipolar固有の座標形状を設定します。
+- `Angle Samples`、`Detector Samples`、`Samples per Ray`: 積分変換の内部解析解像度を指定します。
+- `Edge Threshold`、`Weighted Votes`: Hough変換のエッジ投票条件を設定します。
+- `Line Hough Channels`: 従来のLuminance、RGBA独立処理、R／G／B／A単独表示・逆変換を選択します。
+- `Ram-Lak Radius`: Radon逆変換のフィルター付き逆投影カーネルを設定します。
+- `Interpolation`、`Edge`、`Output Gain/Bias`、`Clamp Output`: 再サンプリングとデータ出力を制御します。
+- `Post Transform`: 変換後空間へ`Anchor Point`、`Position`、統合／分離`Scale`、`Rotation`、`Skew`、`Skew Axis`を適用します。変換済み画像をtileするのではなく、逆Transformした座標で各空間式を直接評価するため、対応する空間では表示範囲外も連続して描画できます。
+
+### 補足
+
+RadonのInverseは離散フィルター付き逆投影、HoughのInverseは検出線の可視化を目的とした逆投影です。後者は厳密な元画像復元ではありません。

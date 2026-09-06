@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "channel_remap"
 description = "Remaps RGBA channels from source channels, constants, and layers with selectable color spaces."
 version = "0.1.0"

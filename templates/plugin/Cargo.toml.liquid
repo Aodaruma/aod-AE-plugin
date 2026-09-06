@@ -1,8 +1,19 @@
+# Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
 [package]
 name = "{{ crate_name }}"
 description = "{{ description }}"
 version = "0.1.0"
 edition = "2024"
+{% if repository_plugin -%}
+license.workspace = true
+authors.workspace = true
+{% else -%}
+# Describes template material. Set your own code's terms before distribution;
+# keep TEMPLATE-LICENSE.txt for the included scaffold.
+license-file = "TEMPLATE-LICENSE.txt"
+authors = ["{{ plugin_author }}"]
+publish = false
+{% endif %}
 
 [lib]
 crate-type = ["cdylib"]

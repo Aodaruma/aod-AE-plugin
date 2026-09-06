@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "image_scaler"
 description = "Scales layers with selectable interpolation modes, anchor point, edge handling, and optional reciprocal or separate X/Y scaling."
 version = "0.1.0"

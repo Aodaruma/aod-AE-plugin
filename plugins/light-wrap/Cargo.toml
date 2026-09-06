@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "light_wrap"
 description = "Adds rim-light style light wrapping to alpha silhouettes using blur displacement or SDF masks."
 version = "0.1.0"

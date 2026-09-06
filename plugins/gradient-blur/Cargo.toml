@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "gradient_blur"
 description = "Applies directional blur along image gradients or hue-saturation vectors."
 version = "0.1.0"

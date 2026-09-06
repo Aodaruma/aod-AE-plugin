@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "image_calculate"
 description = "Applies Blender-style math operations to one or two input layers."
 version = "0.1.0"

@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "color_composite"
 description = "Composites multiple colors onto a layer using selectable blend modes with dynamic controls."
 version = "0.1.0"

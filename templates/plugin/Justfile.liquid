@@ -1,3 +1,4 @@
+# Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
 # Read package.name from Cargo.toml for build naming.
 CrateName := if os() == "windows" {
     `$inPackage = $false; foreach ($line in Get-Content -Path Cargo.toml) { if ($line -match '^\s*\[package\]\s*$') { $inPackage = $true; continue }; if ($line -match '^\s*\[.+\]\s*$') { if ($inPackage) { break } }; if ($inPackage -and $line -match '^\s*name\s*=\s*"([^"]+)"') { $matches[1]; break } }`
@@ -6,7 +7,7 @@ CrateName := if os() == "windows" {
 }
 
 PluginName       := "AOD_{{ crate_name | pascal_case }}"
-BundleIdentifier := "com.aodaruma." + PluginName
+BundleIdentifier := "{% if repository_plugin %}com.aodaruma.{% else %}com.example.{% endif %}" + PluginName
 BinaryName       := snakecase(CrateName)
 
 import "../../AdobePlugin.just"

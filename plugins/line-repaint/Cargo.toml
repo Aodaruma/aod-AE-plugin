@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "line_repaint"
 description = "Repaints line-colored pixels by propagating neighboring colors."
 version = "0.1.0"

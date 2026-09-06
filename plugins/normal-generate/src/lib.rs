@@ -88,7 +88,7 @@ impl AdobePluginGlobal for Plugin {
             Params::FlipY,
             "Flip Y (DirectX)",
             CheckBoxDef::setup(|d| {
-                d.set_default(false);
+                d.set_default(true);
             }),
         )?;
 

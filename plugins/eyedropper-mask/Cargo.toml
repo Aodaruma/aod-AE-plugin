@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "eyedropper_mask"
 description = "Adjusts opacity of contiguous regions around eyedropper points with per-point controls and selectable premultiplied or straight workflows."
 version = "0.1.0"
