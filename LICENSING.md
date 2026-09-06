@@ -12,8 +12,8 @@
 
 ```mermaid
 flowchart LR
-    template["追加許諾のある雛形<br/>＋ 自作コード"] --> private["独自部分のソースは非公開OK<br/>バイナリの配布・販売OK"]
-    mpl["utils・既存プラグインなど<br/>MPLのみのコード"] --> source["MPL対象ファイルのソースを<br/>配布先へ提供"]
+    template["追加許諾のある雛形<br/>＋ 自作コード"] --> private["独自部分は非公開OK<br/>バイナリ配布・販売OK"]
+    mpl["utils・既存プラグインなど<br/>MPLのみのコード"] --> source["MPL対象のソースを<br/>配布先へ提供"]
     classDef output fill:#e8f5ef,stroke:#32845d,color:#163d2a
     classDef covered fill:#edf3fc,stroke:#537eb8,color:#223e66
     class template,private output
@@ -76,8 +76,8 @@ When distributing outside your organization, source availability depends on wher
 
 ```mermaid
 flowchart LR
-    template["Scaffold with the permission<br/>+ your own code"] --> private["Independent source may stay private<br/>Binary distribution and sales allowed"]
-    mpl["utils, existing effects, etc.<br/>MPL-only code"] --> source["Make MPL-covered source files<br/>available to recipients"]
+    template["Scaffold with permission<br/>+ your own code"] --> private["Your source may stay private<br/>Distribute or sell binaries"]
+    mpl["utils and existing effects<br/>MPL-only code"] --> source["MPL-covered source<br/>Available to recipients"]
     classDef output fill:#e8f5ef,stroke:#32845d,color:#163d2a
     classDef covered fill:#edf3fc,stroke:#537eb8,color:#223e66
     class template,private output
