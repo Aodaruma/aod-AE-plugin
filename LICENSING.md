@@ -4,6 +4,22 @@
 指定された生成用コードには、[Template Output Permission](templates/plugin/TEMPLATE-LICENSE.txt) を追加しています。
 このページは説明です。利用条件は各ライセンス本文と追加許諾の英文が定めます。
 
+> [!TIP]
+> **対象の雛形から作る独自プラグインは、ソース非公開で配布・販売できます。**
+> 配布物には `TEMPLATE-LICENSE.txt` 全文を同梱し、組み込む MPL 対象コードや第三者依存の条件も満たしてください。
+
+外部へ配布する場合、ソース提供の範囲はコードの出所によって異なります。
+
+```mermaid
+flowchart LR
+    template["追加許諾のある雛形<br/>＋ 自作コード"] --> private["独自部分のソースは非公開OK<br/>バイナリの配布・販売OK"]
+    mpl["utils・既存プラグインなど<br/>MPLのみのコード"] --> source["MPL対象ファイルのソースを<br/>配布先へ提供"]
+    classDef output fill:#e8f5ef,stroke:#32845d,color:#163d2a
+    classDef covered fill:#edf3fc,stroke:#537eb8,color:#223e66
+    class template,private output
+    class mpl,source covered
+```
+
 | 利用・配布するもの | 扱い |
 | --- | --- |
 | 対象の雛形から開発した独自プラグイン | テンプレート由来のコードと同じファイルに独自実装を追加しても、ソース非公開・有償／無償のバイナリ配布が可能です。追加許諾全文を配布物に同梱してください。 |
@@ -14,7 +30,9 @@
 
 追加許諾は対象ファイルに明示的に許諾された素材に限られます。既存プラグインや `utils` のコードを雛形に移動したり、生成処理を通したりしても対象にはなりません。テンプレートとしての再配布にも、この生成物向け許諾は使えません。第三者のコードはそれぞれの条件に従ってください。
 
-`utils` 等を依存ライブラリとして呼び出す場合と、その実装を独自のソースファイルにコピーする場合は異なります。MPL 限定の実装をコピーしたファイルには、ファイル単位で通常の MPL の義務が及びます。そのファイル内の独自実装まで非公開にできるとは限りません。
+> [!IMPORTANT]
+> **ライブラリの呼び出しと、実装のコピーは扱いが異なります。**
+> `utils` 等の MPL 限定の実装を独自のソースファイルにコピーした場合、そのファイル全体に通常の MPL の義務が及びます。同じファイル内の独自実装まで非公開にできるとは限りません。
 
 ソース提供の相手は配布先です。GitHub での一般公開や本家への PR は必須ではありませんが、受領者が MPL のもとで再配布できる権利を制限することはできません。未改変のコードへのリンクを使う場合も、配布版と一致するコミット等を指定し、実際に取得できる状態を維持してください。[Mozilla FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/)
 
@@ -33,13 +51,15 @@ cargo generate --path templates/plugin --destination plugins --define repository
 バイナリ配布前に次を整えてください。
 
 - 自作部分の利用条件、作者、About 表示、サポート先、Bundle Identifier、エフェクト名を自分の製品に合わせる。
-- `TEMPLATE-LICENSE.txt` 全文を配布物に含める。プラグイン名に AOD を付ける義務はありません。
+- **`TEMPLATE-LICENSE.txt` 全文を配布物に含める。** リポジトリへのリンクだけでは、この同梱条件を満たしません。プラグイン名に AOD を付ける義務はありません。
 - `utils` 等の MPL 対象部分について、使用した版のソースと取得方法を案内する。改変した場合は、その改変版を提供する。
 - 実際に使用した第三者依存のライセンス・著作権表示等も同梱する。生成物への追加許諾は第三者依存の条件を免除しない。
 
 本リポジトリへの追加を予定する場合は `cargo new-plugin` を使ってください。このエイリアスは `repository_plugin=true` を指定し、MPL を継承するパッケージを生成します。外部用として作成した独自実装を投稿する場合も、[投稿条件](CONTRIBUTING.md) に従って MPL で提供してください。生成オプションの切替だけで既存コードの権利や許諾が変わることはありません。
 
-追加許諾は、それを同梱した版から生成した素材に適用されます。許諾文が付いていない過去版や、その過去版から生成済みのコードに自動的に遡及するものではありません。
+> [!NOTE]
+> **更新前に生成済みのプラグインには、自動適用されません。**
+> 追加許諾は、それを同梱した版から生成した素材に適用されます。許諾文が付いていない過去版や、その過去版から生成済みのコードに自動的に遡及するものではありません。
 
 ## English
 
@@ -47,6 +67,22 @@ Except where separately identified, repository code is licensed under the
 [MPL 2.0](LICENSE). The designated scaffold files also carry the
 [Template Output Permission](templates/plugin/TEMPLATE-LICENSE.txt).
 The license and permission texts govern; this guide explains their use.
+
+> [!TIP]
+> **Independent plugins made from the designated scaffold may remain proprietary and be distributed or sold.**
+> Include the complete `TEMPLATE-LICENSE.txt` and meet the terms for any MPL-covered code and third-party dependencies you include.
+
+When distributing outside your organization, source availability depends on where the code comes from.
+
+```mermaid
+flowchart LR
+    template["Scaffold with the permission<br/>+ your own code"] --> private["Independent source may stay private<br/>Binary distribution and sales allowed"]
+    mpl["utils, existing effects, etc.<br/>MPL-only code"] --> source["Make MPL-covered source files<br/>available to recipients"]
+    classDef output fill:#e8f5ef,stroke:#32845d,color:#163d2a
+    classDef covered fill:#edf3fc,stroke:#537eb8,color:#223e66
+    class template,private output
+    class mpl,source covered
+```
 
 - **Independent plugin output:** you may keep its source private and distribute
   or sell binaries, including after editing the same files as the scaffold.
@@ -64,10 +100,9 @@ The license and permission texts govern; this guide explains their use.
   MPL source availability is owed to recipients; a public GitHub repository or
   upstream pull request is not required. Recipients retain their MPL rights.
 
-Using utils as a dependency is different from copying its implementation into
-an output source file. A file containing MPL-only implementation is subject to
-the ordinary file-level MPL obligations arising from that code, even when it
-also contains template material or independent additions.
+> [!IMPORTANT]
+> **Using a library as a dependency differs from copying its implementation.**
+> A file containing MPL-only implementation, such as code copied from utils, is subject to the ordinary file-level MPL obligations arising from that code, even when it also contains template material or independent additions.
 
 For an independent plugin, run the `cargo generate` command above. The template
 still depends on this workspace's libraries and build tools; a private local
@@ -75,13 +110,17 @@ copy of the workspace is supported. Moving to a standalone workspace also
 requires adapting those references. The initial `license-file` describes the
 scaffold, not a licensing decision for future independent additions. Update
 your package's `license` or `license-file` for your chosen terms and preserve
-`TEMPLATE-LICENSE.txt`. Review your author, category, support URL, effect name,
+`TEMPLATE-LICENSE.txt`. A repository link alone does not replace the requirement
+to include that entire file. Review your author, category, support URL, effect name,
 bundle identifier and distribution notices before release.
 
 For repository contributions, `cargo new-plugin` selects MPL inheritance.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the terms applying to contributed
-effect code and template changes. The permission covers material released with
-it, not every historical version. Third-party code retains its own terms.
+effect code and template changes. Third-party code retains its own terms.
+
+> [!NOTE]
+> **Previously generated plugins are not automatically covered.**
+> The permission covers material released with it, not earlier revisions released without it or output previously generated from those revisions.
 
 Official release ZIPs include `LICENSE`, this guide, the template permission,
 recorded plugin-specific third-party notices, and `SOURCE.txt` identifying the
