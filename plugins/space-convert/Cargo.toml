@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "space_convert"
 description = "Converts images between Cartesian, curvilinear coordinate, Radon, and channel-aware line Hough representations."
 version = "0.3.0"

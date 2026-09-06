@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "mobius_transform"
 description = "A plugin for applying Mobius transformation to layers."
 version = "0.1.0"

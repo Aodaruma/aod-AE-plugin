@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "image_transform"
 description = "Applies affine image transforms with selectable reconstruction filters and outside-image sampling."
 version = "0.1.1"

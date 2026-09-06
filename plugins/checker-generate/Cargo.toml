@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "checker_generate"
 description = "Generates customizable two-color checkerboard patterns with adjustable geometry, edge treatment, and compositing."
 version = "0.1.0"

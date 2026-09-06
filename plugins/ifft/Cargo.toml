@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "ifft"
 description = "Reconstructs an RGBA image from 2D FFT real and imaginary inputs."
 version = "0.1.0"

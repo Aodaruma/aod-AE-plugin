@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "color_ajust"
 description = "A plugin to modify the chroma and lightness of an image using various color space"
 version = "0.1.0"

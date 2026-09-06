@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "fourier_filter"
 description = "Applies FFT-domain filters and mask-driven spectral shaping with dynamic controls."
 version = "0.1.0"
