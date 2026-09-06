@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "displace_scatter"
 description = "Applies map-driven procedural displacement scatter to layers."
 version = "0.1.0"

@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "color_change"
 description = "A plugin to change some colors in a footage"
 edition = "2024"

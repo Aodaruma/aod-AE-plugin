@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "color_convert"
 description = "A plugin that can convert to and from various color spaces from RGB."
 version = "0.1.0"

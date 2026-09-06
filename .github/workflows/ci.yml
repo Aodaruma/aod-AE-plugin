@@ -19,6 +19,15 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-generate@0.23.7
+      - name: License and template checks
+        run: python -m unittest discover -s tests -p "test_licensing.py"
+
       - name: fmt
         run: cargo fmt --all -- --check
 

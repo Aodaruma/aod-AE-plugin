@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "normal_generate"
 description = "A plugin that can generate normals from color-coded regions."
 version = "0.1.0"

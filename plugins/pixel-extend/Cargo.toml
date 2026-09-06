@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "pixel_extend"
 description = "Extends pixels in adjustable directions with selectable source masks and interpolation."
 version = "0.1.0"

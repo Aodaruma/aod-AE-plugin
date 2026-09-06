@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "differential_generate"
 description = "Generates RGBA differential maps from image gradients."
 version = "0.1.0"

@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "color_select"
 description = "Selects specified colors for keying or keeping with dynamic multi-color controls."
 version = "0.1.0"

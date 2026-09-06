@@ -39,7 +39,7 @@
 エイリアスは `.cargo/config.toml` に定義済みです。
 
 1) ルートで `cargo new-plugin`  
-   - 内部的に `cargo generate --path templates/plugin --destination plugins` を実行
+   - 内部的に `cargo generate --path templates/plugin --destination plugins --define repository_plugin=true` を実行
 2) 生成された `plugins/<name>/` の以下を確認・調整  
    - `Cargo.toml` の `description`
    - `build.rs` の Name / Match Name（命名規則と一致しているか）
@@ -60,7 +60,7 @@
 
 ### cargo-generate 非対話実行メモ（知見）
 
-- `--template-values-file` を使う場合、ファイルは必ず `[values]` セクションを持つこと。  
+- `--values-file` を使う場合、ファイルは必ず `[values]` セクションを持つこと。
   例:
   ```toml
   [values]
@@ -94,6 +94,10 @@
 
 ## 開発ルール
 
+- ライセンスの境界と投稿条件は `LICENSING.md` / `CONTRIBUTING.md` に従う。
+- 既存プラグインと utils は MPL-2.0。生成用の追加許諾は `templates/plugin/TEMPLATE-LICENSE.txt` に列挙した素材だけに適用する。
+- 既存のエフェクト実装や utils をテンプレートへ移す場合、追加許諾できる権利を確認する。移動だけで許諾範囲は広がらない。
+- テンプレートを変更したら `python -m unittest discover -s tests -p "test_licensing.py"` で許諾の同梱と生成・ビルドを確認する。
 - 新規プラグインは必ずテンプレートから作成する
 - 命名規則（kebab/snake/Pascal）と `AOD_` 接頭辞を統一する
 - Match Name の変更は互換性に影響するため原則禁止

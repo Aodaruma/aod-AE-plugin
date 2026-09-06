@@ -43,9 +43,16 @@ https://github.com/sponsors/Aodaruma
 
 ## 3. License
 
-ライセンスはMPL-2.0です。`LICENSE` ファイルを参照してください。
+基本ライセンスは [MPL-2.0](LICENSE) です。指定された雛形から開発する独自プラグインには
+[生成用の追加許諾](templates/plugin/TEMPLATE-LICENSE.txt) があり、ソース非公開での配布・販売が可能です。
+`utils`、既存プラグインの実装、テンプレート自体の再配布には通常の MPL が適用されます。
+具体例と配布時の条件は [ライセンスガイド](LICENSING.md) を参照してください。
 
-Licensed under the MPL-2.0. See `LICENSE`.
+Licensed under [MPL-2.0](LICENSE), with a
+[Template Output Permission](templates/plugin/TEMPLATE-LICENSE.txt) for designated scaffold material.
+Independent plugins may keep their source private and distribute or sell binaries.
+Shared utilities, existing effect implementations and template redistribution remain subject to the ordinary MPL.
+See [LICENSING.md](LICENSING.md) for scope, source availability and notice requirements.
 
 ---
 
@@ -100,11 +107,17 @@ just -f plugins/color-ajust/Justfile build
 The repo includes a `cargo-generate` template:
 
 ```sh
+# For an MPL-licensed contribution to this repository:
 cargo new-plugin
 
-# or manually:
-cargo generate --path templates/plugin --destination plugins
+# For an independent plugin (source may remain private):
+cargo generate --path templates/plugin --destination plugins --define repository_plugin=false
 ```
+
+Both modes include `TEMPLATE-LICENSE.txt`. Independent plugins use configurable
+author/category/support information; review the generated README and
+[licensing guide](LICENSING.md) before distribution. The template currently
+builds within this workspace, including when using a private local copy.
 
 ### Repository layout
 
@@ -116,3 +129,5 @@ cargo generate --path templates/plugin --destination plugins
 ### Contribution
 
 Issues and pull requests are welcome. Please keep `cargo fmt` and `cargo clippy` clean when possible.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the MPL contribution terms and the
+additional permission required for contributions to the designated scaffold files.

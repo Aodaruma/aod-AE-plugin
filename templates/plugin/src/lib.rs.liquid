@@ -1,3 +1,4 @@
+// Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
 use after_effects as ae;
 use std::env;
 
@@ -41,9 +42,10 @@ impl AdobePluginGlobal for Plugin {
         match cmd {
             ae::Command::About => {
                 out_data.set_return_msg(format!(
-                    "AOD_{{ crate_name | pascal_case }} - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) {{ create_year }}-{build_year} Aodaruma",
+                    "AOD_{{ crate_name | pascal_case }} - {version}\r\r{PLUGIN_DESCRIPTION}\rCopyright (c) {{ create_year }}-{build_year} {author}",
                     version=env!("CARGO_PKG_VERSION"),
-                    build_year=env!("BUILD_YEAR")
+                    build_year=env!("BUILD_YEAR"),
+                    author=env!("CARGO_PKG_AUTHORS")
                 ).as_str());
             }
             ae::Command::GlobalSetup => {
