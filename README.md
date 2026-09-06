@@ -129,5 +129,6 @@ builds within this workspace, including when using a private local copy.
 ### Contribution
 
 Issues and pull requests are welcome. Please keep `cargo fmt` and `cargo clippy` clean when possible.
+See the [development guide (Japanese)](docs/development.md) for generation, PowerShell build commands, and dynamic UI rules.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the MPL contribution terms and the
 additional permission required for contributions to the designated scaffold files.

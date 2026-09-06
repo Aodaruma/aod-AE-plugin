@@ -31,6 +31,18 @@
 
 [![G：生成用キャンバス](assets/overview/generator.png)](generator.md)
 
+## カタログ更新の対象
+
+プラグインを追加した場合、または描画結果・見た目に影響する変更を行った場合は、実際の After Effects 上の出力に合わせて次を更新します。
+
+- 対応する `docs/catalog/*.md` の日本語説明、主要パラメーター、個別プレビュー
+- `docs/catalog/assets/previews/<plugin>.png`
+- 対応分類の一覧画像 `docs/catalog/assets/overview/<category>.png`
+- 全エフェクト一覧画像 `docs/catalog/assets/overview/all-effects.png`
+- 必要に応じて `docs/catalog/build-catalog.jsx` の分類、エフェクト一覧、プレビュー設定
+
+個別プレビューを変更したら分類別・全体一覧も同じ変更内で再生成し、ルート README と詳細カタログに古い描画結果を残さないでください。
+
 ## カタログ画像の再生成
 
 After Effects 2025で[`catalog/ae2025-plugin-catalog/aod-plugin-catalog-ae2025.aep`](../../catalog/ae2025-plugin-catalog/aod-plugin-catalog-ae2025.aep)を開き、`ファイル > スクリプト > スクリプトファイルを実行`から次の順に実行します。プラグイン追加時は、このAEPにプレビュー用コンポジションを追加してから再生成してください。
