@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "distance_generate"
 description = "A plugin that can generate distance images from the contours of colored regions."
 version = "0.1.0"

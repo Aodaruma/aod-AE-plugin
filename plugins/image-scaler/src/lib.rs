@@ -15,6 +15,15 @@ enum Params {
     ScalePercent,
     ScaleExp,
     ScalePower2,
+    SeparateXYScale,
+    ScaleXPercent,
+    ScaleYPercent,
+    ScaleXExp,
+    ScaleYExp,
+    ScaleXPower2,
+    ScaleYPower2,
+    AnchorXY,
+    EdgeMode,
     Interpolation,
     InterpolationColorSpace,
     MitchellB,
@@ -23,6 +32,18 @@ enum Params {
     EqaRadius,
 }
 
+const SCALE_VALUE_PARAMS: [Params; 9] = [
+    Params::ScalePercent,
+    Params::ScaleExp,
+    Params::ScalePower2,
+    Params::ScaleXPercent,
+    Params::ScaleYPercent,
+    Params::ScaleXExp,
+    Params::ScaleYExp,
+    Params::ScaleXPower2,
+    Params::ScaleYPower2,
+];
+
 #[derive(Default)]
 struct Plugin {
     aegp_id: Option<ae::aegp::PluginId>,
@@ -30,10 +51,11 @@ struct Plugin {
 
 ae::define_effect!(Plugin, (), Params);
 
-const PLUGIN_DESCRIPTION: &str =
-    "Scales layers with selectable interpolation modes and optional reciprocal scaling.";
+const PLUGIN_DESCRIPTION: &str = "Scales layers with selectable interpolation modes, anchor point, edge handling, and optional reciprocal or separate X/Y scaling.";
 const MIN_SCALE_FACTOR: f32 = 0.001;
 const MAX_SCALE_FACTOR: f32 = 1_000_000.0;
+const MIN_EXPONENT_SCALE: f32 = -1000.0;
+const MAX_EXPONENT_SCALE: f32 = 1000.0;
 const OKLAB_AB_MAX: f32 = 0.5;
 const OKLCH_CHROMA_MAX: f32 = 0.4;
 const LAB_L_MAX: f32 = 100.0;
@@ -86,6 +108,25 @@ impl InterpolationMode {
 }
 
 #[derive(Clone, Copy, Debug)]
+enum EdgeMode {
+    None,
+    Extend,
+    Repeat,
+    Mirror,
+}
+
+impl EdgeMode {
+    fn from_popup_value(value: i32) -> Self {
+        match value {
+            2 => Self::Extend,
+            3 => Self::Repeat,
+            4 => Self::Mirror,
+            _ => Self::None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 enum InterpolationColorSpace {
     LinearRgba,
     Srgb,
@@ -120,7 +161,11 @@ impl InterpolationColorSpace {
 
 #[derive(Clone, Copy, Debug)]
 struct Settings {
-    scale: f32,
+    scale_x: f32,
+    scale_y: f32,
+    anchor_x: f32,
+    anchor_y: f32,
+    edge_mode: EdgeMode,
     interpolation: InterpolationMode,
     color_space: InterpolationColorSpace,
     mitchell_b: f32,
@@ -226,47 +271,54 @@ impl AdobePluginGlobal for Plugin {
             ae::ParamUIFlags::empty(),
         )?;
 
+        add_percent_scale_slider(params, Params::ScalePercent, "Scale (%)", true, true)?;
+        add_exponent_scale_slider(params, Params::ScaleExp, "Scale (Exp)", false, false)?;
+        add_exponent_scale_slider(params, Params::ScalePower2, "Scale (Power2)", false, false)?;
+
+        params.add_with_flags(
+            Params::SeparateXYScale,
+            "Separate X/Y Scale",
+            CheckBoxDef::setup(|d| {
+                d.set_default(false);
+            }),
+            ae::ParamFlag::SUPERVISE,
+            ae::ParamUIFlags::empty(),
+        )?;
+
+        add_percent_scale_slider(params, Params::ScaleXPercent, "Scale X (%)", false, true)?;
+        add_percent_scale_slider(params, Params::ScaleYPercent, "Scale Y (%)", false, true)?;
+        add_exponent_scale_slider(params, Params::ScaleXExp, "Scale X (Exp)", false, false)?;
+        add_exponent_scale_slider(params, Params::ScaleYExp, "Scale Y (Exp)", false, false)?;
+        add_exponent_scale_slider(
+            params,
+            Params::ScaleXPower2,
+            "Scale X (Power2)",
+            false,
+            false,
+        )?;
+        add_exponent_scale_slider(
+            params,
+            Params::ScaleYPower2,
+            "Scale Y (Power2)",
+            false,
+            false,
+        )?;
+
         params.add(
-            Params::ScalePercent,
-            "Scale (%)",
-            FloatSliderDef::setup(|d| {
-                d.set_valid_min(0.1);
-                d.set_valid_max(20000.0);
-                d.set_slider_min(1.0);
-                d.set_slider_max(20000.0);
-                d.set_default(100.0);
-                d.set_precision(2);
+            Params::AnchorXY,
+            "Anchor XY",
+            PointDef::setup(|p| {
+                p.set_default((50.0, 50.0));
             }),
         )?;
 
-        params.add_with_flags(
-            Params::ScaleExp,
-            "Scale (Exp)",
-            FloatSliderDef::setup(|d| {
-                d.set_valid_min(0.1);
-                d.set_valid_max(20000.0);
-                d.set_slider_min(1.0);
-                d.set_slider_max(20000.0);
-                d.set_default(100.0);
-                d.set_precision(2);
+        params.add(
+            Params::EdgeMode,
+            "Outside Pixels",
+            PopupDef::setup(|d| {
+                d.set_options(&["None", "Extend", "Repeat", "Mirror"]);
+                d.set_default(1);
             }),
-            ae::ParamFlag::empty(),
-            ae::ParamUIFlags::INVISIBLE,
-        )?;
-
-        params.add_with_flags(
-            Params::ScalePower2,
-            "Scale (Power2)",
-            FloatSliderDef::setup(|d| {
-                d.set_valid_min(0.1);
-                d.set_valid_max(20000.0);
-                d.set_slider_min(1.0);
-                d.set_slider_max(20000.0);
-                d.set_default(100.0);
-                d.set_precision(2);
-            }),
-            ae::ParamFlag::empty(),
-            ae::ParamUIFlags::INVISIBLE,
         )?;
 
         params.add_with_flags(
@@ -436,6 +488,7 @@ impl AdobePluginGlobal for Plugin {
                 let t = params.type_at(param_index);
                 if t == Params::ScaleMode
                     || t == Params::UseReciprocal
+                    || t == Params::SeparateXYScale
                     || t == Params::Interpolation
                 {
                     out_data.set_out_flag(OutFlags::RefreshUi, true);
@@ -460,28 +513,38 @@ impl Plugin {
         let scale_mode =
             ScaleMode::from_popup_value(params.get(Params::ScaleMode)?.as_popup()?.value());
         let use_reciprocal = params.get(Params::UseReciprocal)?.as_checkbox()?.value();
+        let separate_xy_scale = params.get(Params::SeparateXYScale)?.as_checkbox()?.value();
         let interpolation = InterpolationMode::from_popup_value(
             params.get(Params::Interpolation)?.as_popup()?.value(),
         );
 
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::ScalePercent,
-            matches!(scale_mode, ScaleMode::Linear),
-        )?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::ScaleExp,
-            matches!(scale_mode, ScaleMode::Exp),
-        )?;
-        self.set_param_visible(
-            in_data,
-            params,
-            Params::ScalePower2,
-            matches!(scale_mode, ScaleMode::Power2),
-        )?;
+        let is_linear = matches!(scale_mode, ScaleMode::Linear);
+        let is_exp = matches!(scale_mode, ScaleMode::Exp);
+        let is_power2 = matches!(scale_mode, ScaleMode::Power2);
+
+        for id in SCALE_VALUE_PARAMS {
+            Self::set_param_enabled(params, id, false)?;
+        }
+
+        self.set_param_visible(in_data, params, Params::ScalePercent, is_linear)?;
+        self.set_param_visible(in_data, params, Params::ScaleExp, is_exp)?;
+        self.set_param_visible(in_data, params, Params::ScalePower2, is_power2)?;
+        self.set_param_visible(in_data, params, Params::ScaleXPercent, is_linear)?;
+        self.set_param_visible(in_data, params, Params::ScaleYPercent, is_linear)?;
+        self.set_param_visible(in_data, params, Params::ScaleXExp, is_exp)?;
+        self.set_param_visible(in_data, params, Params::ScaleYExp, is_exp)?;
+        self.set_param_visible(in_data, params, Params::ScaleXPower2, is_power2)?;
+        self.set_param_visible(in_data, params, Params::ScaleYPower2, is_power2)?;
+
+        Self::set_param_enabled(params, Params::ScalePercent, !separate_xy_scale)?;
+        Self::set_param_enabled(params, Params::ScaleExp, !separate_xy_scale)?;
+        Self::set_param_enabled(params, Params::ScalePower2, !separate_xy_scale)?;
+        Self::set_param_enabled(params, Params::ScaleXPercent, separate_xy_scale)?;
+        Self::set_param_enabled(params, Params::ScaleYPercent, separate_xy_scale)?;
+        Self::set_param_enabled(params, Params::ScaleXExp, separate_xy_scale)?;
+        Self::set_param_enabled(params, Params::ScaleYExp, separate_xy_scale)?;
+        Self::set_param_enabled(params, Params::ScaleXPower2, separate_xy_scale)?;
+        Self::set_param_enabled(params, Params::ScaleYPower2, separate_xy_scale)?;
         self.set_param_visible(
             in_data,
             params,
@@ -513,6 +576,18 @@ impl Plugin {
             "Scale (Exp)"
         };
         Self::set_param_name(params, Params::ScaleExp, exp_name)?;
+        let exp_x_name = if use_reciprocal {
+            "Scale X (1/Exp)"
+        } else {
+            "Scale X (Exp)"
+        };
+        Self::set_param_name(params, Params::ScaleXExp, exp_x_name)?;
+        let exp_y_name = if use_reciprocal {
+            "Scale Y (1/Exp)"
+        } else {
+            "Scale Y (Exp)"
+        };
+        Self::set_param_name(params, Params::ScaleYExp, exp_y_name)?;
 
         let power2_name = if use_reciprocal {
             "Scale (1/Power2)"
@@ -520,6 +595,18 @@ impl Plugin {
             "Scale (Power2)"
         };
         Self::set_param_name(params, Params::ScalePower2, power2_name)?;
+        let power2_x_name = if use_reciprocal {
+            "Scale X (1/Power2)"
+        } else {
+            "Scale X (Power2)"
+        };
+        Self::set_param_name(params, Params::ScaleXPower2, power2_x_name)?;
+        let power2_y_name = if use_reciprocal {
+            "Scale Y (1/Power2)"
+        } else {
+            "Scale Y (Power2)"
+        };
+        Self::set_param_name(params, Params::ScaleYPower2, power2_y_name)?;
 
         Ok(())
     }
@@ -563,6 +650,14 @@ impl Plugin {
         Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::INVISIBLE, !visible)
     }
 
+    fn set_param_enabled(
+        params: &mut ae::Parameters<Params>,
+        id: Params,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        Self::set_param_ui_flag(params, id, ae::pf::ParamUIFlags::DISABLED, !enabled)
+    }
+
     fn set_param_ui_flag(
         params: &mut ae::Parameters<Params>,
         id: Params,
@@ -595,13 +690,11 @@ impl Plugin {
 
         let settings = read_settings(params)?;
         let source = capture_source(&in_layer);
-        let center_x = (width as f32 - 1.0) * 0.5;
-        let center_y = (height as f32 - 1.0) * 0.5;
         let progress_final = out_layer.height() as i32;
 
         out_layer.iterate(0, progress_final, None, |x, y, mut dst| {
-            let src_x = (x as f32 - center_x) / settings.scale + center_x;
-            let src_y = (y as f32 - center_y) / settings.scale + center_y;
+            let src_x = (x as f32 - settings.anchor_x) / settings.scale_x + settings.anchor_x;
+            let src_y = (y as f32 - settings.anchor_y) / settings.scale_y + settings.anchor_y;
             let sampled = sample_pixel(&source, width, height, src_x, src_y, &settings);
             write_output_pixel(&mut dst, sampled);
             Ok(())
@@ -615,47 +708,27 @@ fn read_settings(params: &mut Parameters<Params>) -> Result<Settings, Error> {
     let use_reciprocal = params.get(Params::UseReciprocal)?.as_checkbox()?.value();
     let scale_mode =
         ScaleMode::from_popup_value(params.get(Params::ScaleMode)?.as_popup()?.value());
+    let separate_xy_scale = params.get(Params::SeparateXYScale)?.as_checkbox()?.value();
 
-    let raw_scale = match scale_mode {
-        ScaleMode::Linear => {
-            let scale_percent = params.get(Params::ScalePercent)?.as_float_slider()?.value() as f32;
-            let base_scale = (scale_percent / 100.0).max(MIN_SCALE_FACTOR);
-            if use_reciprocal {
-                1.0 / base_scale
-            } else {
-                base_scale
-            }
-        }
-        ScaleMode::Exp => {
-            let scale_percent = params.get(Params::ScaleExp)?.as_float_slider()?.value() as f32;
-            let base_scale = (scale_percent / 100.0).max(MIN_SCALE_FACTOR);
-            let exp_scale = base_scale.exp();
-            if use_reciprocal {
-                1.0 / exp_scale
-            } else {
-                exp_scale
-            }
-        }
-        ScaleMode::Power2 => {
-            let scale_percent = params.get(Params::ScalePower2)?.as_float_slider()?.value() as f32;
-            let base_scale = (scale_percent / 100.0).max(MIN_SCALE_FACTOR);
-            let power2_scale = 2.0_f32.powf(base_scale);
-            if use_reciprocal {
-                1.0 / power2_scale
-            } else {
-                power2_scale
-            }
-        }
-    };
-    let scale = if raw_scale.is_finite() {
-        raw_scale
-    } else if raw_scale.is_sign_positive() {
-        MAX_SCALE_FACTOR
+    let (raw_scale_x, raw_scale_y) = if separate_xy_scale {
+        let (scale_x_param, scale_y_param) = xy_scale_params_for_mode(scale_mode);
+        (
+            read_scale_param(params, scale_x_param, scale_mode, use_reciprocal)?,
+            read_scale_param(params, scale_y_param, scale_mode, use_reciprocal)?,
+        )
     } else {
-        MIN_SCALE_FACTOR
-    }
-    .clamp(MIN_SCALE_FACTOR, MAX_SCALE_FACTOR);
+        let scale_param = single_scale_param_for_mode(scale_mode);
+        let scale = read_scale_param(params, scale_param, scale_mode, use_reciprocal)?;
+        (scale, scale)
+    };
 
+    let scale_x = sanitize_scale(raw_scale_x);
+    let scale_y = sanitize_scale(raw_scale_y);
+    let anchor_param = params.get(Params::AnchorXY)?;
+    let anchor = anchor_param.as_point()?;
+    let (anchor_x, anchor_y) = point_value_f32(&anchor);
+
+    let edge_mode = EdgeMode::from_popup_value(params.get(Params::EdgeMode)?.as_popup()?.value());
     let interpolation =
         InterpolationMode::from_popup_value(params.get(Params::Interpolation)?.as_popup()?.value());
     let color_space = InterpolationColorSpace::from_popup_value(
@@ -674,7 +747,11 @@ fn read_settings(params: &mut Parameters<Params>) -> Result<Settings, Error> {
         (params.get(Params::EqaRadius)?.as_float_slider()?.value() as f32).clamp(0.5, 8.0);
 
     Ok(Settings {
-        scale,
+        scale_x,
+        scale_y,
+        anchor_x,
+        anchor_y,
+        edge_mode,
         interpolation,
         color_space,
         mitchell_b,
@@ -682,6 +759,126 @@ fn read_settings(params: &mut Parameters<Params>) -> Result<Settings, Error> {
         lanczos_lobes,
         eqa_radius,
     })
+}
+
+fn add_percent_scale_slider(
+    params: &mut ae::Parameters<Params>,
+    id: Params,
+    name: &str,
+    enabled: bool,
+    visible: bool,
+) -> Result<(), Error> {
+    let mut ui_flags = ae::ParamUIFlags::empty();
+    if !enabled {
+        ui_flags |= ae::ParamUIFlags::DISABLED;
+    }
+    if !visible {
+        ui_flags |= ae::ParamUIFlags::INVISIBLE;
+    }
+
+    params.add_with_flags(
+        id,
+        name,
+        FloatSliderDef::setup(|d| {
+            d.set_valid_min(0.1);
+            d.set_valid_max(20000.0);
+            d.set_slider_min(1.0);
+            d.set_slider_max(20000.0);
+            d.set_default(100.0);
+            d.set_precision(2);
+        }),
+        ae::ParamFlag::empty(),
+        ui_flags,
+    )
+}
+
+fn add_exponent_scale_slider(
+    params: &mut ae::Parameters<Params>,
+    id: Params,
+    name: &str,
+    enabled: bool,
+    visible: bool,
+) -> Result<(), Error> {
+    let mut ui_flags = ae::ParamUIFlags::empty();
+    if !enabled {
+        ui_flags |= ae::ParamUIFlags::DISABLED;
+    }
+    if !visible {
+        ui_flags |= ae::ParamUIFlags::INVISIBLE;
+    }
+
+    params.add_with_flags(
+        id,
+        name,
+        FloatSliderDef::setup(|d| {
+            d.set_valid_min(MIN_EXPONENT_SCALE);
+            d.set_valid_max(MAX_EXPONENT_SCALE);
+            d.set_slider_min(MIN_EXPONENT_SCALE);
+            d.set_slider_max(MAX_EXPONENT_SCALE);
+            d.set_default(0.0);
+            d.set_precision(3);
+        }),
+        ae::ParamFlag::empty(),
+        ui_flags,
+    )
+}
+
+fn point_value_f32(point: &PointDef<'_>) -> (f32, f32) {
+    match point.float_value() {
+        Ok(p) => (p.x as f32, p.y as f32),
+        Err(_) => point.value(),
+    }
+}
+
+fn single_scale_param_for_mode(scale_mode: ScaleMode) -> Params {
+    match scale_mode {
+        ScaleMode::Linear => Params::ScalePercent,
+        ScaleMode::Exp => Params::ScaleExp,
+        ScaleMode::Power2 => Params::ScalePower2,
+    }
+}
+
+fn xy_scale_params_for_mode(scale_mode: ScaleMode) -> (Params, Params) {
+    match scale_mode {
+        ScaleMode::Linear => (Params::ScaleXPercent, Params::ScaleYPercent),
+        ScaleMode::Exp => (Params::ScaleXExp, Params::ScaleYExp),
+        ScaleMode::Power2 => (Params::ScaleXPower2, Params::ScaleYPower2),
+    }
+}
+
+fn read_scale_param(
+    params: &mut Parameters<Params>,
+    scale_param: Params,
+    scale_mode: ScaleMode,
+    use_reciprocal: bool,
+) -> Result<f32, Error> {
+    let scale_value = params.get(scale_param)?.as_float_slider()?.value() as f32;
+    let scaled = match scale_mode {
+        ScaleMode::Linear => (scale_value / 100.0).max(MIN_SCALE_FACTOR),
+        ScaleMode::Exp => scale_value
+            .clamp(MIN_EXPONENT_SCALE, MAX_EXPONENT_SCALE)
+            .exp(),
+        ScaleMode::Power2 => {
+            2.0_f32.powf(scale_value.clamp(MIN_EXPONENT_SCALE, MAX_EXPONENT_SCALE))
+        }
+    };
+
+    if use_reciprocal {
+        Ok(1.0 / scaled)
+    } else {
+        Ok(scaled)
+    }
+}
+
+fn sanitize_scale(raw_scale: f32) -> f32 {
+    if raw_scale.is_finite() {
+        raw_scale
+    } else if raw_scale.is_sign_positive() {
+        MAX_SCALE_FACTOR
+    } else {
+        MIN_SCALE_FACTOR
+    }
+    .clamp(MIN_SCALE_FACTOR, MAX_SCALE_FACTOR)
 }
 
 fn capture_source(layer: &Layer) -> Vec<PixelF32> {
@@ -713,13 +910,25 @@ fn sample_pixel(
     settings: &Settings,
 ) -> PixelF32 {
     match settings.interpolation {
-        InterpolationMode::Nearest => sample_nearest(src, width, height, x, y),
-        InterpolationMode::Bilinear => {
-            sample_bilinear(src, width, height, x, y, settings.color_space)
-        }
-        InterpolationMode::Bicubic => {
-            sample_bicubic(src, width, height, x, y, settings.color_space)
-        }
+        InterpolationMode::Nearest => sample_nearest(src, width, height, x, y, settings.edge_mode),
+        InterpolationMode::Bilinear => sample_bilinear(
+            src,
+            width,
+            height,
+            x,
+            y,
+            settings.color_space,
+            settings.edge_mode,
+        ),
+        InterpolationMode::Bicubic => sample_bicubic(
+            src,
+            width,
+            height,
+            x,
+            y,
+            settings.color_space,
+            settings.edge_mode,
+        ),
         InterpolationMode::Mitchell => sample_mitchell(
             src,
             width,
@@ -727,6 +936,7 @@ fn sample_pixel(
             x,
             y,
             settings.color_space,
+            settings.edge_mode,
             settings.mitchell_b,
             settings.mitchell_c,
         ),
@@ -737,6 +947,7 @@ fn sample_pixel(
             x,
             y,
             settings.color_space,
+            settings.edge_mode,
             settings.lanczos_lobes,
         ),
         InterpolationMode::EqaQuadratic => sample_eqa_quadratic(
@@ -746,15 +957,23 @@ fn sample_pixel(
             x,
             y,
             settings.color_space,
+            settings.edge_mode,
             settings.eqa_radius,
         ),
     }
 }
 
-fn sample_nearest(src: &[PixelF32], width: usize, height: usize, x: f32, y: f32) -> PixelF32 {
+fn sample_nearest(
+    src: &[PixelF32],
+    width: usize,
+    height: usize,
+    x: f32,
+    y: f32,
+    edge_mode: EdgeMode,
+) -> PixelF32 {
     let nx = x.round() as isize;
     let ny = y.round() as isize;
-    fetch_or_transparent(src, width, height, nx, ny)
+    fetch_pixel(src, width, height, nx, ny, edge_mode)
 }
 
 fn sample_bilinear(
@@ -764,6 +983,7 @@ fn sample_bilinear(
     x: f32,
     y: f32,
     color_space: InterpolationColorSpace,
+    edge_mode: EdgeMode,
 ) -> PixelF32 {
     let x0 = x.floor() as isize;
     let y0 = y.floor() as isize;
@@ -773,10 +993,10 @@ fn sample_bilinear(
     let tx = x - x0 as f32;
     let ty = y - y0 as f32;
 
-    let p00 = fetch_or_transparent(src, width, height, x0, y0);
-    let p10 = fetch_or_transparent(src, width, height, x1, y0);
-    let p01 = fetch_or_transparent(src, width, height, x0, y1);
-    let p11 = fetch_or_transparent(src, width, height, x1, y1);
+    let p00 = fetch_pixel(src, width, height, x0, y0, edge_mode);
+    let p10 = fetch_pixel(src, width, height, x1, y0, edge_mode);
+    let p01 = fetch_pixel(src, width, height, x0, y1, edge_mode);
+    let p11 = fetch_pixel(src, width, height, x1, y1, edge_mode);
 
     let mut acc = WorkingAccumulator::default();
     acc.add_sample(p00, (1.0 - tx) * (1.0 - ty), color_space);
@@ -793,10 +1013,20 @@ fn sample_bicubic(
     x: f32,
     y: f32,
     color_space: InterpolationColorSpace,
+    edge_mode: EdgeMode,
 ) -> PixelF32 {
-    sample_separable(src, width, height, x, y, color_space, 2.0, false, |d| {
-        cubic_weight(d, -0.5)
-    })
+    sample_separable(
+        src,
+        width,
+        height,
+        x,
+        y,
+        color_space,
+        edge_mode,
+        2.0,
+        false,
+        |d| cubic_weight(d, -0.5),
+    )
 }
 
 fn sample_mitchell(
@@ -806,12 +1036,22 @@ fn sample_mitchell(
     x: f32,
     y: f32,
     color_space: InterpolationColorSpace,
+    edge_mode: EdgeMode,
     b: f32,
     c: f32,
 ) -> PixelF32 {
-    sample_separable(src, width, height, x, y, color_space, 2.0, false, |d| {
-        mitchell_weight(d, b, c)
-    })
+    sample_separable(
+        src,
+        width,
+        height,
+        x,
+        y,
+        color_space,
+        edge_mode,
+        2.0,
+        false,
+        |d| mitchell_weight(d, b, c),
+    )
 }
 
 fn sample_lanczos(
@@ -821,12 +1061,22 @@ fn sample_lanczos(
     x: f32,
     y: f32,
     color_space: InterpolationColorSpace,
+    edge_mode: EdgeMode,
     lobes: f32,
 ) -> PixelF32 {
     let lobes = lobes.max(1.0);
-    sample_separable(src, width, height, x, y, color_space, lobes, false, |d| {
-        lanczos_weight(d, lobes)
-    })
+    sample_separable(
+        src,
+        width,
+        height,
+        x,
+        y,
+        color_space,
+        edge_mode,
+        lobes,
+        false,
+        |d| lanczos_weight(d, lobes),
+    )
 }
 
 fn sample_eqa_quadratic(
@@ -836,6 +1086,7 @@ fn sample_eqa_quadratic(
     x: f32,
     y: f32,
     color_space: InterpolationColorSpace,
+    edge_mode: EdgeMode,
     radius: f32,
 ) -> PixelF32 {
     let radius = radius.max(0.5);
@@ -856,7 +1107,7 @@ fn sample_eqa_quadratic(
             }
 
             let w = (1.0 - t) * (1.0 - t);
-            let p = fetch_or_transparent(src, width, height, sx, sy);
+            let p = fetch_pixel(src, width, height, sx, sy, edge_mode);
             acc.add_sample(p, w, color_space);
         }
     }
@@ -871,6 +1122,7 @@ fn sample_separable<F>(
     x: f32,
     y: f32,
     color_space: InterpolationColorSpace,
+    edge_mode: EdgeMode,
     radius: f32,
     normalize: bool,
     mut weight_fn: F,
@@ -897,7 +1149,7 @@ where
                 continue;
             }
 
-            let p = fetch_or_transparent(src, width, height, sx, sy);
+            let p = fetch_pixel(src, width, height, sx, sy, edge_mode);
             acc.add_sample(p, wx * wy, color_space);
         }
     }
@@ -949,17 +1201,54 @@ fn lanczos_weight(d: f32, a: f32) -> f32 {
     if x >= a { 0.0 } else { sinc(x) * sinc(x / a) }
 }
 
-fn fetch_or_transparent(
+fn fetch_pixel(
     src: &[PixelF32],
     width: usize,
     height: usize,
     x: isize,
     y: isize,
+    edge_mode: EdgeMode,
 ) -> PixelF32 {
-    if x < 0 || y < 0 || x >= width as isize || y >= height as isize {
+    let Some(px) = resolve_coord(x, width, edge_mode) else {
         return transparent_pixel();
+    };
+    let Some(py) = resolve_coord(y, height, edge_mode) else {
+        return transparent_pixel();
+    };
+
+    src[py * width + px]
+}
+
+fn resolve_coord(coord: isize, len: usize, edge_mode: EdgeMode) -> Option<usize> {
+    if len == 0 {
+        return None;
     }
-    src[y as usize * width + x as usize]
+
+    let len_i = len as isize;
+    if (0..len_i).contains(&coord) {
+        return Some(coord as usize);
+    }
+
+    match edge_mode {
+        EdgeMode::None => None,
+        EdgeMode::Extend => Some(coord.clamp(0, len_i - 1) as usize),
+        EdgeMode::Repeat => Some(coord.rem_euclid(len_i) as usize),
+        EdgeMode::Mirror => Some(mirror_index(coord, len_i) as usize),
+    }
+}
+
+fn mirror_index(coord: isize, len: isize) -> isize {
+    if len <= 1 {
+        return 0;
+    }
+
+    let period = len * 2 - 2;
+    let wrapped = coord.rem_euclid(period);
+    if wrapped >= len {
+        period - wrapped
+    } else {
+        wrapped
+    }
 }
 
 fn transparent_pixel() -> PixelF32 {

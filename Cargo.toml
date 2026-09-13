@@ -23,6 +23,7 @@ wgpu = { version = "28", features = ["spirv"] }
 bytemuck = { version = "1.16.0", features = ["derive"] }
 pollster = { version = "0.4" }
 futures-intrusive = { version = "0.5" }
+palette = { version = "0.7.7", default-features = false, features = ["std"] }
 
 
 [workspace.lints]

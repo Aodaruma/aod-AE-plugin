@@ -13,74 +13,27 @@ This repository is a Cargo
 workspace that builds multiple AE effect plugins, plus shared utilities and a plugin
 template.
 
-## 1. Plugins / プラグイン説明
+現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する39種類のエフェクトを収録しています。
+The current catalog contains 39 effects for photo, anime, data/map, and generator workflows.
 
-> [!TIP]
-> リリース済みのプラグインは [Releases](https://github.com/Aodaruma/aod-AE-plugin/releases) からダウンロードできます。  
-> You can download released plugins from [Releases](https://github.com/Aodaruma/aod-AE-plugin/releases).
+## Effect List / エフェクト一覧
 
-- AOD_ColorAjust
-  - OKLCH/HSLで色相・彩度・明度を調整します / Adjusts hue, chroma, and lightness in OKLCH or HSL color spaces
-- AOD_ColorChange:
-  - 指定色を別の色に置換します / Changes a specific color to another color with tolerance
-- AOD_ColorComposite
-  - 複数色を選択した合成モードと不透明度で順次合成します / Sequentially composites multiple colors using selectable blend modes and opacities.
-- AOD_ColorConvert
-  - RGBと各色空間を相互変換します / Converts between RGB and multiple color spaces
-- AOD_ColorQuantize
-  - 画像の色をk-meansで減色します / Reduces image colors with k-means clustering.
-- AOD_ColorSelect
-  - 指定した複数色を透過（Key）または保持（Keep）します / Selects specified colors for keying or keeping with dynamic multi-color controls.
-- AOD_ChannelRemap
-  - RGBA各出力チャンネルを入力・定数・レイヤー由来で再割り当てします / Remaps RGBA channels from source channels, constants, and layers with selectable color spaces.
-- AOD_ContourGenerate
-  - Canny法でレイヤーから輪郭線を抽出します / Extracts contour lines from a layer using the Canny method
-- AOD_DepthFog
-  - 白黒depth mapをリアルな霧のFalloffへ変換します / Converts monochrome depth maps into realistic fog falloff maps.
-- AOD_DifferentialGenerate
-  - レイヤーの画像勾配からRGBA微分マップを生成します / Generates RGBA differential maps from image gradients.
-- AOD_GradientBlur
-  - 輝度/RGB勾配または色相/彩度ベクトル方向に沿って方向性ブラーを適用します / Applies directional blur along lightness/RGB gradients or hue-saturation vectors.
-- AOD_GradientDisplace
-  - 輝度/RGB勾配または色相/彩度ベクトル方向に沿って変位を適用します / Applies directional displacement along lightness/RGB gradients or hue-saturation vectors.
-- AOD_FFT
-  - レイヤーに2D FFTを適用し、実部または虚部を出力します / Performs 2D FFT on RGBA channels and outputs real or imaginary spectra.
-- AOD_FourierFilter
-  - FFT領域フィルタとマスク駆動のスペクトル整形を動的UIで適用します / Applies FFT-domain filters and mask-driven spectral shaping with dynamic controls.
-- AOD_GaborGenerate
-  - Blender風のGaborテクスチャを生成します / Generates Blender-style Gabor texture maps.
-- AOD_DistanceGenerate
-  - 色領域の輪郭から距離画像を生成します / Generates distance images from the contours of colored regions
-- AOD_EyedropperMask
-  - スポイトポイント周辺の連続色領域の不透明度を個別調整し、プリマルチ/ストレートを切替できます / Adjusts opacity of contiguous regions around eyedropper points with per-point controls and selectable premultiplied or straight workflows.
-- AOD_IFFT
-  - 実部・虚部レイヤーから2D IFFTで画像を再構成します / Reconstructs an RGBA image from 2D FFT real and imaginary inputs.
-- AOD_ImageCalculate
-  - 1つまたは2つのレイヤーにBlender風の数式演算を適用します / Applies Blender-style math operations to one or two input layers.
-- AOD_ImageScaler
-  - レイヤーを補間方式指定で拡大・縮小します / Scales layers with selectable interpolation modes and optional reciprocal scaling.
-- AOD_LineRepaint
-  - 主線色に一致する画素を近傍色の伝播で塗り替えます / Repaints line-colored pixels by propagating neighboring colors.
-- AOD_MobiusTransform
-  - レイヤーにメビウス変換を適用します / Applies Mobius transformation to layers
-- AOD_NormalGenerate
-  - 色領域から法線マップを生成します / Generate a normal map from the color region.
-- AOD_RegionColorize
-  - 不透明または色領域をランダム・位置・インデックスで色分けします / Colors connected regions with random, positional, or index-based schemes.
-- AOD_SingularValueDecompose
-  - レイヤーに2D特異値分解を適用してLow-rank近似を再構成します / Performs 2D singular value decomposition and low-rank approximation on RGBA channels.
-- AOD_TextureStroke
-  - マスクとシェイプのパスからテクスチャ付きストロークを生成します / Generates textured strokes from mask and shape paths.
-- AOD_VoronoiGenerate
-  - ボロノイテクスチャマップを生成します / Generates Voronoi texture maps.
+[![All Effects / 全エフェクト一覧](docs/catalog/assets/overview/all-effects.png)](docs/catalog/README.md)
 
-## 2. Issue / バグ報告
+- [Catalog Index / カタログ索引](docs/catalog/README.md)
+- [P: Photo / 一般写真・連続階調画像](docs/catalog/photo.md)
+- [A: Anime / アニメ素材](docs/catalog/anime.md)
+- [D: Data & Map / データ・マップ画像](docs/catalog/map-data.md)
+- [G: Generator / 生成用キャンバス](docs/catalog/generator.md)
+- [Releases / ダウンロード](https://github.com/Aodaruma/aod-AE-plugin/releases)
+
+## 1. Issue / バグ報告
 
 もしバグを見つけた場合は、[Issues](https://github.com/Aodaruma/aod-AE-plugin/issues) ページで報告してください。
 
 If you find a bug, please report it on the [Issues](https://github.com/Aodaruma/aod-AE-plugin/issues).
 
-## 3. Support / 支援
+## 2. Support / 支援
 
 > [!NOTE]
 > もしこのプロジェクトが役に立ったら、GitHub Sponsors での支援をご検討ください。  
@@ -88,15 +41,22 @@ If you find a bug, please report it on the [Issues](https://github.com/Aodaruma/
 
 https://github.com/sponsors/Aodaruma
 
-## 4. License
+## 3. License
 
-ライセンスはMPL-2.0です。`LICENSE` ファイルを参照してください。
+基本ライセンスは [MPL-2.0](LICENSE) です。指定された雛形から開発する独自プラグインには
+[生成用の追加許諾](templates/plugin/TEMPLATE-LICENSE.txt) があり、ソース非公開での配布・販売が可能です。
+`utils`、既存プラグインの実装、テンプレート自体の再配布には通常の MPL が適用されます。
+具体例と配布時の条件は [ライセンスガイド](LICENSING.md) を参照してください。
 
-Licensed under the MPL-2.0. See `LICENSE`.
+Licensed under [MPL-2.0](LICENSE), with a
+[Template Output Permission](templates/plugin/TEMPLATE-LICENSE.txt) for designated scaffold material.
+Independent plugins may keep their source private and distribute or sell binaries.
+Shared utilities, existing effect implementations and template redistribution remain subject to the ordinary MPL.
+See [LICENSING.md](LICENSING.md) for scope, source availability and notice requirements.
 
 ---
 
-## 5. For Developers / 開発者向け情報
+## 4. For Developers / 開発者向け情報
 
 > [!NOTE]
 > 以下は開発者向け情報です。利用のみの場合は上部のReleasesを参照してください（英語のみ）。
@@ -147,11 +107,17 @@ just -f plugins/color-ajust/Justfile build
 The repo includes a `cargo-generate` template:
 
 ```sh
+# For an MPL-licensed contribution to this repository:
 cargo new-plugin
 
-# or manually:
-cargo generate --path templates/plugin --destination plugins
+# For an independent plugin (source may remain private):
+cargo generate --path templates/plugin --destination plugins --define repository_plugin=false
 ```
+
+Both modes include `TEMPLATE-LICENSE.txt`. Independent plugins use configurable
+author/category/support information; review the generated README and
+[licensing guide](LICENSING.md) before distribution. The template currently
+builds within this workspace, including when using a private local copy.
 
 ### Repository layout
 
@@ -163,3 +129,6 @@ cargo generate --path templates/plugin --destination plugins
 ### Contribution
 
 Issues and pull requests are welcome. Please keep `cargo fmt` and `cargo clippy` clean when possible.
+See the [development guide (Japanese)](docs/development.md) for generation, PowerShell build commands, and dynamic UI rules.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the MPL contribution terms and the
+additional permission required for contributions to the designated scaffold files.

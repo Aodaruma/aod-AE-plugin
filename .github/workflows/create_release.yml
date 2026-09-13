@@ -45,6 +45,10 @@ jobs:
       - name: Install just
         uses: taiki-e/install-action@just
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
@@ -91,6 +95,7 @@ jobs:
           fi
 
           cp -R "${plugins[@]}" dist/macos/
+          python scripts/package_licenses.py dist/macos
           ditto -c -k --sequesterRsrc --keepParent dist/macos "${ZIP_NAME}"
           ls -la "${ZIP_NAME}"
 
@@ -117,6 +122,8 @@ jobs:
           }
 
           Copy-Item -Force $plugins.FullName dist\windows\
+          python scripts/package_licenses.py dist/windows
+          if ($LASTEXITCODE -ne 0) { throw "License packaging failed" }
           if (Test-Path $zipName) { Remove-Item -Force $zipName }
           Compress-Archive -Path dist\windows\* -DestinationPath $zipName -Force
           Get-Item $zipName | Format-List

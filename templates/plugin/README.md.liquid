@@ -1,3 +1,4 @@
+<!-- Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt. -->
 # {{ project-name }} ( AOD_{{ crate_name | pascal_case }} )
 
 {{ description }}
@@ -7,3 +8,38 @@ This is the After Effects plugin **AOD_{{ crate_name | pascal_case }}**, which p
 ## Building the Plugin
 
 See the [main README](../../README.md) for instructions on how to build the plugin.
+
+## Licensing
+
+{% if repository_plugin -%}
+This plugin is contributed under MPL-2.0. Its package inherits the workspace
+license. The template-derived material also carries the additional permission
+in [TEMPLATE-LICENSE.txt](TEMPLATE-LICENSE.txt); that permission does not extend
+to the plugin's separately contributed effect implementation.
+{% else -%}
+You may keep this independent plugin's source private and distribute or sell
+its binaries under the [Template Output Permission](TEMPLATE-LICENSE.txt),
+including after editing the same files as the scaffold. Include that complete
+file with every distribution containing template material.
+
+The initial Cargo `license-file` describes the scaffold. Choose the terms for
+your own code and update `license` or `license-file` accordingly, while keeping
+`TEMPLATE-LICENSE.txt`. Your additions need not be MPL-licensed. Publishing to
+a package registry is disabled initially (`publish = false`).
+
+Before release, replace any placeholder author/support URL/bundle identifier
+and choose your own effect name as appropriate. The `AOD_` prefix is not a
+license requirement. The template still depends on the parent workspace's
+libraries and build tools; adapting those references is required if you move
+it into a standalone workspace.
+{% endif %}
+
+`utils` and code copied from existing repository plugins remain subject to the
+ordinary MPL. When distributing binaries containing such code, make its
+corresponding source available and tell recipients how to obtain it, including
+any changes to covered files. Third-party dependencies retain their own terms
+and notice requirements. Moving excluded code into a generated file does not
+give it the template permission.
+
+See the [licensing guide](../../LICENSING.md) and
+[contribution terms](../../CONTRIBUTING.md) when working in the original workspace.

@@ -1,3 +1,4 @@
+// Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
 use after_effects as ae;
 use wgpu::*;
 
@@ -22,7 +23,7 @@ impl WgpuContext {
             power_preference,
             ..Default::default()
         }))
-        .ok_or(ae::Error::BadCallbackParameter)?;
+        .map_err(|_| ae::Error::BadCallbackParameter)?;
 
         let (device, queue) = pollster::block_on(adapter.request_device(&DeviceDescriptor {
             label: None,

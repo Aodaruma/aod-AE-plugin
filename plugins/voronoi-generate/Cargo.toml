@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "voronoi_generate"
 description = "Generates Voronoi texture maps"
 version = "0.1.0"

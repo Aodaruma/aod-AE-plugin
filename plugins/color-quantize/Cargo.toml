@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "color_quantize"
 description = "Reduces image colors with k-means clustering."
 version = "0.1.0"

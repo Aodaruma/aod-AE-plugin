@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "singular_value_decompose"
 description = "Performs 2D singular value decomposition and low-rank approximation on RGBA channels."
 version = "0.1.0"

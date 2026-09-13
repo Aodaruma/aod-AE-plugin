@@ -30,7 +30,7 @@ fn main() {
         Stage::Release
     };
     */
-    let stage = Stage::Develop; 
+    let stage = Stage::Develop;
 
     // --------------------------------------------------
     // Build the plugin with PiPL
@@ -65,7 +65,7 @@ fn main() {
             | OutFlags::WideTimeInput
             ,
         ),
-        Property::AE_Effect_Global_OutFlags_2( 
+        Property::AE_Effect_Global_OutFlags_2(
             // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags2.html
             OutFlags2::FloatColorAware
             // | OutFlags2::SupportsGetFlattenedSequenceData // error occured in pipl == v0.1.1, so temporarily commented out

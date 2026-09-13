@@ -5,6 +5,8 @@ new-plugin = [
     "templates/plugin",
     "--destination",
     "plugins",
+    "--define",
+    "repository_plugin=true",
 ]
 # workspace の members を触られたくないならこれも足す（必要なら）
-# new-plugin = ["generate", "--path", "templates/plugin", "--destination", "plugins", "--no-workspace"]
+# Add "--no-workspace" to the alias above to skip workspace member updates.

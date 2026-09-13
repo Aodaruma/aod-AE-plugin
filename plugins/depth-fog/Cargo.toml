@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "depth_fog"
 description = "Converts monochrome depth maps into realistic fog falloff maps."
 version = "0.1.0"

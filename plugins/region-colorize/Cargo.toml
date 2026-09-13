@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "region_colorize"
 description = "Colors connected regions with random, positional, or index-based schemes."
 version = "0.1.0"

@@ -3,6 +3,7 @@ name = "texture_stroke"
 description = "Generates textured strokes from mask and shape paths."
 version = "0.3.0"
 edition = "2024"
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib"]

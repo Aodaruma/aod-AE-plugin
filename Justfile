@@ -24,13 +24,18 @@ release:
 
 [windows]
 release-ci:
-	$ErrorActionPreference = "Stop"
-	cargo build --workspace --release
-	$root = "{{justfile_directory()}}"
-	$justfiles = Get-ChildItem -Path (Join-Path $root "plugins") -Filter Justfile -Recurse
-	$env:NO_CARGO_BUILD = "1"
+	$ErrorActionPreference = "Stop"; \
+	cargo build --workspace --release; \
+	if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; \
+	$root = "{{justfile_directory()}}"; \
+	$justfiles = Get-ChildItem -Path (Join-Path $root "plugins") -Filter Justfile -Recurse; \
+	if (-not $justfiles) { throw "No plugin Justfiles found under $root\plugins" }; \
+	$env:NO_CARGO_BUILD = "1"; \
 	try { \
-		$justfiles | ForEach-Object { just -f $_.FullName release } \
+		$justfiles | ForEach-Object { \
+			just -f $_.FullName release; \
+			if ($LASTEXITCODE -ne 0) { throw "Plugin release failed: $($_.FullName)" } \
+		} \
 	} finally { \
 		Remove-Item Env:NO_CARGO_BUILD -ErrorAction SilentlyContinue \
 	}

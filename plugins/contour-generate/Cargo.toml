@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "contour_generate"
 description = "A plugin for extracting contour lines from a layer using the Canny method."
 version = "0.1.0"

@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "gabor_generate"
 description = "Generates Blender-style Gabor texture maps."
 version = "0.1.0"

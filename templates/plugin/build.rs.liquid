@@ -1,3 +1,4 @@
+// Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
 use chrono::Datelike;
 use pipl::*;
 
@@ -37,7 +38,7 @@ fn main() {
     pipl::plugin_build(vec![
         Property::Kind(PIPLType::AEEffect),
         Property::Name("AOD_{{ crate_name | pascal_case }}"),
-        Property::Category("Aodaruma"),
+        Property::Category("{% if repository_plugin %}Aodaruma{% else %}{{ plugin_category }}{% endif %}"),
 
         #[cfg(target_os = "windows")]
         Property::CodeWin64X86("EffectMain"),
@@ -84,6 +85,6 @@ fn main() {
         ),
         Property::AE_Effect_Match_Name("{{ crate_name | pascal_case }}"),
         Property::AE_Reserved_Info(8),
-        Property::AE_Effect_Support_URL("https://github.com/Aodaruma/aodaruma-ae-plugin"),
+        Property::AE_Effect_Support_URL("{% if repository_plugin %}https://github.com/Aodaruma/aod-AE-plugin{% else %}{{ plugin_support_url }}{% endif %}"),
     ])
 }

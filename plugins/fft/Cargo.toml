@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "fft"
 description = "Performs 2D FFT on RGBA channels and outputs real or imaginary spectra."
 version = "0.1.0"

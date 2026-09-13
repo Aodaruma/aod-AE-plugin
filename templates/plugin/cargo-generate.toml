@@ -1,4 +1,5 @@
 [placeholders]
+repository_plugin = { prompt = "Contribute this plugin to aod-AE-plugin under MPL-2.0?", type = "bool", default = false }
 description = { prompt = "Short description of the plugin", type = "string" }
 features = { prompt = "Select features", type = "array", default = [], choices = [
     "imageproc",
@@ -13,6 +14,11 @@ with_smartrender = { prompt = "Enable SmartRender support?", type = "bool", defa
 # with_gpuRenderF32 = { prompt = "Enable GpuRenderF32 support?", type = "bool", default = false }
 [conditional.'with_smartrender == false'.placeholders]
 with_floatColor = { prompt = "Enable FloatColorAware?", type = "bool", default = true }
+
+[conditional.'repository_plugin == false'.placeholders]
+plugin_author = { prompt = "Plugin author", type = "string", default = "Plugin developer", regex = '^[^"\\\x00-\x1F]+$' }
+plugin_category = { prompt = "Effect category", type = "string", default = "Custom", regex = '^[^"\\\x00-\x1F]+$' }
+plugin_support_url = { prompt = "Plugin support URL", type = "string", default = "https://example.com", regex = '^https?://[^"\\\s]+$' }
 
 [hooks]
 pre = ["pre-script.rhai"]
