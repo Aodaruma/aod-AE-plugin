@@ -70,7 +70,7 @@ template.
 - AOD_SingularValueDecompose
   - レイヤーに2D特異値分解を適用してLow-rank近似を再構成します / Performs 2D singular value decomposition and low-rank approximation on RGBA channels.
 - AOD_TextureStroke
-  - レイヤーのマスク輪郭からテクスチャ付きストロークを生成します / Generates textured strokes from layer mask contours.
+  - マスクとシェイプのパスからテクスチャ付きストロークを生成します / Generates textured strokes from mask and shape paths.
 - AOD_VoronoiGenerate
   - ボロノイテクスチャマップを生成します / Generates Voronoi texture maps.
 

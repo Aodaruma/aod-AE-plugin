@@ -9,11 +9,18 @@ use std::io::Write;
 use ae::pf::*;
 use utils::ToPixel;
 
-const PLUGIN_DESCRIPTION: &str = "Generates textured strokes from layer mask contours.";
+mod shapes;
+#[cfg(test)]
+mod tests;
+
+const PLUGIN_DESCRIPTION: &str = "Generates textured strokes from mask and shape paths.";
 const MAX_TIME_SAMPLES: usize = 16;
 const MAX_BRUSH_STAMPS: usize = 100_000;
 const ALPHA_EPSILON: f32 = 1.0e-6;
 
+// Parameter disk IDs are hashes of these variant names; retain existing names
+// when moving controls. Retired names (StrokeSide, FeatherInfluence, SideColor*)
+// must not be reused for a different setting.
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 enum Params {
     TextureLayer,
@@ -22,12 +29,10 @@ enum Params {
     MaskPath,
     PathGroupEnd,
     OutputMode,
-    StrokeSide,
     StrokeWidth,
     TextureOpacity,
     StrokeBlendMode,
     MaskGroupStart,
-    FeatherInfluence,
     StrokeWidthSource,
     FeatherWidthScale,
     FeatherDebugLogging,
@@ -40,10 +45,7 @@ enum Params {
     TimeSeed,
     TimeGroupEnd,
     BrushGroupStart,
-    BrushFallbackGroupStart,
-    FallbackBrushShape,
-    FallbackBrushSoftness,
-    BrushFallbackGroupEnd,
+    StampOrder,
     BrushSizeGroupStart,
     BrushSizeMin,
     BrushSizeMax,
@@ -59,13 +61,6 @@ enum Params {
     SpacingNoiseScale,
     SpacingSeed,
     BrushSpacingGroupEnd,
-    BrushOpacityGroupStart,
-    BrushOpacityMin,
-    BrushOpacityMax,
-    BrushOpacityRandomness,
-    BrushOpacityNoiseScale,
-    BrushOpacitySeed,
-    BrushOpacityGroupEnd,
     BrushRotationGroupStart,
     RotateWithStroke,
     DirectionOffset,
@@ -76,34 +71,39 @@ enum Params {
     RotationSeed,
     ReverseDirection,
     BrushRotationGroupEnd,
+    BrushOpacityGroupStart,
+    BrushOpacityMin,
+    BrushOpacityMax,
+    BrushOpacityRandomness,
+    BrushOpacityNoiseScale,
+    BrushOpacitySeed,
+    BrushOpacityGroupEnd,
+    BrushFallbackGroupStart,
+    FallbackBrushShape,
+    FallbackBrushSoftness,
+    BrushFallbackGroupEnd,
     BrushGroupEnd,
-    SideColorGroupStart,
-    SideColorMode,
-    SideColorTarget,
-    SideColorA,
-    SideColorB,
-    SideColorOpacity,
-    SideColorBlendMode,
-    SideColorGroupEnd,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum OutputMode {
-    Composite,
+    CompositeFront,
     StrokeOnly,
+    CompositeBehind,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum StrokeSide {
-    Both,
-    LeftOutside,
-    RightInside,
+enum StampOrder {
+    StartToEnd,
+    EndToStart,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PathSource {
     AllPaths,
     SelectedPath,
+    Auto,
+    ShapePaths,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -128,13 +128,6 @@ enum TextureTimeMode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SideColorMode {
-    None,
-    Solid,
-    Gradient,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
 enum BlendMode {
     Normal,
     Multiply,
@@ -148,9 +141,8 @@ enum BlendMode {
 struct Settings {
     path_source: PathSource,
     output_mode: OutputMode,
-    stroke_side: StrokeSide,
+    stamp_order: StampOrder,
     stroke_width: f32,
-    feather_influence: f32,
     stroke_width_source: StrokeWidthSource,
     feather_width_scale: f32,
     feather_debug_logging: bool,
@@ -187,12 +179,6 @@ struct Settings {
     reverse_direction: bool,
     texture_opacity: f32,
     stroke_blend_mode: BlendMode,
-    side_color_mode: SideColorMode,
-    side_color_target: StrokeSide,
-    side_color_a: PixelF32,
-    side_color_b: PixelF32,
-    side_color_opacity: f32,
-    side_color_blend_mode: BlendMode,
 }
 
 struct TextureFrame {
@@ -208,12 +194,11 @@ struct BrushTexture {
 
 #[derive(Clone, Copy)]
 struct PathPoint {
+    path_index: usize,
     x: f32,
     y: f32,
     tangent_x: f32,
     tangent_y: f32,
-    normal_x: f32,
-    normal_y: f32,
     along: f32,
     stroke_width: f32,
 }
@@ -240,6 +225,7 @@ struct PathFeatherProfile {
 struct FeatherTimes {
     comp: ae::Time,
     layer: ae::Time,
+    in_data: InData,
 }
 
 #[derive(Clone)]
@@ -255,15 +241,27 @@ struct PathVertex {
 }
 
 struct BrushStamp {
+    path_index: usize,
     x: f32,
     y: f32,
-    normal_x: f32,
-    normal_y: f32,
     along: f32,
     stamp_index: u32,
     size: f32,
     opacity: f32,
     rotation: f32,
+}
+
+struct PreparedStroke {
+    settings: Settings,
+    stamps: Vec<BrushStamp>,
+}
+
+#[derive(Clone, Copy)]
+struct Canvas {
+    width: usize,
+    height: usize,
+    origin: [f32; 2],
+    scale: [f32; 2],
 }
 
 #[derive(Default)]
@@ -329,15 +327,21 @@ impl AdobePluginGlobal for Plugin {
         params.add_group(
             Params::PathGroupStart,
             Params::PathGroupEnd,
-            "Mask Path",
+            "Path",
             false,
             |params| {
                 params.add_with_flags(
                     Params::PathSource,
                     "Path Source",
                     PopupDef::setup(|d| {
-                        d.set_options(&["All Paths", "Selected Path"]);
-                        d.set_default(1);
+                        // Keep the first two values compatible with saved projects.
+                        d.set_options(&[
+                            "All Mask Paths",
+                            "Selected Mask Path",
+                            "Auto (Shape / Mask)",
+                            "Shape Paths",
+                        ]);
+                        d.set_default(3);
                     }),
                     supervise_flags(),
                     ae::ParamUIFlags::empty(),
@@ -359,18 +363,8 @@ impl AdobePluginGlobal for Plugin {
             Params::OutputMode,
             "Output",
             PopupDef::setup(|d| {
-                d.set_options(&["Composite", "Stroke Only"]);
-                d.set_default(1);
-            }),
-            supervise_flags(),
-            ae::ParamUIFlags::empty(),
-        )?;
-
-        params.add_with_flags(
-            Params::StrokeSide,
-            "Stroke Side",
-            PopupDef::setup(|d| {
-                d.set_options(&["Both", "Left / Outside", "Right / Inside"]);
+                // Preserve saved values 1 (front composite) and 2 (stroke only).
+                d.set_options(&["Composite (Front)", "Stroke Only", "Composite (Behind)"]);
                 d.set_default(1);
             }),
             supervise_flags(),
@@ -392,7 +386,7 @@ impl AdobePluginGlobal for Plugin {
 
         params.add(
             Params::TextureOpacity,
-            "Texture Opacity (%)",
+            "Stroke Opacity (%)",
             FloatSliderDef::setup(|d| {
                 d.set_valid_min(0.0);
                 d.set_valid_max(100.0);
@@ -422,22 +416,9 @@ impl AdobePluginGlobal for Plugin {
         params.add_group(
             Params::MaskGroupStart,
             Params::MaskGroupEnd,
-            "Stroke Edge",
+            "Mask Feather",
             false,
             |params| {
-                params.add(
-                    Params::FeatherInfluence,
-                    "Edge Softness (%)",
-                    FloatSliderDef::setup(|d| {
-                        d.set_valid_min(0.0);
-                        d.set_valid_max(100.0);
-                        d.set_slider_min(0.0);
-                        d.set_slider_max(100.0);
-                        d.set_default(60.0);
-                        d.set_precision(1);
-                    }),
-                )?;
-
                 params.add_with_flags(
                     Params::StrokeWidthSource,
                     "Stroke Width Source",
@@ -558,36 +539,13 @@ impl AdobePluginGlobal for Plugin {
             "Brush Stamp",
             false,
             |params| {
-                params.add_group(
-                    Params::BrushFallbackGroupStart,
-                    Params::BrushFallbackGroupEnd,
-                    "Fallback Brush",
-                    true,
-                    |params| {
-                        params.add(
-                            Params::FallbackBrushShape,
-                            "Fallback Brush Shape",
-                            PopupDef::setup(|d| {
-                                d.set_options(&["Circle", "Square"]);
-                                d.set_default(1);
-                            }),
-                        )?;
-
-                        params.add(
-                            Params::FallbackBrushSoftness,
-                            "Fallback Brush Softness (%)",
-                            FloatSliderDef::setup(|d| {
-                                d.set_valid_min(0.0);
-                                d.set_valid_max(100.0);
-                                d.set_slider_min(0.0);
-                                d.set_slider_max(100.0);
-                                d.set_default(35.0);
-                                d.set_precision(1);
-                            }),
-                        )?;
-
-                        Ok(())
-                    },
+                params.add(
+                    Params::StampOrder,
+                    "Stamp Order",
+                    PopupDef::setup(|d| {
+                        d.set_options(&["Start to End", "End to Start"]);
+                        d.set_default(1);
+                    }),
                 )?;
 
                 params.add_group(
@@ -699,38 +657,6 @@ impl AdobePluginGlobal for Plugin {
                 )?;
 
                 params.add_group(
-                    Params::BrushOpacityGroupStart,
-                    Params::BrushOpacityGroupEnd,
-                    "Opacity",
-                    true,
-                    |params| {
-                        params.add(
-                            Params::BrushOpacityMin,
-                            "Opacity Min (%)",
-                            percent_slider(100.0),
-                        )?;
-                        params.add(
-                            Params::BrushOpacityMax,
-                            "Opacity Max (%)",
-                            percent_slider(100.0),
-                        )?;
-                        params.add(
-                            Params::BrushOpacityRandomness,
-                            "Opacity Randomness (%)",
-                            percent_slider(0.0),
-                        )?;
-                        params.add(
-                            Params::BrushOpacityNoiseScale,
-                            "Opacity Noise Scale (px)",
-                            noise_scale_slider(),
-                        )?;
-                        params.add(Params::BrushOpacitySeed, "Opacity Seed", seed_slider(37))?;
-
-                        Ok(())
-                    },
-                )?;
-
-                params.add_group(
                     Params::BrushRotationGroupStart,
                     Params::BrushRotationGroupEnd,
                     "Rotation",
@@ -811,89 +737,68 @@ impl AdobePluginGlobal for Plugin {
                     },
                 )?;
 
-                Ok(())
-            },
-        )?;
+                params.add_group(
+                    Params::BrushOpacityGroupStart,
+                    Params::BrushOpacityGroupEnd,
+                    "Opacity",
+                    true,
+                    |params| {
+                        params.add(
+                            Params::BrushOpacityMin,
+                            "Opacity Min (%)",
+                            percent_slider(100.0),
+                        )?;
+                        params.add(
+                            Params::BrushOpacityMax,
+                            "Opacity Max (%)",
+                            percent_slider(100.0),
+                        )?;
+                        params.add(
+                            Params::BrushOpacityRandomness,
+                            "Opacity Randomness (%)",
+                            percent_slider(0.0),
+                        )?;
+                        params.add(
+                            Params::BrushOpacityNoiseScale,
+                            "Opacity Noise Scale (px)",
+                            noise_scale_slider(),
+                        )?;
+                        params.add(Params::BrushOpacitySeed, "Opacity Seed", seed_slider(37))?;
 
-        params.add_group(
-            Params::SideColorGroupStart,
-            Params::SideColorGroupEnd,
-            "Side Color",
-            false,
-            |params| {
-                params.add_with_flags(
-                    Params::SideColorMode,
-                    "Side Color",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["None", "Solid", "Gradient"]);
-                        d.set_default(1);
-                    }),
-                    supervise_flags(),
-                    ae::ParamUIFlags::empty(),
+                        Ok(())
+                    },
                 )?;
 
-                params.add(
-                    Params::SideColorTarget,
-                    "Side Color Target",
-                    PopupDef::setup(|d| {
-                        d.set_options(&["Both", "Left / Outside", "Right / Inside"]);
-                        d.set_default(1);
-                    }),
-                )?;
+                params.add_group(
+                    Params::BrushFallbackGroupStart,
+                    Params::BrushFallbackGroupEnd,
+                    "Fallback Brush",
+                    true,
+                    |params| {
+                        params.add(
+                            Params::FallbackBrushShape,
+                            "Fallback Brush Shape",
+                            PopupDef::setup(|d| {
+                                d.set_options(&["Circle", "Square"]);
+                                d.set_default(1);
+                            }),
+                        )?;
 
-                params.add(
-                    Params::SideColorA,
-                    "Side Color A",
-                    ColorDef::setup(|d| {
-                        d.set_default(Pixel8 {
-                            red: 255,
-                            green: 255,
-                            blue: 255,
-                            alpha: ae::MAX_CHANNEL8 as u8,
-                        });
-                    }),
-                )?;
+                        params.add(
+                            Params::FallbackBrushSoftness,
+                            "Fallback Brush Softness (%)",
+                            FloatSliderDef::setup(|d| {
+                                d.set_valid_min(0.0);
+                                d.set_valid_max(100.0);
+                                d.set_slider_min(0.0);
+                                d.set_slider_max(100.0);
+                                d.set_default(35.0);
+                                d.set_precision(1);
+                            }),
+                        )?;
 
-                params.add(
-                    Params::SideColorB,
-                    "Side Color B",
-                    ColorDef::setup(|d| {
-                        d.set_default(Pixel8 {
-                            red: 0,
-                            green: 0,
-                            blue: 0,
-                            alpha: ae::MAX_CHANNEL8 as u8,
-                        });
-                    }),
-                )?;
-
-                params.add(
-                    Params::SideColorOpacity,
-                    "Side Color Opacity (%)",
-                    FloatSliderDef::setup(|d| {
-                        d.set_valid_min(0.0);
-                        d.set_valid_max(100.0);
-                        d.set_slider_min(0.0);
-                        d.set_slider_max(100.0);
-                        d.set_default(100.0);
-                        d.set_precision(1);
-                    }),
-                )?;
-
-                params.add(
-                    Params::SideColorBlendMode,
-                    "Side Color Blend Mode",
-                    PopupDef::setup(|d| {
-                        d.set_options(&[
-                            "Normal",
-                            "Multiply",
-                            "Screen",
-                            "Add",
-                            "Overlay",
-                            "Difference",
-                        ]);
-                        d.set_default(1);
-                    }),
+                        Ok(())
+                    },
                 )?;
 
                 Ok(())
@@ -930,6 +835,7 @@ impl AdobePluginGlobal for Plugin {
                 out_data.set_out_flag2(OutFlags2::FloatColorAware, true);
                 out_data.set_out_flag2(OutFlags2::AutomaticWideTimeInput, true);
                 out_data.set_out_flag2(OutFlags2::DependsOnUnreferencedMasks, true);
+                out_data.set_out_flag2(OutFlags2::RevealsZeroAlpha, true);
                 if let Ok(suite) = ae::aegp::suites::Utility::new()
                     && let Ok(plugin_id) = suite.register_with_aegp("AOD_TextureStroke")
                 {
@@ -940,35 +846,49 @@ impl AdobePluginGlobal for Plugin {
                 in_layer,
                 out_layer,
             } => {
-                self.do_render(in_data, in_layer, out_layer, params)?;
+                self.do_render(in_data, Some(in_layer), out_layer, params, None)?;
             }
             ae::Command::SmartPreRender { mut extra } => {
                 let req = extra.output_request();
 
-                if let Ok(in_result) = extra.callbacks().checkout_layer(
+                let in_result = extra.callbacks().checkout_layer(
                     0,
                     0,
                     &req,
                     in_data.current_time(),
                     in_data.time_step(),
                     in_data.time_scale(),
-                ) {
-                    let _ = extra.union_result_rect(in_result.result_rect.into());
-                    let _ = extra.union_max_result_rect(in_result.max_result_rect.into());
-                } else {
-                    return Err(Error::InterruptCancel);
+                )?;
+                let prepared = self.prepare_stroke(in_data, params)?;
+                let texture = build_texture_frames(params, in_data, &prepared.settings)?;
+                let scale = render_scale(in_data);
+                let stroke_rect = stroke_bounds(&prepared.stamps, &texture, scale);
+                let mut bounds = stroke_rect;
+                if prepared.settings.output_mode != OutputMode::StrokeOnly {
+                    bounds.union(&in_result.max_result_rect.into());
                 }
+                extra.set_max_result_rect(bounds);
+                extra.set_result_rect(intersect_rect(bounds, req.rect.into()));
+                extra.set_pre_render_data(prepared);
             }
             ae::Command::SmartRender { extra } => {
                 let cb = extra.callbacks();
                 let in_layer_opt = cb.checkout_layer_pixels(0)?;
                 let out_layer_opt = cb.checkout_output()?;
 
-                if let (Some(in_layer), Some(out_layer)) = (in_layer_opt, out_layer_opt) {
-                    self.do_render(in_data, in_layer, out_layer, params)?;
-                }
-
+                let result = if let Some(out_layer) = out_layer_opt {
+                    self.do_render(
+                        in_data,
+                        in_layer_opt,
+                        out_layer,
+                        params,
+                        extra.pre_render_data::<PreparedStroke>(),
+                    )
+                } else {
+                    Ok(())
+                };
                 cb.checkin_layer_pixels(0)?;
+                result?;
             }
             ae::Command::UserChangedParam { param_index } => {
                 let changed = params.type_at(param_index);
@@ -979,7 +899,6 @@ impl AdobePluginGlobal for Plugin {
                         | Params::TextureTimeMode
                         | Params::StrokeWidthSource
                         | Params::RotateWithStroke
-                        | Params::SideColorMode
                 ) {
                     out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
@@ -1004,19 +923,56 @@ impl Plugin {
             texture_time_mode_from_popup(params.get(Params::TextureTimeMode)?.as_popup()?.value());
         let path_source =
             path_source_from_popup(params.get(Params::PathSource)?.as_popup()?.value());
-        let side_color_mode =
-            side_color_mode_from_popup(params.get(Params::SideColorMode)?.as_popup()?.value());
         let stroke_width_source = stroke_width_source_from_popup(
             params.get(Params::StrokeWidthSource)?.as_popup()?.value(),
         );
         let rotate_with_stroke = params.get(Params::RotateWithStroke)?.as_checkbox()?.value();
-        let has_texture_layer = params
-            .get(Params::TextureLayer)?
-            .as_layer()?
-            .value()
-            .is_some();
+        // UpdateParamsUI has no rendered layer buffer. Read the selected layer
+        // ID, so a disabled/transparent/out-of-range texture still enables UI.
+        let has_texture_layer = if !in_data.is_premiere()
+            && let Some(plugin_id) = self.aegp_id
+        {
+            let index = params
+                .index(Params::TextureLayer)
+                .ok_or(Error::InvalidIndex)?;
+            let effect = in_data.effect().aegp_effect(plugin_id)?;
+            let stream = effect.new_stream_by_index(plugin_id, index as i32)?;
+            matches!(
+                stream.new_value(
+                    plugin_id,
+                    ae::aegp::TimeMode::LayerTime,
+                    ae::Time {
+                        value: in_data.current_time(),
+                        scale: in_data.time_scale(),
+                    },
+                    false,
+                )?,
+                ae::aegp::StreamValue::LayerId(id)
+                    if id != ae::sys::AEGP_LayerIDVal_NONE as ae::sys::AEGP_LayerIDVal
+            )
+        } else {
+            params
+                .get(Params::TextureLayer)?
+                .as_layer()?
+                .value()
+                .is_some()
+        };
 
-        let _ = in_data;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::MaskPath,
+            path_source == PathSource::SelectedPath,
+        )?;
+        self.set_param_visible(in_data, params, Params::FeatherDebugLogging, false)?;
+        self.set_param_visible(
+            in_data,
+            params,
+            Params::BrushFallbackGroupStart,
+            !has_texture_layer,
+        )?;
+        self.set_param_visible(in_data, params, Params::TimeGroupStart, true)?;
+        Self::set_param_enabled(params, Params::TextureTimeMode, has_texture_layer)?;
 
         Self::set_param_enabled(
             params,
@@ -1027,51 +983,97 @@ impl Plugin {
         Self::set_param_enabled(params, Params::FallbackBrushShape, !has_texture_layer)?;
         Self::set_param_enabled(params, Params::FallbackBrushSoftness, !has_texture_layer)?;
 
-        let feather_width_enabled = !matches!(stroke_width_source, StrokeWidthSource::StrokeWidth);
+        let shape_source = path_source == PathSource::ShapePaths
+            || (path_source == PathSource::Auto && shapes::is_shape_layer(in_data)?);
+        self.set_param_visible(in_data, params, Params::MaskGroupStart, !shape_source)?;
+        self.set_param_visible(in_data, params, Params::StrokeWidthSource, !shape_source)?;
+        let feather_width_enabled =
+            !shape_source && !matches!(stroke_width_source, StrokeWidthSource::StrokeWidth);
         Self::set_param_enabled(params, Params::FeatherWidthScale, feather_width_enabled)?;
 
         Self::set_param_enabled(
             params,
             Params::FixedFrame,
-            matches!(time_mode, TextureTimeMode::FixedFrame),
+            has_texture_layer && matches!(time_mode, TextureTimeMode::FixedFrame),
         )?;
         Self::set_param_enabled(
             params,
             Params::TimeRangeFrames,
-            matches!(
-                time_mode,
-                TextureTimeMode::AlongStroke | TextureTimeMode::RandomPerStamp
-            ),
+            has_texture_layer
+                && matches!(
+                    time_mode,
+                    TextureTimeMode::AlongStroke | TextureTimeMode::RandomPerStamp
+                ),
         )?;
         Self::set_param_enabled(
             params,
             Params::TimeSamples,
-            matches!(
-                time_mode,
-                TextureTimeMode::AlongStroke | TextureTimeMode::RandomPerStamp
-            ),
+            has_texture_layer
+                && matches!(
+                    time_mode,
+                    TextureTimeMode::AlongStroke | TextureTimeMode::RandomPerStamp
+                ),
         )?;
         Self::set_param_enabled(
             params,
             Params::TimeSeed,
-            matches!(time_mode, TextureTimeMode::RandomPerStamp),
+            has_texture_layer && matches!(time_mode, TextureTimeMode::RandomPerStamp),
         )?;
 
-        Self::set_param_enabled(params, Params::DirectionOffset, rotate_with_stroke)?;
         Self::set_param_enabled(params, Params::ReverseDirection, rotate_with_stroke)?;
 
-        let side_enabled = !matches!(side_color_mode, SideColorMode::None);
-        Self::set_param_enabled(params, Params::SideColorTarget, side_enabled)?;
-        Self::set_param_enabled(params, Params::SideColorA, side_enabled)?;
-        Self::set_param_enabled(
-            params,
-            Params::SideColorB,
-            matches!(side_color_mode, SideColorMode::Gradient),
-        )?;
-        Self::set_param_enabled(params, Params::SideColorOpacity, side_enabled)?;
-        Self::set_param_enabled(params, Params::SideColorBlendMode, side_enabled)?;
-
+        for (id, visible) in [
+            (Params::FeatherWidthScale, feather_width_enabled),
+            (Params::FixedFrame, time_mode == TextureTimeMode::FixedFrame),
+            (
+                Params::TimeRangeFrames,
+                matches!(
+                    time_mode,
+                    TextureTimeMode::AlongStroke | TextureTimeMode::RandomPerStamp
+                ),
+            ),
+            (
+                Params::TimeSamples,
+                matches!(
+                    time_mode,
+                    TextureTimeMode::AlongStroke | TextureTimeMode::RandomPerStamp
+                ),
+            ),
+            (
+                Params::TimeSeed,
+                time_mode == TextureTimeMode::RandomPerStamp,
+            ),
+        ] {
+            self.set_param_visible(in_data, params, id, visible)?;
+        }
         Ok(())
+    }
+
+    fn set_param_visible(
+        &self,
+        in_data: InData,
+        params: &mut Parameters<Params>,
+        id: Params,
+        visible: bool,
+    ) -> Result<(), Error> {
+        if !in_data.is_premiere()
+            && let Some(plugin_id) = self.aegp_id
+            && let Some(index) = params.index(id)
+        {
+            let effect = in_data.effect().aegp_effect(plugin_id)?;
+            let stream = effect.new_stream_by_index(plugin_id, index as i32)?;
+            let flags = shapes::dynamic_flags(in_data, &stream)?;
+            let hidden = flags & ae::sys::AEGP_DynStreamFlag_HIDDEN as u32 != 0;
+            if hidden == visible {
+                stream.set_dynamic_stream_flag(
+                    ae::aegp::DynamicStreamFlags::Hidden,
+                    false,
+                    !visible,
+                )?;
+            }
+            return Ok(());
+        }
+        Self::set_param_ui_flag(params, id, ae::ParamUIFlags::INVISIBLE, !visible)
     }
 
     fn set_param_enabled(
@@ -1103,36 +1105,85 @@ impl Plugin {
     fn do_render(
         &self,
         in_data: InData,
-        in_layer: Layer,
+        in_layer: Option<Layer>,
         mut out_layer: Layer,
         params: &mut Parameters<Params>,
+        prepared: Option<&PreparedStroke>,
     ) -> Result<(), Error> {
-        let width = in_layer.width();
-        let height = in_layer.height();
+        let width = out_layer.width();
+        let height = out_layer.height();
         if width == 0 || height == 0 {
             return Ok(());
         }
 
-        let settings = read_settings(params)?;
-        let src = read_layer_rgba(&in_layer);
-        if settings.stroke_width <= 0.0 {
-            return write_layer_rgba(&mut out_layer, &src);
-        }
-
-        let paths = collect_path_selections(params, in_data, settings.path_source)?;
-        if paths.is_empty() {
-            return write_layer_rgba(&mut out_layer, &src);
-        }
-
-        let texture = build_texture_frames(params, in_data, &settings)?;
-        let brush_stamps = build_brush_stamps(in_data, self.aegp_id, &paths, settings)?;
-        if brush_stamps.is_empty() {
-            return write_layer_rgba(&mut out_layer, &src);
-        }
-
-        let out = render_texture_stroke(&src, &brush_stamps, width, height, &texture, settings);
-
+        let smart = prepared.is_some();
+        let owned;
+        let prepared = if let Some(prepared) = prepared {
+            prepared
+        } else {
+            owned = self.prepare_stroke(in_data, params)?;
+            &owned
+        };
+        let pre = in_data.pre_effect_source_origin();
+        let input_origin = in_layer
+            .as_ref()
+            .map(|layer| buffer_origin(layer.origin(), [-pre.h, -pre.v], smart))
+            .unwrap_or([0.0; 2]);
+        let shift = in_data.output_origin();
+        let origin = buffer_origin(
+            out_layer.origin(),
+            [
+                input_origin[0] as i32 - shift.h,
+                input_origin[1] as i32 - shift.v,
+            ],
+            smart,
+        );
+        let canvas = Canvas {
+            width,
+            height,
+            origin,
+            scale: render_scale(in_data),
+        };
+        let src = if let Some(layer) = in_layer.as_ref() {
+            align_source(
+                &read_layer_rgba(layer),
+                layer.width(),
+                layer.height(),
+                input_origin,
+                canvas,
+            )
+        } else {
+            vec![transparent(); width * height]
+        };
+        let texture = build_texture_frames(params, in_data, &prepared.settings)?;
+        let out =
+            render_texture_stroke(&src, &prepared.stamps, canvas, &texture, prepared.settings);
         write_layer_rgba(&mut out_layer, &out)
+    }
+
+    fn prepare_stroke(
+        &self,
+        in_data: InData,
+        params: &mut Parameters<Params>,
+    ) -> Result<PreparedStroke, Error> {
+        let settings = read_settings(params)?;
+        let shape_paths = if matches!(
+            settings.path_source,
+            PathSource::Auto | PathSource::ShapePaths
+        ) {
+            shapes::path_points(in_data, self.aegp_id, settings)?
+        } else {
+            None
+        };
+        let stamps = if let Some(points) = shape_paths {
+            stamps_from_points(&points, settings)
+        } else if settings.path_source == PathSource::ShapePaths {
+            Vec::new()
+        } else {
+            let paths = collect_path_selections(params, in_data, settings.path_source)?;
+            build_brush_stamps(in_data, self.aegp_id, &paths, settings)?
+        };
+        Ok(PreparedStroke { settings, stamps })
     }
 }
 
@@ -1140,14 +1191,8 @@ fn read_settings(params: &mut Parameters<Params>) -> Result<Settings, Error> {
     Ok(Settings {
         path_source: path_source_from_popup(params.get(Params::PathSource)?.as_popup()?.value()),
         output_mode: output_mode_from_popup(params.get(Params::OutputMode)?.as_popup()?.value()),
-        stroke_side: stroke_side_from_popup(params.get(Params::StrokeSide)?.as_popup()?.value()),
+        stamp_order: stamp_order_from_popup(params.get(Params::StampOrder)?.as_popup()?.value()),
         stroke_width: params.get(Params::StrokeWidth)?.as_float_slider()?.value() as f32,
-        feather_influence: ((params
-            .get(Params::FeatherInfluence)?
-            .as_float_slider()?
-            .value() as f32)
-            / 100.0)
-            .clamp(0.0, 1.0),
         stroke_width_source: stroke_width_source_from_popup(
             params.get(Params::StrokeWidthSource)?.as_popup()?.value(),
         ),
@@ -1237,31 +1282,6 @@ fn read_settings(params: &mut Parameters<Params>) -> Result<Settings, Error> {
         stroke_blend_mode: blend_mode_from_popup(
             params.get(Params::StrokeBlendMode)?.as_popup()?.value(),
         ),
-        side_color_mode: side_color_mode_from_popup(
-            params.get(Params::SideColorMode)?.as_popup()?.value(),
-        ),
-        side_color_target: stroke_side_from_popup(
-            params.get(Params::SideColorTarget)?.as_popup()?.value(),
-        ),
-        side_color_a: params
-            .get(Params::SideColorA)?
-            .as_color()?
-            .value()
-            .to_pixel32(),
-        side_color_b: params
-            .get(Params::SideColorB)?
-            .as_color()?
-            .value()
-            .to_pixel32(),
-        side_color_opacity: ((params
-            .get(Params::SideColorOpacity)?
-            .as_float_slider()?
-            .value() as f32)
-            / 100.0)
-            .clamp(0.0, 1.0),
-        side_color_blend_mode: blend_mode_from_popup(
-            params.get(Params::SideColorBlendMode)?.as_popup()?.value(),
-        ),
     })
 }
 
@@ -1350,7 +1370,7 @@ fn collect_path_selections(
                 }])
             }
         }
-        PathSource::AllPaths => {
+        PathSource::AllPaths | PathSource::Auto | PathSource::ShapePaths => {
             let effect = in_data.effect();
             let count = effect.num_paths()?.max(0);
             let mut paths = Vec::new();
@@ -1399,71 +1419,61 @@ fn build_brush_stamps(
         return Ok(Vec::new());
     }
 
+    Ok(stamps_from_points(&points, settings))
+}
+
+fn stamps_from_points(points: &[PathPoint], settings: Settings) -> Vec<BrushStamp> {
     let mut stamps = Vec::new();
-    let mut next_along = points[0].along;
-    let mut stamp_index = 0u32;
-    let mut point_index = 0usize;
-    let total_length = points.last().map(|p| p.along).unwrap_or(0.0).max(1.0);
+    // Restart spacing for each independent path. A long final gap in one path
+    // must never suppress the beginning (or entirety) of the next path.
+    for path in points.chunk_by(|a, b| a.path_index == b.path_index) {
+        let mut next_along = path[0].along;
+        let end = path.last().unwrap().along;
+        let mut index = 0;
+        while next_along <= end && stamps.len() < MAX_BRUSH_STAMPS {
+            while index + 1 < path.len() && path[index + 1].along < next_along {
+                index += 1;
+            }
+            let a = path[index];
+            let b = path.get(index + 1).copied().unwrap_or(a);
+            let t = if b.along > a.along {
+                (next_along - a.along) / (b.along - a.along)
+            } else {
+                0.0
+            };
+            let (tx, ty) = normalize2(
+                lerp(a.tangent_x, b.tangent_x, t),
+                lerp(a.tangent_y, b.tangent_y, t),
+            );
+            let point = PathPoint {
+                x: lerp(a.x, b.x, t),
+                y: lerp(a.y, b.y, t),
+                tangent_x: tx,
+                tangent_y: ty,
 
-    while point_index < points.len() && stamps.len() < MAX_BRUSH_STAMPS {
-        while point_index + 1 < points.len() && points[point_index].along < next_along {
-            point_index += 1;
-        }
-        let point = points[point_index];
-        let size = stamp_size(settings, point, stamp_index);
-        let opacity = stamp_opacity(settings, point.along, stamp_index);
-        let rotation = stamp_rotation(settings, point, stamp_index);
+                along: next_along,
+                stroke_width: lerp(a.stroke_width, b.stroke_width, t),
+                ..a
+            };
+            let stamp_index = stamps.len() as u32;
+            let size = stamp_size(settings, point, stamp_index);
+            if point.stroke_width > 0.0 {
+                stamps.push(BrushStamp {
+                    path_index: point.path_index,
+                    x: point.x,
+                    y: point.y,
 
-        stamps.push(BrushStamp {
-            x: point.x,
-            y: point.y,
-            normal_x: point.normal_x,
-            normal_y: point.normal_y,
-            along: point.along,
-            stamp_index,
-            size,
-            opacity,
-            rotation,
-        });
-
-        let spacing = stamp_spacing(settings, size, point.along, stamp_index);
-        if point_index + 1 >= points.len() {
-            break;
+                    along: point.along,
+                    stamp_index,
+                    size,
+                    opacity: stamp_opacity(settings, point.along, stamp_index),
+                    rotation: stamp_rotation(settings, point, stamp_index),
+                });
+            }
+            next_along += stamp_spacing(settings, size, point.along, stamp_index);
         }
-        next_along = (point.along + spacing).max(next_along + 0.25);
-        if next_along >= total_length {
-            break;
-        }
-        stamp_index = stamp_index.wrapping_add(1);
     }
-
-    if settings.feather_debug_logging {
-        let mut min_size = f32::MAX;
-        let mut max_size = 0.0f32;
-        let mut sum_size = 0.0f32;
-        for stamp in &stamps {
-            min_size = min_size.min(stamp.size);
-            max_size = max_size.max(stamp.size);
-            sum_size += stamp.size;
-        }
-        let avg_size = if stamps.is_empty() {
-            0.0
-        } else {
-            sum_size / stamps.len() as f32
-        };
-        debug_feather(
-            true,
-            &format!(
-                "Built {} brush stamps. size_min={}, size_avg={}, size_max={}",
-                stamps.len(),
-                min_size,
-                avg_size,
-                max_size
-            ),
-        );
-    }
-
-    Ok(stamps)
+    stamps
 }
 
 fn build_path_points(
@@ -1473,7 +1483,9 @@ fn build_path_points(
     settings: Settings,
 ) -> Result<Vec<PathPoint>, Error> {
     let effect = in_data.effect();
-    let sample_step = (settings.stroke_width * 0.125).clamp(1.0, 4.0) as f64;
+    let scale = render_scale(in_data);
+    let sample_step =
+        (settings.stroke_width * 0.125).clamp(1.0, 4.0) as f64 * scale[0].min(scale[1]) as f64;
     let mut points = Vec::new();
     let mut total_along = 0.0f32;
 
@@ -1497,6 +1509,7 @@ fn build_path_points(
             }
 
             let steps = (seg_len / sample_step).ceil().max(1.0) as usize;
+            let mut previous: Option<[f32; 2]> = None;
             for step in 0..=steps {
                 let length = (seg_len * step as f64 / steps as f64).min(seg_len);
                 let segment_s = if seg_len > f64::EPSILON {
@@ -1505,29 +1518,22 @@ fn build_path_points(
                     0.0
                 };
                 let (x, y, dx, dy) = prep.eval_deriv1(length)?;
-                let (mut tangent_x, mut tangent_y) = normalize2(dx as f32, dy as f32);
-                if settings.reverse_direction {
-                    tangent_x = -tangent_x;
-                    tangent_y = -tangent_y;
+                // PF paths are already downsampled by AE; AEGP shape paths are not.
+                let x = x as f32 / scale[0];
+                let y = y as f32 / scale[1];
+                if let Some(p) = previous {
+                    total_along += (x - p[0]).hypot(y - p[1]);
                 }
-                if settings.direction_offset.abs() > 1.0e-6 {
-                    let cos_a = settings.direction_offset.cos();
-                    let sin_a = settings.direction_offset.sin();
-                    let rx = tangent_x * cos_a - tangent_y * sin_a;
-                    let ry = tangent_x * sin_a + tangent_y * cos_a;
-                    (tangent_x, tangent_y) = normalize2(rx, ry);
-                }
-                let normal_x = -tangent_y;
-                let normal_y = tangent_x;
+                previous = Some([x, y]);
+                let (tangent_x, tangent_y) = normalize2(dx as f32 / scale[0], dy as f32 / scale[1]);
 
                 points.push(PathPoint {
-                    x: x as f32,
-                    y: y as f32,
+                    path_index: path_i,
+                    x,
+                    y,
                     tangent_x,
                     tangent_y,
-                    normal_x,
-                    normal_y,
-                    along: total_along + length as f32,
+                    along: total_along,
                     stroke_width: stroke_width_at(
                         settings,
                         feather_profiles.get(path_i),
@@ -1536,8 +1542,6 @@ fn build_path_points(
                     ),
                 });
             }
-
-            total_along += seg_len as f32;
         }
     }
 
@@ -1582,6 +1586,7 @@ fn build_path_feather_profiles(
     let times = FeatherTimes {
         comp: comp_time,
         layer: layer_time,
+        in_data,
     };
 
     debug_feather(
@@ -1824,20 +1829,16 @@ fn outline_for_stream(
     plugin_id: ae::aegp::PluginId,
     times: FeatherTimes,
     debug_logging: bool,
-) -> Option<ae::aegp::MaskOutline> {
+) -> Option<shapes::OwnedOutline> {
     for (label, mode, time) in [
         ("CompTime", ae::aegp::TimeMode::CompTime, times.comp),
         ("LayerTime", ae::aegp::TimeMode::LayerTime, times.layer),
     ] {
-        match stream.new_value(plugin_id, mode, time, false) {
-            Ok(ae::aegp::StreamValue::Mask(outline_handle)) => {
+        match shapes::read_outline(times.in_data, stream, plugin_id, mode, time) {
+            Ok(outline) => {
                 debug_feather(debug_logging, &format!("Outline stream {} read ok.", label));
-                return Some(outline_handle.into());
+                return Some(outline);
             }
-            Ok(_) => debug_feather(
-                debug_logging,
-                &format!("Outline stream {} returned non-mask value.", label),
-            ),
             Err(err) => debug_feather(
                 debug_logging,
                 &format!("Outline stream {} read failed: {:?}", label, err),
@@ -1862,9 +1863,10 @@ fn path_geometry_for_selection(in_data: InData, selection: PathSelection) -> Opt
     let mut vertices = Vec::with_capacity(segments as usize + 1);
     for point in 0..=segments {
         let vertex = path.vertex(point).ok()?;
+        let scale = render_scale(in_data);
         vertices.push(PathVertex {
-            x: vertex.x,
-            y: vertex.y,
+            x: vertex.x / scale[0] as f64,
+            y: vertex.y / scale[1] as f64,
         });
     }
     Some(PathGeometry {
@@ -1979,7 +1981,7 @@ fn stroke_width_at(
         }
     };
 
-    width.max(0.5)
+    width.max(0.0)
 }
 
 impl PathFeatherProfile {
@@ -2058,6 +2060,11 @@ fn stamp_opacity(settings: Settings, along: f32, stamp_index: u32) -> f32 {
 fn stamp_rotation(settings: Settings, point: PathPoint, stamp_index: u32) -> f32 {
     let base = if settings.rotate_with_stroke {
         point.tangent_y.atan2(point.tangent_x)
+            + if settings.reverse_direction {
+                std::f32::consts::PI
+            } else {
+                0.0
+            }
     } else {
         0.0
     } + settings.direction_offset;
@@ -2075,114 +2082,195 @@ fn stamp_rotation(settings: Settings, point: PathPoint, stamp_index: u32) -> f32
 fn render_texture_stroke(
     src: &[PixelF32],
     stamps: &[BrushStamp],
-    width: usize,
-    height: usize,
+    canvas: Canvas,
     texture: &BrushTexture,
     settings: Settings,
 ) -> Vec<PixelF32> {
+    let Canvas {
+        width,
+        height,
+        origin,
+        scale,
+    } = canvas;
     let mut out = match settings.output_mode {
-        OutputMode::Composite => src.to_vec(),
-        OutputMode::StrokeOnly => vec![transparent(); src.len()],
+        OutputMode::CompositeFront => src.to_vec(),
+        OutputMode::StrokeOnly | OutputMode::CompositeBehind => vec![transparent(); src.len()],
     };
+    if width == 0 || height == 0 {
+        return out;
+    }
 
     let total_length = stamps
         .last()
         .map(|stamp| stamp.along.max(1.0))
         .unwrap_or(1.0);
 
-    for stamp in stamps {
-        let frame_idx = texture_frame_index(
-            (stamp.along / total_length).clamp(0.0, 1.0),
-            stamp.stamp_index,
-            settings.time_seed,
-            settings.texture_time_mode,
-            texture.frames.len(),
-        );
-        let Some(frame) = texture
-            .frames
-            .get(frame_idx)
-            .or_else(|| texture.frames.first())
-        else {
-            continue;
-        };
+    // Reverse only within each path: keep path stacking and every stamp's
+    // position, texture frame, noise, and rotation tied to the same path sample.
+    for path in stamps.chunk_by(|a, b| a.path_index == b.path_index) {
+        for i in 0..path.len() {
+            let stamp = &path[match settings.stamp_order {
+                StampOrder::StartToEnd => i,
+                StampOrder::EndToStart => path.len() - 1 - i,
+            }];
+            let frame_idx = texture_frame_index(
+                (stamp.along / total_length).clamp(0.0, 1.0),
+                stamp.stamp_index,
+                settings.time_seed,
+                settings.texture_time_mode,
+                texture.frames.len(),
+            );
+            let Some(frame) = texture
+                .frames
+                .get(frame_idx)
+                .or_else(|| texture.frames.first())
+            else {
+                continue;
+            };
 
-        let aspect = if texture.has_texture_layer && frame.height > 0 {
-            frame.width.max(1) as f32 / frame.height.max(1) as f32
-        } else {
-            1.0
-        };
-        let half_h = (stamp.size * 0.5).max(0.5);
-        let half_w = if texture.has_texture_layer {
-            (stamp.size * aspect * 0.5).max(0.5)
-        } else {
-            half_h
-        };
-        let radius = (half_w * half_w + half_h * half_h).sqrt() + 1.0;
-        let min_x = (stamp.x - radius).floor().max(0.0) as usize;
-        let max_x = (stamp.x + radius)
-            .ceil()
-            .min(width.saturating_sub(1) as f32) as usize;
-        let min_y = (stamp.y - radius).floor().max(0.0) as usize;
-        let max_y = (stamp.y + radius)
-            .ceil()
-            .min(height.saturating_sub(1) as f32) as usize;
-        let cos_r = stamp.rotation.cos();
-        let sin_r = stamp.rotation.sin();
+            let aspect = if texture.has_texture_layer && frame.height > 0 {
+                frame.width.max(1) as f32 / frame.height.max(1) as f32
+            } else {
+                1.0
+            };
+            let half_h = (stamp.size * 0.5).max(0.5);
+            let half_w = if texture.has_texture_layer {
+                (stamp.size * aspect * 0.5).max(0.5)
+            } else {
+                half_h
+            };
+            let radius = (half_w * half_w + half_h * half_h).sqrt() + 1.0;
+            let min_x = ((stamp.x - radius) * scale[0] - origin[0]).floor().max(0.0) as usize;
+            let max_x = ((stamp.x + radius) * scale[0] - origin[0])
+                .ceil()
+                .min(width.saturating_sub(1) as f32) as usize;
+            let min_y = ((stamp.y - radius) * scale[1] - origin[1]).floor().max(0.0) as usize;
+            let max_y = ((stamp.y + radius) * scale[1] - origin[1])
+                .ceil()
+                .min(height.saturating_sub(1) as f32) as usize;
+            let cos_r = stamp.rotation.cos();
+            let sin_r = stamp.rotation.sin();
 
-        for y in min_y..=max_y {
-            for x in min_x..=max_x {
-                let idx = y * width + x;
-                let px = x as f32 + 0.5;
-                let py = y as f32 + 0.5;
-                let dx = px - stamp.x;
-                let dy = py - stamp.y;
-                let signed_distance = dx * stamp.normal_x + dy * stamp.normal_y;
-                let side_coverage = stroke_side_coverage(
-                    settings.stroke_side,
-                    signed_distance,
-                    stamp.size,
-                    settings,
-                );
-                if side_coverage <= 0.0 {
-                    continue;
+            for y in min_y..=max_y {
+                for x in min_x..=max_x {
+                    let idx = y * width + x;
+                    let px = (x as f32 + 0.5 + origin[0]) / scale[0];
+                    let py = (y as f32 + 0.5 + origin[1]) / scale[1];
+                    let dx = px - stamp.x;
+                    let dy = py - stamp.y;
+                    let local_x = dx * cos_r + dy * sin_r;
+                    let local_y = -dx * sin_r + dy * cos_r;
+                    if local_x.abs() > half_w || local_y.abs() > half_h {
+                        continue;
+                    }
+
+                    let coverage =
+                        brush_shape_coverage(local_x, local_y, half_w, half_h, texture, settings);
+                    if coverage <= 0.0 {
+                        continue;
+                    }
+
+                    let opacity = coverage * settings.texture_opacity * stamp.opacity;
+                    if opacity <= ALPHA_EPSILON {
+                        continue;
+                    }
+
+                    let mut stroke = sample_brush_texture(frame, local_x, local_y, half_w, half_h);
+                    stroke.alpha *= opacity;
+                    stroke.red *= opacity;
+                    stroke.green *= opacity;
+                    stroke.blue *= opacity;
+
+                    out[idx] = composite_pixel(out[idx], stroke, settings.stroke_blend_mode);
                 }
-
-                let local_x = dx * cos_r + dy * sin_r;
-                let local_y = -dx * sin_r + dy * cos_r;
-                if local_x.abs() > half_w || local_y.abs() > half_h {
-                    continue;
-                }
-
-                let coverage =
-                    brush_shape_coverage(local_x, local_y, half_w, half_h, texture, settings);
-                if coverage <= 0.0 {
-                    continue;
-                }
-
-                let opacity = coverage * side_coverage * settings.texture_opacity * stamp.opacity;
-                if opacity <= ALPHA_EPSILON {
-                    continue;
-                }
-
-                let mut stroke = sample_brush_texture(frame, local_x, local_y, half_w, half_h);
-                stroke.alpha *= opacity;
-                stroke.red *= opacity;
-                stroke.green *= opacity;
-                stroke.blue *= opacity;
-
-                let distance = signed_distance.abs();
-                stroke = apply_side_color(stroke, signed_distance, distance, settings);
-
-                let base = match settings.output_mode {
-                    OutputMode::Composite => out[idx],
-                    OutputMode::StrokeOnly => transparent(),
-                };
-                out[idx] = composite_pixel(base, stroke, settings.stroke_blend_mode);
             }
         }
     }
-
+    if settings.output_mode == OutputMode::CompositeBehind {
+        for (pixel, source) in out.iter_mut().zip(src) {
+            *pixel = composite_pixel(*pixel, *source, BlendMode::Normal);
+        }
+    }
     out
+}
+
+fn render_scale(in_data: InData) -> [f32; 2] {
+    [
+        f32::from(in_data.downsample_x()).max(1.0e-6),
+        f32::from(in_data.downsample_y()).max(1.0e-6),
+    ]
+}
+
+fn buffer_origin(native: ae::Point, fallback: [i32; 2], smart: bool) -> [f32; 2] {
+    if smart || native.h != 0 || native.v != 0 {
+        [native.h as f32, native.v as f32]
+    } else {
+        [fallback[0] as f32, fallback[1] as f32]
+    }
+}
+
+fn align_source(
+    src: &[PixelF32],
+    width: usize,
+    height: usize,
+    origin: [f32; 2],
+    canvas: Canvas,
+) -> Vec<PixelF32> {
+    let mut out = vec![transparent(); canvas.width * canvas.height];
+    let dx = (canvas.origin[0] - origin[0]) as i32;
+    let dy = (canvas.origin[1] - origin[1]) as i32;
+    for y in 0..canvas.height {
+        let sy = y as i32 + dy;
+        if sy < 0 || sy >= height as i32 {
+            continue;
+        }
+        for x in 0..canvas.width {
+            let sx = x as i32 + dx;
+            if sx >= 0 && sx < width as i32 {
+                out[y * canvas.width + x] = src[sy as usize * width + sx as usize];
+            }
+        }
+    }
+    out
+}
+
+fn intersect_rect(a: ae::Rect, b: ae::Rect) -> ae::Rect {
+    let rect = ae::Rect {
+        left: a.left.max(b.left),
+        top: a.top.max(b.top),
+        right: a.right.min(b.right),
+        bottom: a.bottom.min(b.bottom),
+    };
+    if rect.is_empty() {
+        ae::Rect::empty()
+    } else {
+        rect
+    }
+}
+
+fn stroke_bounds(stamps: &[BrushStamp], texture: &BrushTexture, scale: [f32; 2]) -> ae::Rect {
+    let aspect = if texture.has_texture_layer {
+        texture
+            .frames
+            .iter()
+            .map(|f| f.width.max(1) as f32 / f.height.max(1) as f32)
+            .fold(0.0, f32::max)
+    } else {
+        1.0
+    };
+    let mut bounds = ae::Rect::empty();
+    for stamp in stamps {
+        let hw = (stamp.size * aspect * 0.5).max(0.5);
+        let hh = (stamp.size * 0.5).max(0.5);
+        let radius = hw.hypot(hh) + 1.0;
+        bounds.union(&ae::Rect {
+            left: ((stamp.x - radius) * scale[0]).floor() as i32,
+            top: ((stamp.y - radius) * scale[1]).floor() as i32,
+            right: ((stamp.x + radius) * scale[0]).ceil() as i32,
+            bottom: ((stamp.y + radius) * scale[1]).ceil() as i32,
+        });
+    }
+    bounds
 }
 
 fn texture_frame_index(
@@ -2257,37 +2345,6 @@ fn sample_brush_texture(
     frame.pixels[y * frame.width + x]
 }
 
-fn apply_side_color(
-    stroke: PixelF32,
-    signed_distance: f32,
-    distance: f32,
-    settings: Settings,
-) -> PixelF32 {
-    if matches!(settings.side_color_mode, SideColorMode::None)
-        || !stroke_side_matches(settings.side_color_target, signed_distance)
-    {
-        return stroke;
-    }
-
-    let t = if settings.stroke_width <= ALPHA_EPSILON {
-        0.0
-    } else {
-        (distance / settings.stroke_width).clamp(0.0, 1.0)
-    };
-    let side_color = match settings.side_color_mode {
-        SideColorMode::None => return stroke,
-        SideColorMode::Solid => settings.side_color_a,
-        SideColorMode::Gradient => lerp_pixel(settings.side_color_a, settings.side_color_b, t),
-    };
-    let mut side_color = side_color;
-    side_color.alpha *= settings.side_color_opacity;
-    side_color.red *= settings.side_color_opacity;
-    side_color.green *= settings.side_color_opacity;
-    side_color.blue *= settings.side_color_opacity;
-
-    composite_pixel(stroke, side_color, settings.side_color_blend_mode)
-}
-
 fn composite_pixel(base: PixelF32, blend: PixelF32, mode: BlendMode) -> PixelF32 {
     let base_a = sanitize(base.alpha).clamp(0.0, 1.0);
     let blend_a = sanitize(blend.alpha).clamp(0.0, 1.0);
@@ -2304,9 +2361,18 @@ fn composite_pixel(base: PixelF32, blend: PixelF32, mode: BlendMode) -> PixelF32
     }
 
     let out_rgb = [
-        (mixed_rgb[0] * blend_a + base_rgb[0] * base_a * (1.0 - blend_a)) / out_a,
-        (mixed_rgb[1] * blend_a + base_rgb[1] * base_a * (1.0 - blend_a)) / out_a,
-        (mixed_rgb[2] * blend_a + base_rgb[2] * base_a * (1.0 - blend_a)) / out_a,
+        (blend_rgb[0] * blend_a * (1.0 - base_a)
+            + mixed_rgb[0] * blend_a * base_a
+            + base_rgb[0] * base_a * (1.0 - blend_a))
+            / out_a,
+        (blend_rgb[1] * blend_a * (1.0 - base_a)
+            + mixed_rgb[1] * blend_a * base_a
+            + base_rgb[1] * base_a * (1.0 - blend_a))
+            / out_a,
+        (blend_rgb[2] * blend_a * (1.0 - base_a)
+            + mixed_rgb[2] * blend_a * base_a
+            + base_rgb[2] * base_a * (1.0 - blend_a))
+            / out_a,
     ];
     premultiply(out_rgb, out_a)
 }
@@ -2339,39 +2405,6 @@ fn overlay_channel(base: f32, blend: f32) -> f32 {
         2.0 * base * blend
     } else {
         1.0 - 2.0 * (1.0 - base) * (1.0 - blend)
-    }
-}
-
-fn stroke_side_matches(side: StrokeSide, signed_distance: f32) -> bool {
-    match side {
-        StrokeSide::Both => true,
-        StrokeSide::LeftOutside => signed_distance >= 0.0,
-        StrokeSide::RightInside => signed_distance <= 0.0,
-    }
-}
-
-fn stroke_side_coverage(
-    side: StrokeSide,
-    signed_distance: f32,
-    size: f32,
-    settings: Settings,
-) -> f32 {
-    match side {
-        StrokeSide::Both => 1.0,
-        StrokeSide::LeftOutside => {
-            soft_side_step(signed_distance, size * settings.feather_influence * 0.5)
-        }
-        StrokeSide::RightInside => {
-            soft_side_step(-signed_distance, size * settings.feather_influence * 0.5)
-        }
-    }
-}
-
-fn soft_side_step(value: f32, softness: f32) -> f32 {
-    if softness <= 1.0e-6 {
-        if value >= 0.0 { 1.0 } else { 0.0 }
-    } else {
-        smoothstep(-softness, softness, value)
     }
 }
 
@@ -2420,21 +2453,23 @@ fn write_layer_rgba(out_layer: &mut Layer, pixels: &[PixelF32]) -> Result<(), Er
 fn output_mode_from_popup(value: i32) -> OutputMode {
     match value {
         2 => OutputMode::StrokeOnly,
-        _ => OutputMode::Composite,
+        3 => OutputMode::CompositeBehind,
+        _ => OutputMode::CompositeFront,
     }
 }
 
-fn stroke_side_from_popup(value: i32) -> StrokeSide {
+fn stamp_order_from_popup(value: i32) -> StampOrder {
     match value {
-        2 => StrokeSide::LeftOutside,
-        3 => StrokeSide::RightInside,
-        _ => StrokeSide::Both,
+        2 => StampOrder::EndToStart,
+        _ => StampOrder::StartToEnd,
     }
 }
 
 fn path_source_from_popup(value: i32) -> PathSource {
     match value {
         2 => PathSource::SelectedPath,
+        3 => PathSource::Auto,
+        4 => PathSource::ShapePaths,
         _ => PathSource::AllPaths,
     }
 }
@@ -2460,14 +2495,6 @@ fn texture_time_mode_from_popup(value: i32) -> TextureTimeMode {
         3 => TextureTimeMode::AlongStroke,
         4 => TextureTimeMode::RandomPerStamp,
         _ => TextureTimeMode::Current,
-    }
-}
-
-fn side_color_mode_from_popup(value: i32) -> SideColorMode {
-    match value {
-        2 => SideColorMode::Solid,
-        3 => SideColorMode::Gradient,
-        _ => SideColorMode::None,
     }
 }
 
@@ -2535,16 +2562,6 @@ fn transparent() -> PixelF32 {
         green: 0.0,
         blue: 0.0,
         alpha: 0.0,
-    }
-}
-
-fn lerp_pixel(a: PixelF32, b: PixelF32, t: f32) -> PixelF32 {
-    let t = t.clamp(0.0, 1.0);
-    PixelF32 {
-        red: lerp(a.red, b.red, t),
-        green: lerp(a.green, b.green, t),
-        blue: lerp(a.blue, b.blue, t),
-        alpha: lerp(a.alpha, b.alpha, t),
     }
 }
 

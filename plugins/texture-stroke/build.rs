@@ -72,6 +72,7 @@ fn main() {
             | OutFlags2::AutomaticWideTimeInput
             | OutFlags2::SupportsSmartRender
             | OutFlags2::DependsOnUnreferencedMasks
+            | OutFlags2::RevealsZeroAlpha
             // | OutFlags2::SupportsGpuRenderF32
             ,
         ),
