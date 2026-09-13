@@ -1,13 +1,13 @@
 # AOD After Effects Plugin Catalog
 
-用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる38プラグインを4分類に整理しています。
+用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる39プラグインを4分類に整理しています。
 
 | 分類 | 適した素材 | 収録数 | 詳細 |
 |---|---|---:|---|
 | P | Photo：一般写真・連続階調画像 | 17 | [Photo / 一般画像](photo.md) |
 | A | Anime：アニメ素材（セル塗り・線画・透過キャラクター） | 13 | [Anime / アニメ素材](anime.md) |
 | D | Data & Map：データ・マップ画像 | 4 | [Data & Map / データ・マップ](map-data.md) |
-| G | Generator：生成用キャンバス | 4 | [Generator / 生成系](generator.md) |
+| G | Generator：生成用キャンバス | 5 | [Generator / 生成系](generator.md) |
 
 分類は「最も分かりやすく効果を確認できる主入力」を示します。たとえば `AOD_ScatterMap` はP分類ですが、Amount Mapなどの補助入力としてD分類の画像を併用できます。
 

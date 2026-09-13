@@ -1,6 +1,6 @@
 # G：生成用キャンバス
 
-黒・白・透明などの無地レイヤーへ適用し、画像そのものを生成するエフェクトです。
+黒・白・透明などの無地レイヤーやパスを入力として、画像そのものを生成するエフェクトです。
 
 [![G分類の概要グリッド](assets/overview/generator.png)](assets/overview/generator.png)
 
@@ -80,3 +80,23 @@
 - `W`、`Scale W`、`Offset`: 追加次元と位置を設定します。
 - `Blend Mode`、`Blend Opacity`: 入力画像との合成を設定します。
 - `Normalize Distance`、`Clamp`、`Use Original Alpha`: 距離の正規化と出力を制御します。
+
+## AOD_TextureStroke
+
+- **分類:** G：生成用キャンバス（マスク・シェイプパス、補助入力: テクスチャレイヤー）
+
+![AOD_TextureStroke](assets/previews/texture-stroke.png)
+
+マスクとシェイプのパスからテクスチャ付きストロークを生成します。交差するパスにもブラシを順に重ね、マスクによる入力範囲の縮小やプレビュー解像度の変更にも追従します。
+
+### パラメーター
+
+- `Path Source`: マスク／シェイプの自動判定、全マスク、指定マスク、シェイプパスを選択します。シェイプはBezier・長方形・楕円と2D変形に対応します。
+- `Texture Layer`、`Texture Time`: ブラシ画像とCurrent／Fixed Frame／Along Stroke／Random Per Stampの取得時間を選択します。None時も時間設定を表示し、選択するまでグレーアウトします。
+- `Stroke Width`、`Stroke Opacity`、`Stroke Blend Mode`: ブラシの基本幅、不透明度、合成方法を設定します。
+- `Stamp Order`: パスの始点から終点、または終点から始点の順にブラシを重ねます。各スタンプの位置やランダム値は維持します。
+- `Size`、`Spacing`、`Rotation`、`Opacity`: 大きさ、間隔、回転、不透明度の変化と乱数を調整します。テクスチャ未指定時は末尾の`Fallback Brush`で円／四角と柔らかさを設定します。
+- `Mask Feather`: マスクのぼかし幅をストローク幅として使用できます。
+- `Output`: 前面合成（初期値）、ストロークのみ、背面合成を選択します。
+
+Trim Paths・Repeater・Merge Pathsなどのシェイプ演算後の輪郭と3D投影には未対応です。PolystarはBezierへ変換してください。Side Color／Stroke Sideは削除されています。

@@ -62,7 +62,8 @@
         { name: "Checker Generate", aod: "AOD_CheckerGenerate", slug: "checker-generate", category: "G", comp: "02 Checker Generate" },
         { name: "Gabor Generate", aod: "AOD_GaborGenerate", slug: "gabor-generate", category: "G", comp: "11 Gabor Generate" },
         { name: "Rainbow Generate", aod: "AOD_RainbowGenerate", slug: "rainbow-generate", category: "G", match: "RainbowGenerate", fresh: true },
-        { name: "Voronoi Generate", aod: "AOD_VoronoiGenerate", slug: "voronoi-generate", category: "G", match: "VoronoiGenerate" }
+        { name: "Voronoi Generate", aod: "AOD_VoronoiGenerate", slug: "voronoi-generate", category: "G", match: "VoronoiGenerate" },
+        { name: "Texture Stroke", aod: "AOD_TextureStroke", slug: "texture-stroke", category: "G", match: "TextureStroke", fresh: true }
     ];
 
     for (var catalogIndex = 0; catalogIndex < catalog.length; catalogIndex++) {
@@ -366,7 +367,33 @@
         var name = "CATPREVIEW - " + item.name;
         var comp = app.project.items.addComp(name, 512, 512, 1, 1, 30);
         var layer;
-        if (item.category === "G") {
+        if (item.match === "TextureStroke") {
+            comp.layers.addSolid([0.035, 0.045, 0.065], "Preview Background", 512, 512, 1, 1);
+            var brush = app.project.items.addComp("CATPREVIEW - Texture Stroke Brush", 64, 64, 1, 1, 30);
+            for (var strand = 0; strand < 9; strand++) {
+                var line = brush.layers.addSolid([0.12 + strand * 0.07, 0.65 + strand * 0.025, 0.9], "Brush strand " + strand, 56 - strand % 3 * 6, 3, 1, 1);
+                line.property("ADBE Transform Group").property("ADBE Position").setValue([32 + (strand % 3 - 1) * 3, 8 + strand * 6]);
+            }
+            var texture = comp.layers.add(brush);
+            texture.enabled = false;
+            layer = comp.layers.addShape();
+            layer.name = "Curved shape path";
+            var group = layer.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
+            var path = group.property("ADBE Vectors Group").addProperty("ADBE Vector Shape - Group");
+            var shape = new Shape();
+            shape.vertices = [[-170,150],[-160,-105],[50,-145],[165,0],[55,130],[-115,0],[130,-110]];
+            shape.inTangents = [[0,0],[-45,55],[-75,-20],[0,-70],[75,0],[0,65],[-60,20]];
+            shape.outTangents = [[65,-30],[45,-55],[75,20],[0,70],[-75,0],[0,-65],[0,0]];
+            shape.closed = false;
+            path.property("ADBE Vector Shape").setValue(shape);
+            var stroke = addEffect(layer, item.match);
+            setProperty(stroke, "Texture Layer", texture.index);
+            setProperty(stroke, "Output", 2);
+            setProperty(stroke, "Stroke Width (px)", 66);
+            setProperty(stroke, "Density (%)", 120);
+            item.comp = comp.name;
+            return comp;
+        } else if (item.category === "G") {
             layer = comp.layers.addSolid([0.035, 0.045, 0.065], "Generator Canvas", 512, 512, 1, comp.duration);
         } else {
             layer = addCatLayer(comp, item.category === "A");

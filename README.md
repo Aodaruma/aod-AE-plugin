@@ -13,8 +13,8 @@ This repository is a Cargo
 workspace that builds multiple AE effect plugins, plus shared utilities and a plugin
 template.
 
-現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する38種類のエフェクトを収録しています。
-The current catalog contains 38 effects for photo, anime, data/map, and generator workflows.
+現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する39種類のエフェクトを収録しています。
+The current catalog contains 39 effects for photo, anime, data/map, and generator workflows.
 
 ## Effect List / エフェクト一覧
 
