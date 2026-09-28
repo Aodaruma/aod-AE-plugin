@@ -63,6 +63,7 @@ fn main() {
             | OutFlags::SendUpdateParamsUI
             | OutFlags::DeepColorAware
             | OutFlags::WideTimeInput
+            | OutFlags::NonParamVary
             ,
         ),
         Property::AE_Effect_Global_OutFlags_2(
@@ -73,6 +74,7 @@ fn main() {
             | OutFlags2::SupportsSmartRender
             | OutFlags2::DependsOnUnreferencedMasks
             | OutFlags2::RevealsZeroAlpha
+            | OutFlags2::IMixGuidDependencies
             // | OutFlags2::SupportsGpuRenderF32
             ,
         ),

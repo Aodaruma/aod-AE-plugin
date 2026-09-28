@@ -4,6 +4,7 @@ use after_effects as ae;
 use std::env;
 use std::ffi::CString;
 use std::fs::OpenOptions;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 
 use ae::pf::*;
@@ -254,6 +255,28 @@ struct BrushStamp {
 struct PreparedStroke {
     settings: Settings,
     stamps: Vec<BrushStamp>,
+}
+
+impl PreparedStroke {
+    fn dependency_hash(&self) -> u64 {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        self.stamps.len().hash(&mut hash);
+        for stamp in &self.stamps {
+            stamp.path_index.hash(&mut hash);
+            stamp.stamp_index.hash(&mut hash);
+            for value in [
+                stamp.x,
+                stamp.y,
+                stamp.along,
+                stamp.size,
+                stamp.opacity,
+                stamp.rotation,
+            ] {
+                value.to_bits().hash(&mut hash);
+            }
+        }
+        hash.finish()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -831,11 +854,13 @@ impl AdobePluginGlobal for Plugin {
                 out_data.set_out_flag(OutFlags::PixIndependent, true);
                 out_data.set_out_flag(OutFlags::UseOutputExtent, true);
                 out_data.set_out_flag(OutFlags::WideTimeInput, true);
+                out_data.set_out_flag(OutFlags::NonParamVary, true);
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
                 out_data.set_out_flag2(OutFlags2::FloatColorAware, true);
                 out_data.set_out_flag2(OutFlags2::AutomaticWideTimeInput, true);
                 out_data.set_out_flag2(OutFlags2::DependsOnUnreferencedMasks, true);
                 out_data.set_out_flag2(OutFlags2::RevealsZeroAlpha, true);
+                out_data.set_out_flag2(OutFlags2::IMixGuidDependencies, true);
                 if let Ok(suite) = ae::aegp::suites::Utility::new()
                     && let Ok(plugin_id) = suite.register_with_aegp("AOD_TextureStroke")
                 {
@@ -860,6 +885,11 @@ impl AdobePluginGlobal for Plugin {
                     in_data.time_scale(),
                 )?;
                 let prepared = self.prepare_stroke(in_data, params)?;
+                // AEGP path/transform reads are outside parameter checkout.
+                // Include the actual geometry in AE's cached-frame identity.
+                extra
+                    .callbacks()
+                    .guid_mix_in_ptr(&prepared.dependency_hash())?;
                 let texture = build_texture_frames(params, in_data, &prepared.settings)?;
                 let scale = render_scale(in_data);
                 let stroke_rect = stroke_bounds(&prepared.stamps, &texture, scale);
@@ -984,7 +1014,7 @@ impl Plugin {
         Self::set_param_enabled(params, Params::FallbackBrushSoftness, !has_texture_layer)?;
 
         let shape_source = path_source == PathSource::ShapePaths
-            || (path_source == PathSource::Auto && shapes::is_shape_layer(in_data)?);
+            || (path_source == PathSource::Auto && shapes::has_shape_source(in_data)?);
         self.set_param_visible(in_data, params, Params::MaskGroupStart, !shape_source)?;
         self.set_param_visible(in_data, params, Params::StrokeWidthSource, !shape_source)?;
         let feather_width_enabled =
