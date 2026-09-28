@@ -396,6 +396,8 @@
             setProperty(stroke, "Output", 2);
             setProperty(stroke, "Stroke Width (px)", 66);
             setProperty(stroke, "Density (%)", 120);
+            setProperty(stroke, "Size Input", 2);
+            setProperty(stroke, "Curvature Radius (px)", 100);
             item.comp = comp.name;
             return comp;
         } else if (item.category === "G") {

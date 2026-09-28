@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) fn settings() -> Settings {
     Settings {
+        dynamics: dynamics::Dynamics::default(),
         path_source: PathSource::Auto,
         output_mode: OutputMode::StrokeOnly,
         stamp_order: StampOrder::StartToEnd,
@@ -44,6 +45,70 @@ pub(super) fn settings() -> Settings {
         texture_opacity: 1.0,
         stroke_blend_mode: BlendMode::Normal,
     }
+}
+
+#[test]
+fn length_response_uses_each_path_length() {
+    let mut settings = settings();
+    settings.dynamics.sources[dynamics::SIZE] = dynamics::Source::Length;
+    settings.dynamics.length_reference = 100.0;
+    let points: Vec<_> = [(0, 50.0), (1, 100.0)]
+        .into_iter()
+        .flat_map(|(path_index, length)| {
+            [0.0, length].map(|along| PathPoint {
+                path_index,
+                x: along,
+                y: path_index as f32 * 30.0,
+                tangent_x: 1.0,
+                tangent_y: 0.0,
+                along,
+                stroke_width: 12.0,
+            })
+        })
+        .collect();
+    let stamps = stamps_from_points(&points, settings);
+    assert!(
+        stamps
+            .iter()
+            .filter(|s| s.path_index == 0)
+            .all(|s| (s.size - 12.0).abs() < 1e-5)
+    );
+    assert!(
+        stamps
+            .iter()
+            .filter(|s| s.path_index == 1)
+            .all(|s| (s.size - 24.0).abs() < 1e-5)
+    );
+}
+
+#[test]
+fn response_controls_density_opacity_and_rotation() {
+    let points = [0.0, 120.0].map(|along| PathPoint {
+        path_index: 0,
+        x: along,
+        y: 0.0,
+        tangent_x: 1.0,
+        tangent_y: 0.0,
+        along,
+        stroke_width: 12.0,
+    });
+    let baseline = stamps_from_points(&points, settings());
+    let mut s = settings();
+    s.dynamics.sources = [
+        dynamics::Source::None,
+        dynamics::Source::Length,
+        dynamics::Source::Length,
+        dynamics::Source::Length,
+    ];
+    s.dynamics.length_reference = 120.0;
+    s.dynamics.curves[dynamics::OPACITY] = curves::Curve::flat(0.25);
+    let stamps = stamps_from_points(&points, s);
+    assert!(stamps.len() > baseline.len() * 3 / 2);
+    assert!(stamps.iter().all(
+        |s| (s.opacity - 0.5).abs() < 1e-5 && (s.rotation - std::f32::consts::PI).abs() < 1e-5
+    ));
+    s.dynamics.curves[dynamics::DENSITY] = curves::Curve::flat(0.0);
+    assert!(stamps_from_points(&points, s).is_empty());
 }
 
 fn texture() -> BrushTexture {

@@ -204,7 +204,7 @@ fn collapsed_comp(layer: &Layer) -> Result<Option<ae::aegp::Composition>, Error>
 
 // Layer-to-world matrices include parenting. A 3D parent would require camera
 // projection, which cannot be represented by the 2D transform used here.
-fn is_2d_hierarchy(layer: &Layer) -> Result<bool, Error> {
+pub(super) fn is_2d_hierarchy(layer: &Layer) -> Result<bool, Error> {
     if layer.is_3d()? {
         return Ok(false);
     }

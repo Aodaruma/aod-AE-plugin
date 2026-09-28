@@ -71,6 +71,8 @@ hotfix には公開版の修正に必要な変更だけを含め、未公開の�
 
 ## 動的 UI
 
+任意データ型とDrawbotを使ったカーブ編集UIについては、[Rustでのカスタムパラメーター実装](custom-parameter-curves.md)を参照してください。TextureStrokeのAE 2025実機検証例と、WindowsでのPiPLバイナリ埋め込みを記載しています。
+
 AE / Premiere の動的 UI を変更するときは、次のホスト固有の制約を守ってください。
 
 - `build.rs` の PiPL と `GlobalSetup` の両方で `OutFlags::SendUpdateParamsUI` を有効化する。

@@ -2746,12 +2746,14 @@ dependencies = [
 
 [[package]]
 name = "texture_stroke"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "after-effects",
  "chrono",
  "pipl",
+ "serde",
  "utils",
+ "winres",
 ]
 
 [[package]]
