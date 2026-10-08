@@ -1,5 +1,5 @@
 use super::*;
-use ae::aegp::{Stream, StreamValue};
+use ae::aegp::{Layer, LayerFlags, Stream, StreamValue, TimeMode};
 
 // The pinned binding models these bit flags as an enum and panics on zero or
 // combined flags. Read the raw bitfield when checking visibility.
@@ -135,6 +135,13 @@ pub(super) fn read_outline(
 struct Transform([f64; 6]);
 
 impl Transform {
+    const IDENTITY: Self = Self([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+
+    fn layer(layer: &Layer, time: ae::Time) -> Result<Self, Error> {
+        let matrix: ae::sys::A_Matrix4 = layer.to_world_xform(time)?.into();
+        let m = matrix.mat;
+        Ok(Self([m[0][0], m[0][1], m[1][0], m[1][1], m[3][0], m[3][1]]))
+    }
     fn point(self, p: [f64; 2]) -> [f64; 2] {
         let [a, b, c, d, x, y] = self.0;
         [a * p[0] + c * p[1] + x, b * p[0] + d * p[1] + y]
@@ -170,13 +177,66 @@ struct ShapeReader {
     along: f32,
 }
 
-pub(super) fn is_shape_layer(in_data: InData) -> Result<bool, Error> {
+pub(super) fn has_shape_source(in_data: InData) -> Result<bool, Error> {
     if in_data.is_premiere() {
         return Ok(false);
     }
     let interface = ae::aegp::suites::PFInterface::new()?;
     let layer: ae::aegp::Layer = interface.effect_layer(in_data.effect())?.into();
-    Ok(layer.object_type()? == ae::aegp::ObjectType::Vector)
+    Ok(layer.object_type()? == ae::aegp::ObjectType::Vector
+        || layer.flags()?.contains(LayerFlags::ADJUSTMENT_LAYER)
+        || collapsed_comp(&layer)?.is_some())
+}
+
+fn collapsed_comp(layer: &Layer) -> Result<Option<ae::aegp::Composition>, Error> {
+    if layer.object_type()? != ae::aegp::ObjectType::AudioVideo
+        || !layer.flags()?.contains(LayerFlags::COLLAPSE)
+    {
+        return Ok(None);
+    }
+    let source = layer.source_item()?;
+    if !source.as_ptr().is_null() && source.item_type()? == ae::aegp::ItemType::Comp {
+        Ok(Some(source.composition()?))
+    } else {
+        Ok(None)
+    }
+}
+
+// Layer-to-world matrices include parenting. A 3D parent would require camera
+// projection, which cannot be represented by the 2D transform used here.
+pub(super) fn is_2d_hierarchy(layer: &Layer) -> Result<bool, Error> {
+    if layer.is_3d()? {
+        return Ok(false);
+    }
+    let mut parent = layer.parent()?;
+    while let Some(handle) = parent {
+        let ancestor: Layer = handle.into();
+        if ancestor.is_3d()? {
+            return Ok(false);
+        }
+        parent = ancestor.parent()?;
+    }
+    Ok(true)
+}
+
+fn source_time(layer: &Layer, time: ae::Time) -> Result<ae::Time, Error> {
+    if layer.flags()?.contains(LayerFlags::TIME_REMAPPING) {
+        let seconds: f64 = ae::aegp::suites::Stream::new()?
+            .layer_stream_value(
+                layer.as_ptr(),
+                ae::aegp::LayerStream::TimeRemap,
+                TimeMode::CompTime,
+                time,
+                false,
+            )?
+            .try_into()?;
+        Ok(ae::Time {
+            value: (seconds * time.scale as f64).round() as i32,
+            scale: time.scale,
+        })
+    } else {
+        layer.convert_comp_to_layer_time(time)
+    }
 }
 
 pub(super) fn path_points(
@@ -189,16 +249,19 @@ pub(super) fn path_points(
     };
     let interface = ae::aegp::suites::PFInterface::new()?;
     let layer: ae::aegp::Layer = interface.effect_layer(in_data.effect())?.into();
-    if layer.object_type()? != ae::aegp::ObjectType::Vector {
+    let adjustment = layer.flags()?.contains(LayerFlags::ADJUSTMENT_LAYER);
+    let precomp = collapsed_comp(&layer)?;
+    if !adjustment && precomp.is_none() && layer.object_type()? != ae::aegp::ObjectType::Vector {
         return Ok(None);
+    }
+    if !is_2d_hierarchy(&layer)? {
+        return Ok(Some(Vec::new()));
     }
     let time = interface.convert_effect_to_comp_time(
         in_data.effect(),
         in_data.current_time(),
         in_data.time_scale(),
     )?;
-    let root = layer.new_stream_for_layer(plugin_id)?;
-    let contents = root.new_stream_by_match_name(plugin_id, "ADBE Root Vectors Group")?;
     let mut reader = ShapeReader {
         in_data,
         plugin_id,
@@ -208,16 +271,79 @@ pub(super) fn path_points(
         path_index: 0,
         along: 0.0,
     };
-    // Shape layers rasterize after their layer transform. Their effect buffer
-    // is in composition coordinates, while Contents paths are layer-local.
-    let matrix: ae::sys::A_Matrix4 = layer.to_world_xform(time)?.into();
-    let m = matrix.mat;
-    let transform = Transform([m[0][0], m[0][1], m[1][0], m[1][1], m[3][0], m[3][1]]);
-    reader.walk(&contents, transform, 0)?;
+    // Continuously rasterized shapes and collapsed precomps receive their
+    // effects in parent-comp coordinates. Adjustment input is the lower stack.
+    if adjustment {
+        reader.comp_layers(
+            &layer.parent_comp()?,
+            layer.index()? + 1,
+            time,
+            Transform::IDENTITY,
+            0,
+        )?;
+    } else if let Some(comp) = precomp {
+        reader.comp_layers(
+            &comp,
+            0,
+            source_time(&layer, time)?,
+            Transform::layer(&layer, time)?,
+            0,
+        )?;
+    } else {
+        reader.shape_layer(&layer, time, Transform::IDENTITY)?;
+    }
     Ok(Some(reader.points))
 }
 
 impl ShapeReader {
+    fn shape_layer(
+        &mut self,
+        layer: &Layer,
+        time: ae::Time,
+        parent: Transform,
+    ) -> Result<(), Error> {
+        let root = layer.new_stream_for_layer(self.plugin_id)?;
+        let contents = root.new_stream_by_match_name(self.plugin_id, "ADBE Root Vectors Group")?;
+        self.time = time;
+        self.walk(&contents, parent.then(Transform::layer(layer, time)?), 0)
+    }
+
+    fn comp_layers(
+        &mut self,
+        comp: &ae::aegp::Composition,
+        first: usize,
+        time: ae::Time,
+        parent: Transform,
+        depth: usize,
+    ) -> Result<(), Error> {
+        if depth > 64 {
+            return Err(Error::InvalidParms);
+        }
+        // AE composites from the bottom up; path IDs remain unique across layers.
+        for index in (first..comp.num_layers()?).rev() {
+            let layer = comp.layer_by_index(index)?;
+            if !layer.is_video_active(TimeMode::CompTime, time)?
+                || !layer.is_video_really_on()?
+                || layer.flags()?.contains(LayerFlags::ADJUSTMENT_LAYER)
+                || !is_2d_hierarchy(&layer)?
+            {
+                continue;
+            }
+            if layer.object_type()? == ae::aegp::ObjectType::Vector {
+                self.shape_layer(&layer, time, parent)?;
+            } else if let Some(nested) = collapsed_comp(&layer)? {
+                self.comp_layers(
+                    &nested,
+                    0,
+                    source_time(&layer, time)?,
+                    parent.then(Transform::layer(&layer, time)?),
+                    depth + 1,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     fn value(&self, group: &Stream, name: &str) -> Result<StreamValue, Error> {
         group
             .new_stream_by_match_name(self.plugin_id, name)?

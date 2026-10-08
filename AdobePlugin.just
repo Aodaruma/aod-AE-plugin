@@ -61,6 +61,8 @@ create_bundle profile TargetDir:
         cp {{TargetDir}}/{{profile}}/lib${lib_name}.dylib {{TargetDir}}/{{profile}}/{{PluginName}}.plugin/Contents/MacOS/{{PluginName}}
     fi
     /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier "{{BundleIdentifier}}"' {{TargetDir}}/{{profile}}/{{PluginName}}.plugin/Contents/Info.plist
+    # PiPL's generated plist omits the executable name; set it before signing.
+    /usr/libexec/PlistBuddy -c 'Add :CFBundleExecutable string "{{PluginName}}"' {{TargetDir}}/{{profile}}/{{PluginName}}.plugin/Contents/Info.plist
 
     DEV_CERT=$(security find-identity -v -p codesigning | grep -m 1 "Apple Development" | awk -F ' ' '{print $2}')
 
