@@ -44,9 +44,22 @@ AE 2025（25.6.6x4）で19条件のPNG生成と11項目の画素比較に成功�
 
 MFR無効の`aerender -mfr OFF 50`と、AE上で`app.setMultiFrameRenderingConfig(true, 50)`を設定してキャッシュpurge後にレンダーキューを実行した場合を比較した。フレーム0〜11の12枚すべてがPNGファイルのSHA-256で一致し、レンダーキューはDONEで完了した。出力と記録は`target/codec-map-smoke/{serial,mfr}/`、`serial.log`、`mfr-report.txt`。この環境では2回目のaerender起動がAEを起動せず待機したため、MFR有効側はAE本体のスクリプトAPIで実施した。同時実行数の計測・負荷試験までは行っていない。
 
+## macOS Universalパッケージ
+
+2026-10-11、[CodecMap macOS PreviewのCI](https://github.com/Aodaruma/aod-AE-plugin/actions/runs/38079738940)で成功。対象ソースは`5b4186295645f0895694d565f504feb46f7c4280`。macOS 15.7.9 / arm64、Rust 1.99.0、Apple clang 17.0.0でビルドした。
+
+- プラグイン、FFmpeg 8.1.2、x264のarm64 / x86_64ビルドとUniversal化に成功。
+- FFmpegの依存先を同梱ライブラリへ固定し、外部ビルドディレクトリへの依存がないことを確認。
+- 同梱ライブラリとプラグインをアドホック署名し、`codesign --verify --deep --strict`に成功。
+- ZIPに収録するランタイムを使い、arm64上で実H.264処理を含む5テストに成功。
+- ZIP取得後、プラグインと2つの共有ライブラリすべてにarm64 / x86_64と署名データがあること、依存先、ライセンス・ソースの収録、CI成果物とのSHA-256一致を確認。
+- ZIP: `AOD_CodecMap-0.1.0-macos-universal.zip`、21,345,440 bytes、SHA-256 `2290bf118f3c69590be437f27e69503c755e04a7a99cfa81a011cdede16a88f9`。
+
+macOS版AEの読み込み・描画、Intel実機上の実行、Developer ID署名・Apple公証は実施していない。
+
 ## 未確認・対象外
 
 - AE上の時間リマップ、逆方向の時間伸縮、ROIタイル描画、16 / 32 bpcのHDR入力の数値比較。
-- macOS、Premiere、異なるCPU・OS・FFmpegビルド間のビット一致。
+- macOS版AE、Intel Mac上の実行、Premiere、異なるCPU・OS・FFmpegビルド間のビット一致。
 - 正式配布用の対応ソース一式と依存ライセンスのパッケージング。
 - VP9、双方向GOP、ハードウェアエンコード、CBR/VBR。

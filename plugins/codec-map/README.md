@@ -45,7 +45,7 @@ Applies map-controlled video codec compression with deterministic temporal repla
 - GOP内で入力のサイズや原点が変わる場合はエラーにします。固定サイズのプリコンポーズ、またはIndependentを使ってください。
 - 1辺16384画素まで、再計算用YUV合計256 MiBまで。上限を超える場合はGOP Lengthまたはプレビュー解像度を下げてください。
 - 初版はCPU版H.264のみです。VP9、未来参照、ハードウェアエンコーダー、CBR/VBR、Premiereは未対応です。
-- Windows x64を検証対象とし、macOSのランタイム同梱と実機動作は未検証です。
+- Windows x64のAE実機と、macOS Universalのビルド・ランタイム同梱・arm64での実コーデック単体試験を確認済みです。macOS版AEの実機動作は未検証です。
 
 ## ビルドとローカル検証用パッケージ
 
