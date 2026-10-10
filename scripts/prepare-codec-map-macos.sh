@@ -114,7 +114,8 @@ for binary in [directory / 'AOD_CodecMap', *sorted((directory / 'CodecMap').glob
             subprocess.run(['install_name_tool', '-id', '@loader_path/AOD_CodecMap', str(binary)], check=True)
         else:
             raise SystemExit(f'Unbundled dependency: {binary.name}: {dep}')
-    subprocess.run(['lipo', '-verify_arch', 'arm64', 'x86_64', str(binary)], check=True)
+    subprocess.run(['lipo', str(binary), '-verify_arch', 'arm64', 'x86_64'], check=True)
+    subprocess.run(['otool', '-L', str(binary)], check=True)
 PY
 for lib in "$runtime"/*.dylib; do
     codesign --force --sign - --timestamp=none "$lib"
