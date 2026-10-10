@@ -14,7 +14,7 @@
     var warnings = [];
 
     function notify(message) {
-        if (headless) {
+        if (headless || (typeof AOD_CATALOG_SILENT !== "undefined" && AOD_CATALOG_SILENT)) {
             $.writeln(message);
         } else {
             alert(message);
@@ -22,6 +22,7 @@
     }
 
     var catalog = [
+        { name: "Codec Map", aod: "AOD_CodecMap", slug: "codec-map", category: "P", match: "CodecMap", fresh: true },
         { name: "Color Ajust", aod: "AOD_ColorAjust", slug: "color-ajust", category: "P", match: "ColorAjust" },
         { name: "Color Composite", aod: "AOD_ColorComposite", slug: "color-composite", category: "P", comp: "03 Color Composite" },
         { name: "Color Convert", aod: "AOD_ColorConvert", slug: "color-convert", category: "P", match: "ColorConvert" },
@@ -174,7 +175,17 @@
     }
 
     function configureOldEffect(item, comp, layer, effect) {
-        if (item.match === "ColorAjust") {
+        if (item.match === "CodecMap") {
+            var mapComp = app.project.items.addComp("CATPREVIEW - Codec Map Mask", 512, 512, 1, 1, 30);
+            mapComp.layers.addSolid([0, 0, 0], "Black", 512, 512, 1, 1);
+            addMaskedSolid(mapComp, "White", [1, 1, 1], [[256, 0], [512, 0], [512, 512], [256, 512]], 100);
+            var mapLayer = comp.layers.add(mapComp);
+            mapLayer.enabled = false;
+            setProperty(effect, "Base CRF", 40);
+            setProperty(effect, "Map Source", 2);
+            setProperty(effect, "Compression Map", mapLayer.index);
+            setProperty(effect, "White QP Offset", 24);
+        } else if (item.match === "ColorAjust") {
             setProperty(effect, "Color Space", 1);
             setProperty(effect, "Hue Shift (deg)", 42);
             setProperty(effect, "Chroma Scale", 1.45);
@@ -431,7 +442,7 @@
         }
     }
 
-    function makeGrid(category) {
+    function makeGrid(category, useSavedPreviews) {
         var items = category === "ALL" ? catalog : categoryItems(category);
         var columns = Math.min(4, items.length);
         var rows = Math.ceil(items.length / columns);
@@ -448,7 +459,7 @@
             var card = comp.layers.addSolid([0.035, 0.045, 0.065], "Card - " + items[i].name, 560, 560, 1, comp.duration);
             card.property("ADBE Transform Group").property("ADBE Position").setValue([x, y]);
 
-            var previewSource = findComp(items[i].comp);
+            var previewSource = useSavedPreviews && items[i].match !== "CodecMap" ? importExistingPreview(items[i]) : findComp(items[i].comp);
             if (!previewSource) {
                 previewSource = importExistingPreview(items[i]);
             }
@@ -518,7 +529,7 @@
         } else {
             warnings.push("Seed project not found: " + seedProjectPath);
         }
-    } else if (phase !== "build" && projectFile.exists) {
+    } else if (phase !== "build" && projectFile.exists && (!app.project.file || app.project.file.fsName !== projectFile.fsName)) {
         app.open(projectFile);
     }
 
@@ -555,6 +566,23 @@
             log.push("SAVED " + projectFile.fsName);
             writeReport("Build complete; run render-previews and render-overviews phases next.");
             notify("AOD catalog project built.\n" + projectFile.fsName);
+        } else if (phase === "update-codec-map") {
+            removeCompsWithPrefix("CATPREVIEW - Codec Map");
+            var codecPreview = createOldPreview(catalog[0]);
+            var codecFile = new File(previewRoot.fsName + "/codec-map.png");
+            if (codecFile.exists) { codecFile.remove(); }
+            codecPreview.saveFrameToPng(7 / 30, codecFile);
+            var updatedCategories = ["P", "ALL"];
+            var updatedNames = ["photo", "all-effects"];
+            for (var u = 0; u < updatedCategories.length; u++) {
+                removeCompsWithPrefix("CATGRID - " + updatedCategories[u]);
+                var updatedGrid = makeGrid(updatedCategories[u], true);
+                updatedGrid.saveFrameToPng(7 / 30, new File(overviewRoot.fsName + "/" + updatedNames[u] + ".png"));
+            }
+            app.project.save(projectFile);
+            log.push("UPDATED CodecMap preview and P/ALL grids using saved previews");
+            writeReport("CodecMap catalog update complete.");
+            notify("CodecMap catalog updated.");
         } else if (phase === "render-previews") {
             for (var p = 0; p < catalog.length; p++) {
                 var previewFile = new File(previewRoot.fsName + "/" + catalog[p].slug + ".png");

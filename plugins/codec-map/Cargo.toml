@@ -1,0 +1,33 @@
+# Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
+[package]
+name = "codec_map"
+description = "Applies map-controlled video codec compression with deterministic temporal replay."
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+authors.workspace = true
+
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+utils = { path = "../../crates/utils" }
+blake3 = "1.8"
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+cc = "1.2"
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true

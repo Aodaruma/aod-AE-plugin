@@ -4,6 +4,27 @@
 
 [![P分類の概要グリッド](assets/overview/photo.png)](assets/overview/photo.png)
 
+## AOD_CodecMap
+
+- **分類:** P：一般写真・連続階調画像
+- **プレビュー:** 左半分は黒マップで保持、右半分は白マップで強く圧縮。Base CRF=40、White QP Offset=24。
+
+![AOD_CodecMap](assets/previews/codec-map.png)
+
+映像コーデックの圧縮をマップで制御します。初版はH.264の実際の圧縮・復号を使用し、過去フレームの影響を固定GOP内で再現します。未来参照はOFF固定です。
+
+### パラメーター
+
+- `Base CRF`: 全体の品質。大きいほど強く圧縮します。
+- `Temporal Mode` / `GOP Length`: 過去参照またはフレーム単位の独立圧縮と、その区間長。
+- `Map Source` / `Compression Map`: 全体適用、または圧縮領域を指定するレイヤー。
+- `Map Channel` / `Invert Map` / `Map Gamma`: マップの読み方と濃淡の調整。
+- `Black QP Offset` / `White QP Offset`: マップの黒・白に対応する量子化オフセット。
+- `Output`: 黒領域を保持するMap Isolated、または復号画像全体を表示するCodec Result。
+- `Mix` / `Preview`: 適用率、マップ・要求offset・差分の確認。
+
+コーデック内部は8-bit YUV 4:2:0で、元のalphaは保持します。同梱DLLが必要です。[導入手順・制限](../../plugins/codec-map/README.md)と[検証状況](../../plugins/codec-map/tests/VALIDATION.md)を参照してください。
+
 ## AOD_ColorAjust
 
 - **分類:** P：一般写真・連続階調画像

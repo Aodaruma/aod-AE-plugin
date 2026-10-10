@@ -1,0 +1,89 @@
+// Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
+use chrono::Datelike;
+use pipl::*;
+
+const PF_PLUG_IN_VERSION: u16 = 13;
+const PF_PLUG_IN_SUBVERS: u16 = 28;
+
+#[rustfmt::skip]
+fn main() {
+    println!("cargo:rerun-if-changed=native/codec.c");
+    println!("cargo:rerun-if-changed=native/include");
+    cc::Build::new().file("native/codec.c").include("native/include")
+        .define("_CRT_SECURE_NO_WARNINGS", None).flag_if_supported("-std=c11")
+        .compile("codec_map_native");
+    println!("cargo::rustc-check-cfg=cfg(does_dialog)");
+    println!("cargo::rustc-check-cfg=cfg(threaded_rendering)");
+
+    let current_year = chrono::Local::now().year();
+    println!("cargo:rustc-env=BUILD_YEAR={}", current_year);
+
+    let pkg_version = env!("CARGO_PKG_VERSION");
+    let version_parts: Vec<&str> = pkg_version.split('.').collect();
+    if version_parts.len() != 3 {
+        panic!("CARGO_PKG_VERSION must be in the format 'major.minor.patch'");
+    }
+    let major: u32 = version_parts[0].parse().expect("Invalid major version");
+    let minor: u32 = version_parts[1].parse().expect("Invalid minor version");
+    let patch: u32 = version_parts[2].parse().expect("Invalid patch version");
+
+    // Determine the stage based on building whether debug or release
+    /*
+    // pipl load error occured when stage = Stage::Release in pipl == v0.1.1, so temporarily fixed to Develop
+    let stage = if cfg!(debug_assertions) {
+        Stage::Develop
+    } else {
+        Stage::Release
+    };
+    */
+    let stage = Stage::Develop;
+
+    // --------------------------------------------------
+    // Build the plugin with PiPL
+    pipl::plugin_build(vec![
+        Property::Kind(PIPLType::AEEffect),
+        Property::Name("AOD_CodecMap"),
+        Property::Category("Aodaruma"),
+
+        #[cfg(target_os = "windows")]
+        Property::CodeWin64X86("EffectMain"),
+        #[cfg(target_os = "macos")]
+        Property::CodeMacIntel64("EffectMain"),
+        #[cfg(target_os = "macos")]
+        Property::CodeMacARM64("EffectMain"),
+
+        Property::AE_PiPL_Version { major: 2, minor: 0 },
+        Property::AE_Effect_Spec_Version { major: PF_PLUG_IN_VERSION, minor: PF_PLUG_IN_SUBVERS },
+        Property::AE_Effect_Version {
+            version: major,
+            subversion: minor,
+            bugversion: patch,
+            stage,
+            build: 1,
+        },
+        Property::AE_Effect_Info_Flags(0),
+        Property::AE_Effect_Global_OutFlags(
+            // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags.html
+            OutFlags::NonParamVary
+            | OutFlags::DeepColorAware
+            | OutFlags::WideTimeInput
+            | OutFlags::SendUpdateParamsUI
+            ,
+        ),
+        Property::AE_Effect_Global_OutFlags_2(
+            // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags2.html
+            OutFlags2::FloatColorAware
+            | OutFlags2::SupportsThreadedRendering
+            // Match the workspace template: adding SupportsGetFlattenedSequenceData
+            // to this PiPL caused AE 25.6 startup to stall with the pinned SDK crate.
+            // This effect stores no sequence data; host rendering is tested separately.
+            | OutFlags2::AutomaticWideTimeInput
+            | OutFlags2::SupportsSmartRender
+            // | OutFlags2::SupportsGpuRenderF32
+            ,
+        ),
+        Property::AE_Effect_Match_Name("CodecMap"),
+        Property::AE_Reserved_Info(8),
+        Property::AE_Effect_Support_URL("https://github.com/Aodaruma/aod-AE-plugin"),
+    ])
+}

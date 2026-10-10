@@ -1,0 +1,55 @@
+name: CodecMap macOS Preview
+
+on:
+  push:
+    branches: [feat/codec-map]
+    paths:
+      - plugins/codec-map/**
+      - crates/utils/**
+      - Cargo.toml
+      - Cargo.lock
+      - scripts/prepare-codec-map-macos.sh
+      - .github/workflows/codec_map_macos_preview.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codec-map-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native build tools
+        run: brew install nasm pkg-config
+      - name: Build universal plugin and bundled codec
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/codec-map-macos
+          bash scripts/prepare-codec-map-macos.sh 2>&1 | tee target/codec-map-macos/build.log
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: AOD_CodecMap-macos-universal
+          path: |
+            target/codec-map-macos/AOD_CodecMap-*-macos-universal.zip
+            target/codec-map-macos/AOD_CodecMap-*-macos-universal.zip.sha256
+          if-no-files-found: error
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AOD_CodecMap-macos-build-log
+          path: target/codec-map-macos/build.log
+          if-no-files-found: ignore
