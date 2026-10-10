@@ -91,7 +91,7 @@ cp target/x86_64-apple-darwin/release/codec_map.rsrc "$bundle/Contents/Resources
 cp target/x86_64-apple-darwin/release/codec_map_PkgInfo "$bundle/Contents/PkgInfo"
 cp target/x86_64-apple-darwin/release/codec_map_Info.plist "$bundle/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Set :CFBundleIdentifier com.aodaruma.AOD_CodecMap' "$bundle/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c 'Set :CFBundleExecutable AOD_CodecMap' "$bundle/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Add :CFBundleExecutable string AOD_CodecMap' "$bundle/Contents/Info.plist"
 lipo -create target/{aarch64,x86_64}-apple-darwin/release/libcodec_map.dylib \
     -output "$bundle/Contents/MacOS/AOD_CodecMap"
 for lib in libavutil.60.dylib libavcodec.62.dylib; do
@@ -160,7 +160,7 @@ EOF
     echo "x264 revision: $x264_rev"
     echo "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
     rustc --version
-    xcodebuild -version
+    xcrun clang --version
     sw_vers
     shasum -a 256 "$sources/ffmpeg-8.1.2.tar.gz" "$sources/x264.tar.gz"
 } > "$package/sources/BUILD.txt"

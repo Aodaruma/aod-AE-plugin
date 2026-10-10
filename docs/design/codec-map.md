@@ -9,7 +9,7 @@
 - マップの配置はStretchのみ。`Map Source = Uniform / Layer`を明示的に選ぶ。Layer未選択は黒マップ。位置・エフェクトを焼き込む場合はプリコンポーズする。
 - GOP基準時刻は入力レイヤーのソース時刻0。CRF、GOP長、Temporal Modeは時間変化不可。各時刻のマップ・チャンネル・gamma・offsetは個別に取得する。
 - キャッシュキーには全入力YUV、全offset、時刻列、寸法、フレームレート、CRF、世代、実装schemaを含める。RGB/alpha・合成設定は毎回現在の入力へ適用するため、復号キャッシュには含めない。入力状態の前後比較には`PF_GetCurrentState`と`PF_AreStatesIdentical`を使う。
-- Windows x64用の取得・検証・パッケージスクリプトを用意。正式配布用の対応ソース一式とmacOSパッケージングは未整備。
+- Windows x64用の取得・検証・パッケージスクリプトを用意。macOSはFFmpeg・x264をソースからビルドし、ソース・ライセンスを添付するUniversalパッケージ用スクリプトと専用CIを追加。macOS版AEでの実機動作は未検証。
 
 以下に記すFit/Fill、任意のGOP起点、追加コーデックなどは拡張案であり、v0.1の機能一覧ではない。
 
