@@ -227,7 +227,7 @@ mod tests {
         };
         let mut value = std::ptr::dangling_mut::<c_void>();
         let code = unsafe { compute((&mut options as *mut Options<'_>).cast(), &mut value) };
-        assert_eq!(code, ae::sys::PF_Interrupt_CANCEL);
+        assert_eq!(i64::from(code), i64::from(ae::sys::PF_Interrupt_CANCEL));
         assert!(value.is_null());
         assert!(matches!(
             options.error,

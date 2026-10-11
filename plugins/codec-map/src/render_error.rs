@@ -46,10 +46,16 @@ mod tests {
         let mut output = ae::OutData::from_raw(&mut raw);
         let error = finish(Err(ae::Error::InterruptCancel.into()), &mut output);
         assert!(matches!(error, Err(ae::Error::InterruptCancel)));
-        assert_eq!(raw.out_flags & ae::sys::PF_OutFlag_DISPLAY_ERROR_MESSAGE, 0);
+        assert_eq!(
+            i64::from(raw.out_flags) & i64::from(ae::sys::PF_OutFlag_DISPLAY_ERROR_MESSAGE),
+            0
+        );
         assert_eq!(raw.return_msg[0], 0);
         let error = finish(Err("Codec unavailable".into()), &mut output);
         assert!(matches!(error, Err(ae::Error::BadCallbackParameter)));
-        assert_ne!(raw.out_flags & ae::sys::PF_OutFlag_DISPLAY_ERROR_MESSAGE, 0);
+        assert_ne!(
+            i64::from(raw.out_flags) & i64::from(ae::sys::PF_OutFlag_DISPLAY_ERROR_MESSAGE),
+            0
+        );
     }
 }
