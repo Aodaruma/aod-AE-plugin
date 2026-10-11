@@ -46,11 +46,13 @@ MFR無効の`aerender -mfr OFF 50`と、AE上で`app.setMultiFrameRenderingConfi
 
 ## 複数コーデック・データモッシュ（0.2.0）
 
-Windows x64・AE 2025（25.6.6x4）で確認。実FFmpegを使う10単体試験が成功。H.264・VP9・MPEG-4それぞれの品質差、VP9のPフレームROI、符号化パケットのI/P/B数と除去数、初期I保持、GOP=1の画像保持、B除去時の表示時刻選択、I除去後のPフレーム、キャンセルとキャッシュキーを検証した。
+Windows x64・AE 2025（25.6.6x4）で確認。実FFmpegを使う11単体試験が成功。H.264・VP9・MPEG-4それぞれの品質差、VP9のPフレームROI、符号化パケットのI/P/B数と除去数、初期I保持、GOP=1の画像保持、B除去時の表示時刻選択、I除去後のPフレーム、キャンセルとキャッシュキーを検証した。H.264 / MPEG-4のB生成時は、GOP端を含む12時刻・I除去ON/OFFで必要なprefixだけを処理した結果と全12フレーム処理の結果が一致した。
 
 tests/codecs.jsxは動く素材を固定サイズのプリコンポーズへ入れ、各コーデック・キーフレームでI/B除去を切り替える40PNGを生成。tests/codecs.ps1の21比較が成功し、除去による画像変化、purge後の再現性、OFF後の次のGOP境界での復帰、GOP=1の保持、Map Isolatedの黒領域と現在alphaの保持を確認した。出力はtarget/codec-map-codecsに保存。
 
 Computer UseでAEのCodecドロップダウンを操作し、H.264のBase CRF、VP9 CQ、MPEG-4 Quantizerの表示切り替えを確認。VP9で未来参照・Drop Bが無効、MPEG-4でQP offsetが無効、未来参照ONでDrop Bが有効になることを確認。Drop I/BはcanVaryOverTimeがtrueで、キーフレーム設定と描画結果を確認した。
+
+MPEG-4 Quantizer=20のAE実描画から個別プレビュー・Photo一覧・全体一覧・カタログAEPを更新し、画像を目視確認した。
 
 ## 描画キャンセルの修正（0.1.1）
 

@@ -36,7 +36,7 @@ Map Isolatedでは元のpremultiplied RGBと復号RGBをマップ×Mixで合成�
 - Drop I-FramesがGOP先頭でONなら、OFFの先頭まで過去へ遡る。ソース0のIは必ず保持。負のソース時刻では現在GOPの先頭を種にし、さらに遡りません。
 - 各サンプル時刻のDrop I/B-Framesを読み、圧縮パケットのPTSに対応づけて適用。
 
-入力ではGOP境界にIフレームを要求します。H.264ではIDRを強制し、自動シーンカット・lookahead・MB-tree・open GOPを無効化します。符号化後にAV_PKT_DATA_QUALITY_STATSのpicture typeを使ってI/P/Bを判定します。VP9はBを作らず、keyフラグも判定に利用します。指定されたI/Bパケットをデコーダーへ送らず破棄するため、単に入力フレームのエンコードを省く動作とは異なります。
+入力ではGOP境界にIフレームを要求します。H.264ではIDRを強制し、自動シーンカット・lookahead・MB-tree・open GOPを無効化します。MPEG-4もclosed GOPとし、sc_threshold=1000000000で自動シーンカットを無効化します。符号化後にAV_PKT_DATA_QUALITY_STATSのpicture typeを使ってI/P/Bを判定します。VP9はBを作らず、keyフラグも判定に利用します。指定されたI/Bパケットをデコーダーへ送らず破棄するため、単に入力フレームのエンコードを省く動作とは異なります。
 
 encoderとdecoderの遅延出力をflushしてから、PTS≦要求時刻の最後に復号できた画像を選びます。未来参照画像を要求時刻の出力へ代用しません。欠落した表示時刻では最後の画像を保持し、尺を変えません。I除去後の不正な参照によるAVERROR_INVALIDDATAだけを許容し、それ以外の実行エラーは報告します。欠落参照の補正方法により、H.264 / VP9とMPEG-4では崩れ方が異なります。
 

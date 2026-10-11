@@ -370,6 +370,31 @@ mod tests {
         }
     }
     #[test]
+    #[ignore = "requires the bundled FFmpeg runtime"]
+    fn b_replay_prefix_matches_full_stream_at_gop_edges() {
+        for kind in [Codec::H264, Codec::Mpeg4] {
+            for drop_i in [false, true] {
+                for target in 0..12 {
+                    let setup = |count| {
+                        let mut job = for_codec(kind, count);
+                        job.use_b = true;
+                        job.target = target;
+                        for (i, f) in job.frames.iter_mut().enumerate() {
+                            f.controls.force_i = i % 6 == 0;
+                            f.controls.drop_i = drop_i && i >= 6;
+                            f.controls.drop_b = i % 2 == 1;
+                        }
+                        job
+                    };
+                    let end = (target + 2).min((target / 6 + 1) * 6 - 1);
+                    let full = setup(12).render(|| Ok(())).unwrap();
+                    let prefix = setup(end + 1).render(|| Ok(())).unwrap();
+                    assert_eq!(full, prefix, "{kind:?} drop_i={drop_i} target={target}");
+                }
+            }
+        }
+    }
+    #[test]
     #[ignore = "requires the pinned FFmpeg runtime; run with --ignored"]
     fn real_h264_roi_replay_and_cancellation() {
         for count in [1, 3] {

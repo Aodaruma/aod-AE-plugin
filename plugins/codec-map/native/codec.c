@@ -218,7 +218,7 @@ CmSession *cm_create(const char *directory, int width, int height,
     ctx->sample_aspect_ratio = (AVRational){ 1, 1 };
     ctx->gop_size = 6000; ctx->max_b_frames = s->use_b ? 2 : 0;
     ctx->thread_count = 1;
-    if (kind == 1) ctx->flags |= AV_CODEC_FLAG_CLOSED_GOP;
+    if (kind != 2) ctx->flags |= AV_CODEC_FLAG_CLOSED_GOP;
     ctx->color_range = AVCOL_RANGE_MPEG;
     ctx->colorspace = AVCOL_SPC_BT709;
     ctx->color_primaries = AVCOL_PRI_BT709;
@@ -247,6 +247,7 @@ CmSession *cm_create(const char *directory, int width, int height,
         ctx->flags |= AV_CODEC_FLAG_QSCALE;
         ctx->global_quality = (int)(quality * FF_QP2LAMBDA);
         ctx->qmin = 1; ctx->qmax = 31;
+        OPT("sc_threshold", "1000000000")
     }
 #undef OPT
     int result = s->avcodec_open2(ctx, enc, &options);
