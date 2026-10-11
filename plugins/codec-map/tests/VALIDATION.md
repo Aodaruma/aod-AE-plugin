@@ -2,7 +2,7 @@
 
 2026-10-11、Windows x64、Rust MSVC、FFmpeg 8.1.2 sharedで確認。
 
-## 完了した確認
+## 初版（0.1.0）で完了した確認
 
 - `cargo generate --path templates/plugin --destination plugins --name codec-map --values-file target/codec-map-setup/values.toml --silent`で生成。`repository_plugin=true`とSmart Render / deep color / threaded renderingを指定。
 - `cargo fmt --all -- --check`: 成功。
@@ -54,6 +54,8 @@ Computer UseでAEのCodecドロップダウンを操作し、H.264のBase CRF、
 
 MPEG-4 Quantizer=20のAE実描画から個別プレビュー・Photo一覧・全体一覧・カタログAEPを更新し、画像を目視確認した。
 
+最終Windowsビルドで40PNG・21比較を再実行して成功。0.1.xで保存したGOP=1のAEPを読み込み、Codec=H.264・Future=OFF・Drop I/B=OFFで復元されることを確認。フレーム5のPNGは以前の出力とSHA-256が一致した（AAAB8BC3B008448BDD09C48C946A5C8008B86A744F4150B2E9FF28B5CAF83650）。
+
 ## 描画キャンセルの修正（0.1.1）
 
 ホストの`PF_Interrupt_CANCEL`を文字列へ変換し、処理終了時にabortを再確認していたため、一度だけのキャンセル通知が通常エラーとして表示される経路があった。PreRenderのレイヤーcheckoutで返るキャンセルにもエラーメッセージフラグを付けていた。ホストのエラー型をCompute Cacheのコールバックを含めて維持し、再問い合わせやダイアログ表示をせずそのまま返すよう修正した。
@@ -72,6 +74,19 @@ MPEG-4 Quantizer=20のAE実描画から個別プレビュー・Photo一覧・全
 - ZIP: `AOD_CodecMap-0.1.0-macos-universal.zip`、21,345,440 bytes、SHA-256 `2290bf118f3c69590be437f27e69503c755e04a7a99cfa81a011cdede16a88f9`。
 
 macOS版AEの読み込み・描画、Intel実機上の実行、Developer ID署名・Apple公証は実施していない。
+
+## macOS Universalパッケージ（0.2.0）
+
+2026-10-11、[CI 38140889685](https://github.com/Aodaruma/aod-AE-plugin/actions/runs/38140889685)で成功。ソースは59f5cb3a91ae95685da9dfbe6ec118148f76075f、macOS 15.7.9 / arm64、Rust 1.99.0、Apple clang 17.0.0。
+
+- x264、libvpx 1.15.2、FFmpeg 8.1.2とプラグインをarm64 / x86_64へビルドしてUniversal化。
+- ZIPに同梱するランタイムで11試験すべて成功。VP9・MPEG-4・I/B除去・GOP境界も含む。
+- codesign --verify --deep --strict、Info.plist検査、両CPU・依存先の検査が成功。
+- 取得したZIPのCRCとSHA-256を検証。3バイナリそれぞれの両CPU・署名データ・依存先と、libvpxのLICENSE / PATENTS、3ライブラリのソース、プラグインソースの収録を確認。
+- ZIPは29,483,702 bytes。SHA-256: fa19f04cc003831d1fa0b24026164c04d8bf2e78d328f01be88e074e53f58aa5。
+- DownloadsへAOD_CodecMap-0.2.0-macos-universal.zipとチェックサムを配置。
+
+macOS版AE、Intel Mac実機での実行、Developer ID署名・Apple公証は未確認・未実施です。
 
 ## 未確認・対象外
 
