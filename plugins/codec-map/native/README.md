@@ -31,14 +31,15 @@ DLLはこのプラグインの場所を基準に探します。開発時は`CODE
 
 ## macOSパッケージ
 
-`scripts/prepare-codec-map-macos.sh`はFFmpegとx264をソースからビルドします。
+`scripts/prepare-codec-map-macos.sh`はFFmpeg・x264・libvpxをソースからビルドします。
 
 - FFmpeg 8.1.2: `38b88335f99e76ed89ff3c93f877fdefce736c13`。ソースアーカイブSHA-256: `2ae7e42343cfffb811d15cfe98b6d005f082595fcdf034d30a4ff90cfed9f9c6`。
 - x264 stable: `b35605ace3ddf7c1a5d67a2eb553f034aef41d55`。ソースアーカイブSHA-256: `cd71a7515b0e9a012e1ac9b1f8415bebcaf6fc97d4db32286642ac4c0fbe24f9`。
-- x264は8-bit 4:2:0の静的ライブラリとしてFFmpegにリンクします。FFmpegはGPL構成、libx264エンコーダー・H.264デコーダー・パーサーのみを有効にし、CLI・ネットワーク・その他の外部ライブラリを無効にします。
+- libvpx 1.15.2: `d168454ecd099805c675d4a98c66f4891373302a`。ソースアーカイブSHA-256: `5f6519823db1cc67fba023dc5dcf33abcd3fbab65d7e3c6f1d8ff00917a8c1c6`。
+- x264とlibvpxを8-bitの静的ライブラリとしてFFmpegにリンクします。FFmpegはGPL構成で、libx264・libvpx-vp9・mpeg4エンコーダーとH.264・VP9・MPEG-4のデコーダー・パーサーを有効化します。CLI・ネットワーク・その他の外部ライブラリは無効です。
 - `libavcodec.62.dylib`と`libavutil.60.dylib`はarm64 / x86_64 Universalです。プラグインの`Contents/MacOS/CodecMap/`に同梱し、相互の依存は`@loader_path`へ書き換えます。
 - ライブラリとプラグインをアドホック署名し、両CPU・依存先・署名を検証します。AE実機テストやApple公証はCIには含まれません。
-- ZIPには使用したFFmpeg・x264のソースアーカイブ、プラグイン・utilsのソース、ビルドスクリプト・設定ログと各ライセンスを添付します。
+- ZIPには使用したFFmpeg・x264・libvpxのソースアーカイブ、プラグイン・utilsのソース、ビルドスクリプト・設定ログと各ライセンス、libvpxのPATENTSを添付します。
 
 ## 配布境界
 

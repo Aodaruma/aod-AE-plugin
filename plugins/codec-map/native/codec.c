@@ -42,6 +42,7 @@ typedef void *Library;
  X(AVPacket *, av_packet_alloc, (void)) \
  X(void, av_packet_free, (AVPacket **)) \
  X(void, av_packet_unref, (AVPacket *)) \
+ X(uint8_t *, av_packet_get_side_data, (const AVPacket *, enum AVPacketSideDataType, size_t *)) \
  X(unsigned, avcodec_version, (void))
 
 typedef struct CmSession {
@@ -53,8 +54,11 @@ typedef struct CmSession {
     AVCodecContext *encoder, *decoder;
     AVFrame *input, *output;
     AVPacket *packet;
-    int width, height;
-    int64_t next_pts;
+    int width, height, kind, use_b, count, target, damaged;
+    int64_t next_pts, best_pts;
+    uint8_t *drop_flags, *best;
+    /* I, P, B, dropped I, dropped B, decoded frames. */
+    int stats[6];
 } CmSession;
 
 static void close_library(Library lib) {
@@ -79,6 +83,8 @@ void cm_destroy(CmSession *s) {
     if (s->av_packet_free) s->av_packet_free(&s->packet);
     close_library(s->codec);
     close_library(s->util);
+    free(s->drop_flags);
+    free(s->best);
     free(s);
 }
 
@@ -139,7 +145,8 @@ static int fail(CmSession *s, int code, const char *step, char *error, size_t ca
 }
 
 CmSession *cm_create(const char *directory, int width, int height,
-                     int time_scale, int time_step, double crf,
+                     int time_scale, int time_step, int kind, double quality,
+                     int use_b, int count, int target,
                      char *error, size_t cap) {
     char base[32768], path[32768];
     CmSession *s = (CmSession *)calloc(1, sizeof(*s));
@@ -180,12 +187,15 @@ CmSession *cm_create(const char *directory, int width, int height,
         goto cleanup;
     }
     if (width < 2 || height < 2 || width % 2 || height % 2 ||
-        time_scale <= 0 || time_step <= 0 || !(crf >= 1 && crf <= 51)) {
-        snprintf(error, cap, "Invalid codec dimensions, frame rate, or CRF"); goto cleanup;
+        width > 16384 || height > 16384 || time_scale <= 0 || time_step <= 0 ||
+        kind < 1 || kind > 3 || count < 1 || count > 6003 || target < 0 || target >= count ||
+        !(quality >= (kind == 2 ? 0 : 1) && quality <= (kind == 1 ? 51 : kind == 2 ? 63 : 31))) {
+        snprintf(error, cap, "Invalid codec settings"); goto cleanup;
     }
-    const AVCodec *enc = s->avcodec_find_encoder_by_name("libx264");
-    const AVCodec *dec = s->avcodec_find_decoder(AV_CODEC_ID_H264);
-    if (!enc || !dec) { snprintf(error, cap, "FFmpeg must include libx264 and the H.264 decoder"); goto cleanup; }
+    const char *name = kind == 1 ? "libx264" : kind == 2 ? "libvpx-vp9" : "mpeg4";
+    const AVCodec *enc = s->avcodec_find_encoder_by_name(name);
+    const AVCodec *dec = s->avcodec_find_decoder(kind == 1 ? AV_CODEC_ID_H264 : kind == 2 ? AV_CODEC_ID_VP9 : AV_CODEC_ID_MPEG4);
+    if (!enc || !dec) { snprintf(error, cap, "FFmpeg runtime is missing %s encoder/decoder", name); goto cleanup; }
     s->encoder = s->avcodec_alloc_context3(enc);
     s->decoder = s->avcodec_alloc_context3(dec);
     s->input = s->av_frame_alloc();
@@ -194,37 +204,59 @@ CmSession *cm_create(const char *directory, int width, int height,
     if (!s->encoder || !s->decoder || !s->input || !s->output || !s->packet) {
         snprintf(error, cap, "Cannot allocate FFmpeg frame/context"); goto cleanup;
     }
-    s->width = width; s->height = height;
+    s->width = width; s->height = height; s->kind = kind;
+    s->use_b = use_b && kind != 2;
+    s->count = count; s->target = target; s->best_pts = -1;
+    s->drop_flags = (uint8_t *)calloc(count, 1);
+    s->best = (uint8_t *)malloc((size_t)width * height * 3 / 2);
+    if (!s->drop_flags || !s->best) { snprintf(error, cap, "Cannot allocate replay state"); goto cleanup; }
     AVCodecContext *ctx = s->encoder;
     ctx->width = width; ctx->height = height;
     ctx->pix_fmt = AV_PIX_FMT_YUV420P;
     ctx->time_base = (AVRational){ time_step, time_scale };
     ctx->framerate = (AVRational){ time_scale, time_step };
     ctx->sample_aspect_ratio = (AVRational){ 1, 1 };
-    ctx->gop_size = 6000; ctx->max_b_frames = 0;
+    ctx->gop_size = 6000; ctx->max_b_frames = s->use_b ? 2 : 0;
     ctx->thread_count = 1;
-    ctx->flags |= AV_CODEC_FLAG_CLOSED_GOP | AV_CODEC_FLAG_LOW_DELAY;
+    if (kind == 1) ctx->flags |= AV_CODEC_FLAG_CLOSED_GOP;
     ctx->color_range = AVCOL_RANGE_MPEG;
     ctx->colorspace = AVCOL_SPC_BT709;
     ctx->color_primaries = AVCOL_PRI_BT709;
     ctx->color_trc = AVCOL_TRC_BT709;
     ctx->log_level_offset = 32;
-    char quality[32];
-    snprintf(quality, sizeof(quality), "%.3f", crf);
+    char quality_text[32];
+    snprintf(quality_text, sizeof(quality_text), "%.3f", quality);
 #define OPT(key, value) if (s->av_dict_set(&options, key, value, 0) < 0) { snprintf(error, cap, "Cannot set encoder option"); goto cleanup; }
-    OPT("preset", "veryfast")
-    OPT("tune", "zerolatency")
-    OPT("crf", quality)
-    OPT("x264-params", "aq-mode=1:aq-strength=1:bframes=0:rc-lookahead=0:sync-lookahead=0:mbtree=0:scenecut=0:open-gop=0:intra-refresh=0:ref=1:threads=1:sliced-threads=0")
+    if (kind == 1) {
+        OPT("preset", "veryfast")
+        if (!s->use_b) { OPT("tune", "zerolatency") }
+        OPT("crf", quality_text)
+        OPT("forced-idr", "1")
+        OPT("x264-params", "aq-mode=1:aq-strength=1:b-adapt=0:b-pyramid=none:rc-lookahead=0:sync-lookahead=0:mbtree=0:scenecut=0:open-gop=0:intra-refresh=0:ref=1:threads=1:sliced-threads=0")
+    } else if (kind == 2) {
+        ctx->bit_rate = 0;
+        OPT("crf", quality_text)
+        OPT("deadline", "realtime")
+        OPT("cpu-used", "5")
+        OPT("aq-mode", "0")
+        OPT("lag-in-frames", "0")
+        OPT("auto-alt-ref", "0")
+        OPT("error-resilient", "1")
+    } else {
+        /* Native MPEG-4 has frame-level qscale, but no ROI side-data support. */
+        ctx->flags |= AV_CODEC_FLAG_QSCALE;
+        ctx->global_quality = (int)(quality * FF_QP2LAMBDA);
+        ctx->qmin = 1; ctx->qmax = 31;
+    }
 #undef OPT
     int result = s->avcodec_open2(ctx, enc, &options);
-    if (result < 0) { fail(s, result, "Open x264", error, cap); goto cleanup; }
+    if (result < 0) { fail(s, result, name, error, cap); goto cleanup; }
     if (s->av_dict_count(options)) { snprintf(error, cap, "Unrecognized encoder option"); goto cleanup; }
     s->av_dict_free(&options);
     s->decoder->thread_count = 1;
-    s->decoder->flags |= AV_CODEC_FLAG_LOW_DELAY;
+    s->decoder->log_level_offset = 32;
     result = s->avcodec_open2(s->decoder, dec, NULL);
-    if (result < 0) { fail(s, result, "Open H.264 decoder", error, cap); goto cleanup; }
+    if (result < 0) { fail(s, result, "Open decoder", error, cap); goto cleanup; }
     s->input->format = AV_PIX_FMT_YUV420P;
     s->input->width = width; s->input->height = height;
     s->input->color_range = AVCOL_RANGE_MPEG;
@@ -238,13 +270,80 @@ cleanup:
     return NULL;
 }
 
-int cm_frame(CmSession *s, const uint8_t *input, size_t input_len,
-             const float *offsets, size_t count, uint8_t *output, size_t output_len,
+static int receive_frames(CmSession *s, char *error, size_t cap) {
+    int result;
+    while ((result = s->avcodec_receive_frame(s->decoder, s->output)) >= 0) {
+        AVFrame *f = s->output;
+        if (f->format != AV_PIX_FMT_YUV420P || f->width != s->width || f->height != s->height ||
+            f->pts < 0 || f->pts >= s->count) {
+            snprintf(error, cap, "Unexpected decoded timestamp or pixel format"); return 0;
+        }
+        s->stats[5]++;
+        /* A future reference may arrive first. Only publish presentation times <= target. */
+        if (f->pts <= s->target && f->pts > s->best_pts) {
+            size_t pos = 0;
+            for (int p = 0; p < 3; ++p) {
+                int w = s->width >> (p != 0), h = s->height >> (p != 0);
+                for (int y = 0; y < h; ++y) {
+                    memcpy(s->best + pos, f->data[p] + (ptrdiff_t)y * f->linesize[p], w);
+                    pos += w;
+                }
+            }
+            s->best_pts = f->pts;
+        }
+        s->av_frame_unref(f);
+    }
+    if (result == AVERROR(EAGAIN) || result == AVERROR_EOF ||
+        (s->damaged && result == AVERROR_INVALIDDATA)) return 1;
+    return fail(s, result, "Receive decoded frame", error, cap);
+}
+
+static int receive_packets(CmSession *s, char *error, size_t cap) {
+    int result;
+    while ((result = s->avcodec_receive_packet(s->encoder, s->packet)) >= 0) {
+        AVPacket *p = s->packet;
+        if (p->pts < 0 || p->pts >= s->next_pts) {
+            snprintf(error, cap, "Unexpected encoded timestamp"); return 0;
+        }
+        size_t bytes = 0;
+        uint8_t *stats = s->av_packet_get_side_data(p, AV_PKT_DATA_QUALITY_STATS, &bytes);
+        int type = stats && bytes >= 5 ? stats[4] :
+                   (p->flags & AV_PKT_FLAG_KEY) ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
+        if (s->use_b && (!stats || bytes < 5)) {
+            snprintf(error, cap, "Encoder did not report picture types"); return 0;
+        }
+        if (type < AV_PICTURE_TYPE_I || type > AV_PICTURE_TYPE_B) {
+            snprintf(error, cap, "Unsupported encoded picture type"); return 0;
+        }
+        s->stats[type - AV_PICTURE_TYPE_I]++;
+        uint8_t flags = s->drop_flags[p->pts];
+        int drop_i = p->pts != 0 && type == AV_PICTURE_TYPE_I && (flags & 1);
+        int drop_b = type == AV_PICTURE_TYPE_B && (flags & 2);
+        if (drop_i || drop_b) {
+            if (drop_i) { s->damaged = 1; s->stats[3]++; }
+            if (drop_b) s->stats[4]++;
+            s->av_packet_unref(p);
+            continue;
+        }
+        if (type == AV_PICTURE_TYPE_I) s->damaged = 0;
+        int sent = s->avcodec_send_packet(s->decoder, p);
+        s->av_packet_unref(p);
+        /* Missing I references deliberately produce a damaged bitstream. */
+        if (sent < 0 && !(s->damaged && sent == AVERROR_INVALIDDATA))
+            return fail(s, sent, "Decode packet", error, cap);
+        if (!receive_frames(s, error, cap)) return 0;
+    }
+    if (result == AVERROR(EAGAIN) || result == AVERROR_EOF) return 1;
+    return fail(s, result, "Receive encoded packet", error, cap);
+}
+
+int cm_push(CmSession *s, const uint8_t *input, size_t input_len,
+             const float *offsets, size_t count, int force_i, int drop_flags,
              char *error, size_t cap) {
-    if (!s || !input || !output || !offsets) return 0;
+    if (!s || !input || !offsets) return 0;
     const size_t size = (size_t)s->width * s->height * 3 / 2;
     const int cols = (s->width + 15) / 16, rows = (s->height + 15) / 16;
-    if (input_len != size || output_len != size || count != (size_t)cols * rows) {
+    if (input_len != size || count != (size_t)cols * rows || s->next_pts >= s->count) {
         snprintf(error, cap, "Invalid YUV or ROI buffer length"); return 0;
     }
     int result = s->av_frame_make_writable(s->input);
@@ -258,6 +357,7 @@ int cm_frame(CmSession *s, const uint8_t *input, size_t input_len,
         }
     }
     s->av_frame_remove_side_data(s->input, AV_FRAME_DATA_REGIONS_OF_INTEREST);
+    if (s->kind != 3) {
     AVFrameSideData *side = s->av_frame_new_side_data(s->input,
         AV_FRAME_DATA_REGIONS_OF_INTEREST, count * sizeof(AVRegionOfInterest));
     if (!side) { snprintf(error, cap, "Cannot allocate ROI map"); return 0; }
@@ -270,39 +370,40 @@ int cm_frame(CmSession *s, const uint8_t *input, size_t input_len,
         roi[i].self_size = sizeof(*roi);
         roi[i].left = x * 16; roi[i].right = (x + 1) * 16 < s->width ? (x + 1) * 16 : s->width;
         roi[i].top = y * 16; roi[i].bottom = (y + 1) * 16 < s->height ? (y + 1) * 16 : s->height;
-        /* FFmpeg scales normalized ROI offsets by the 8-bit H.264 QP range, 51. */
-        roi[i].qoffset = (AVRational){ (int)(offsets[i] * 1000), 51000 };
+        if (s->kind == 2) {
+            /* VP9 has eight segments including neutral. Use seven shared levels. */
+            int level = (int)(offsets[i] / 8 + (offsets[i] < 0 ? -0.5f : 0.5f));
+            roi[i].qoffset = (AVRational){ level * 8, 63 };
+        } else {
+            roi[i].qoffset = (AVRational){ (int)(offsets[i] * 1000), 51000 };
+        }
+    }
     }
     const int64_t pts = s->next_pts++;
+    s->drop_flags[pts] = (uint8_t)drop_flags;
     s->input->pts = pts;
-    s->input->pict_type = pts == 0 ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P;
+    s->input->pict_type = pts == 0 || force_i ? AV_PICTURE_TYPE_I :
+                          s->use_b ? AV_PICTURE_TYPE_NONE : AV_PICTURE_TYPE_P;
+    s->input->quality = s->encoder->global_quality;
     result = s->avcodec_send_frame(s->encoder, s->input);
     if (result < 0) return fail(s, result, "Encode", error, cap);
-    int found = 0;
-    while ((result = s->avcodec_receive_packet(s->encoder, s->packet)) >= 0) {
-        int sent = s->avcodec_send_packet(s->decoder, s->packet);
-        s->av_packet_unref(s->packet);
-        if (sent < 0) return fail(s, sent, "Decode packet", error, cap);
-        int decoded;
-        while ((decoded = s->avcodec_receive_frame(s->decoder, s->output)) >= 0) {
-            if (s->output->pts != pts || s->output->format != AV_PIX_FMT_YUV420P ||
-                s->output->width != s->width || s->output->height != s->height) {
-                snprintf(error, cap, "Unexpected decoded timestamp or pixel format"); return 0;
-            }
-            pos = 0;
-            for (int p = 0; p < 3; ++p) {
-                int w = s->width >> (p != 0), h = s->height >> (p != 0);
-                for (int y = 0; y < h; ++y) {
-                    memcpy(output + pos, s->output->data[p] + (ptrdiff_t)y * s->output->linesize[p], w);
-                    pos += w;
-                }
-            }
-            s->av_frame_unref(s->output);
-            found++;
-        }
-        if (decoded != AVERROR(EAGAIN)) return fail(s, decoded, "Receive decoded frame", error, cap);
+    return receive_packets(s, error, cap);
+}
+
+int cm_finish(CmSession *s, uint8_t *output, size_t output_len, int *stats,
+              char *error, size_t cap) {
+    if (!s || !output || output_len != (size_t)s->width * s->height * 3 / 2 ||
+        s->next_pts != s->count) {
+        snprintf(error, cap, "Incomplete codec replay"); return 0;
     }
-    if (result != AVERROR(EAGAIN)) return fail(s, result, "Receive encoded packet", error, cap);
-    if (found != 1) { snprintf(error, cap, "Low-delay encoder did not return the current frame"); return 0; }
+    int result = s->avcodec_send_frame(s->encoder, NULL);
+    if (result < 0) return fail(s, result, "Flush encoder", error, cap);
+    if (!receive_packets(s, error, cap)) return 0;
+    result = s->avcodec_send_packet(s->decoder, NULL);
+    if (result < 0) return fail(s, result, "Flush decoder", error, cap);
+    if (!receive_frames(s, error, cap)) return 0;
+    if (s->best_pts < 0) { snprintf(error, cap, "No decoded seed frame"); return 0; }
+    memcpy(output, s->best, output_len);
+    if (stats) memcpy(stats, s->stats, sizeof(s->stats));
     return 1;
 }

@@ -44,7 +44,13 @@ AE 2025（25.6.6x4）で19条件のPNG生成と11項目の画素比較に成功�
 
 MFR無効の`aerender -mfr OFF 50`と、AE上で`app.setMultiFrameRenderingConfig(true, 50)`を設定してキャッシュpurge後にレンダーキューを実行した場合を比較した。フレーム0〜11の12枚すべてがPNGファイルのSHA-256で一致し、レンダーキューはDONEで完了した。出力と記録は`target/codec-map-smoke/{serial,mfr}/`、`serial.log`、`mfr-report.txt`。この環境では2回目のaerender起動がAEを起動せず待機したため、MFR有効側はAE本体のスクリプトAPIで実施した。同時実行数の計測・負荷試験までは行っていない。
 
-## macOS Universalパッケージ
+## 複数コーデック・データモッシュ（0.2.0）
+
+Windows x64・AE 2025（25.6.6x4）で確認。実FFmpegを使う10単体試験が成功。H.264・VP9・MPEG-4それぞれの品質差、VP9のPフレームROI、符号化パケットのI/P/B数と除去数、初期I保持、GOP=1の画像保持、B除去時の表示時刻選択、I除去後のPフレーム、キャンセルとキャッシュキーを検証した。
+
+tests/codecs.jsxは動く素材を固定サイズのプリコンポーズへ入れ、各コーデック・キーフレームでI/B除去を切り替える40PNGを生成。tests/codecs.ps1の21比較が成功し、除去による画像変化、purge後の再現性、OFF後の次のGOP境界での復帰、GOP=1の保持、Map Isolatedの黒領域と現在alphaの保持を確認した。出力はtarget/codec-map-codecsに保存。
+
+Computer UseでAEのCodecドロップダウンを操作し、H.264のBase CRF、VP9 CQ、MPEG-4 Quantizerの表示切り替えを確認。VP9で未来参照・Drop Bが無効、MPEG-4でQP offsetが無効、未来参照ONでDrop Bが有効になることを確認。Drop I/BはcanVaryOverTimeがtrueで、キーフレーム設定と描画結果を確認した。
 
 ## 描画キャンセルの修正（0.1.1）
 
@@ -52,7 +58,7 @@ MFR無効の`aerender -mfr OFF 50`と、AE上で`app.setMultiFrameRenderingConfi
 
 7単体試験で、単発のキャンセルがキャッシュ値を公開せず、エラーメッセージフラグも立てずに戻ることを確認。AE 2025の`tests/gop-one.jsx`では、Uniform / Layer、GOP=1 / Independent、キャッシュpurgeの前後、順序を入れ替えた5時刻の40PNGを生成し、同条件の結果がSHA-256で一致した。報告元のOS・AEバージョンは不明で、報告環境での直接再現は未確認。
 
-### 0.1.0のmacOSビルド記録
+## macOS Universalパッケージ（0.1.0）
 
 2026-10-11、[CodecMap macOS PreviewのCI](https://github.com/Aodaruma/aod-AE-plugin/actions/runs/38079738940)で成功。対象ソースは`5b4186295645f0895694d565f504feb46f7c4280`。macOS 15.7.9 / arm64、Rust 1.99.0、Apple clang 17.0.0でビルドした。
 
@@ -70,4 +76,4 @@ macOS版AEの読み込み・描画、Intel実機上の実行、Developer ID署�
 - AE上の時間リマップ、逆方向の時間伸縮、ROIタイル描画、16 / 32 bpcのHDR入力の数値比較。
 - macOS版AE、Intel Mac上の実行、Premiere、異なるCPU・OS・FFmpegビルド間のビット一致。
 - 正式配布用の対応ソース一式と依存ライセンスのパッケージング。
-- VP9、双方向GOP、ハードウェアエンコード、CBR/VBR。
+- ハードウェアエンコード、H.265、AV1、CBR/VBR。

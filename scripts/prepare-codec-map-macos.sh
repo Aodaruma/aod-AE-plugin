@@ -22,8 +22,10 @@ jobs="$(sysctl -n hw.logicalcpu)"
 sdk="$(xcrun --sdk macosx --show-sdk-path)"
 ffmpeg_rev=38b88335f99e76ed89ff3c93f877fdefce736c13
 x264_rev=b35605ace3ddf7c1a5d67a2eb553f034aef41d55
+vpx_rev=d168454ecd099805c675d4a98c66f4891373302a
 ffmpeg_sha=2ae7e42343cfffb811d15cfe98b6d005f082595fcdf034d30a4ff90cfed9f9c6
 x264_sha=cd71a7515b0e9a012e1ac9b1f8415bebcaf6fc97d4db32286642ac4c0fbe24f9
+vpx_sha=5f6519823db1cc67fba023dc5dcf33abcd3fbab65d7e3c6f1d8ff00917a8c1c6
 
 fetch() {
     local name="$1" url="$2" sha="$3"
@@ -35,13 +37,15 @@ fetch() {
 }
 fetch ffmpeg-8.1.2.tar.gz "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/$ffmpeg_rev" "$ffmpeg_sha"
 fetch x264.tar.gz "https://code.videolan.org/videolan/x264/-/archive/$x264_rev/x264-$x264_rev.tar.gz" "$x264_sha"
+fetch libvpx-1.15.2.tar.gz "https://codeload.github.com/webmproject/libvpx/tar.gz/$vpx_rev" "$vpx_sha"
 
 for arch in arm64 x86_64; do
     if [ "$arch" = arm64 ]; then rust_arch=aarch64; else rust_arch=x86_64; fi
     prefix="$work/$arch/install"
-    mkdir -p "$work/$arch/x264" "$work/$arch/ffmpeg" "$prefix"
+    mkdir -p "$work/$arch/x264" "$work/$arch/libvpx" "$work/$arch/ffmpeg" "$prefix"
     tar -xzf "$sources/x264.tar.gz" -C "$work/$arch/x264" --strip-components=1
     tar -xzf "$sources/ffmpeg-8.1.2.tar.gz" -C "$work/$arch/ffmpeg" --strip-components=1
+    tar -xzf "$sources/libvpx-1.15.2.tar.gz" -C "$work/$arch/libvpx" --strip-components=1
     (
         cd "$work/$arch/x264"
         CC="clang -arch $arch" ./configure --prefix="$prefix" \
@@ -50,6 +54,17 @@ for arch in arm64 x86_64; do
             --bit-depth=8 --chroma-format=420 \
             --extra-cflags="-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET" \
             --extra-ldflags="-mmacosx-version-min=$MACOSX_DEPLOYMENT_TARGET"
+        make -j "$jobs"
+        make install
+    )
+    (
+        cd "$work/$arch/libvpx"
+        CC="clang -arch $arch" CXX="clang++ -arch $arch" ./configure \
+            --prefix="$prefix" --target="$arch-darwin20-gcc" --as=nasm \
+            --enable-static --disable-shared --enable-pic \
+            --disable-examples --disable-tools --disable-docs --disable-unit-tests \
+            --disable-vp8 --enable-vp9 --disable-vp9-highbitdepth \
+            --disable-webm-io --disable-libyuv
         make -j "$jobs"
         make install
     )
@@ -64,8 +79,9 @@ for arch in arm64 x86_64; do
             --disable-debug --disable-static --enable-shared --enable-pic \
             --disable-avdevice --disable-avformat --disable-avfilter \
             --disable-swresample --disable-swscale --disable-network \
-            --enable-gpl --enable-libx264 --enable-encoder=libx264 \
-            --enable-decoder=h264 --enable-parser=h264
+            --enable-gpl --enable-libx264 --enable-libvpx \
+            --enable-encoder=libx264,libvpx_vp9,mpeg4 \
+            --enable-decoder=h264,vp9,mpeg4 --enable-parser=h264,vp9,mpeg4video
         make -j "$jobs"
         make install
     )
@@ -132,11 +148,14 @@ cp plugins/codec-map/TEMPLATE-LICENSE.txt "$package/licenses/"
 cp "$work/arm64/ffmpeg/COPYING.GPLv2" "$package/licenses/FFmpeg-GPL-2.0.txt"
 cp "$work/arm64/ffmpeg/COPYING.LGPLv2.1" "$package/licenses/FFmpeg-LGPL-2.1.txt"
 cp "$work/arm64/x264/COPYING" "$package/licenses/x264-COPYING.txt"
-cp "$sources/ffmpeg-8.1.2.tar.gz" "$sources/x264.tar.gz" "$package/sources/"
+cp "$work/arm64/libvpx/LICENSE" "$package/licenses/libvpx-LICENSE.txt"
+cp "$work/arm64/libvpx/PATENTS" "$package/licenses/libvpx-PATENTS.txt"
+cp "$sources/ffmpeg-8.1.2.tar.gz" "$sources/x264.tar.gz" "$sources/libvpx-1.15.2.tar.gz" "$package/sources/"
 for arch in arm64 x86_64; do
     mkdir -p "$package/sources/build-info/$arch"
     cp "$work/$arch/ffmpeg/ffbuild/config.log" "$package/sources/build-info/$arch/ffmpeg-config.log"
     cp "$work/$arch/x264/config.log" "$package/sources/build-info/$arch/x264-config.log"
+    cp "$work/$arch/libvpx/config.log" "$package/sources/build-info/$arch/libvpx-config.log"
 done
 tar -czf "$package/sources/codec-map-source.tar.gz" \
     Cargo.toml Cargo.lock LICENSE LICENSING.md AdobePlugin.just \
@@ -149,7 +168,7 @@ After Effectsを終了し、AOD_CodecMap.pluginを次のフォルダーへコピ
 /Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/
 再起動後、Aodaruma > AOD_CodecMapから使用できます。
 
-FFmpeg 8.1.2 / libx264はプラグイン内に同梱しています。別途インストールは不要です。
+FFmpeg 8.1.2 / libx264 / libvpxはプラグイン内に同梱しています。別途インストールは不要です。
 開発検証用のアドホック署名です。Developer ID署名・Apple公証はありません。
 このZIPを作成したCIではmacOS版AEの起動・描画テストは行っていません。
 コーデックの実行テストはビルドしたMacのネイティブCPUで実行しています。
@@ -159,11 +178,12 @@ EOF
     echo "Source revision: $(git rev-parse HEAD)"
     echo "FFmpeg revision: $ffmpeg_rev"
     echo "x264 revision: $x264_rev"
+    echo "libvpx revision: $vpx_rev"
     echo "MACOSX_DEPLOYMENT_TARGET=$MACOSX_DEPLOYMENT_TARGET"
     rustc --version
     xcrun clang --version
     sw_vers
-    shasum -a 256 "$sources/ffmpeg-8.1.2.tar.gz" "$sources/x264.tar.gz"
+    shasum -a 256 "$sources/ffmpeg-8.1.2.tar.gz" "$sources/x264.tar.gz" "$sources/libvpx-1.15.2.tar.gz"
 } > "$package/sources/BUILD.txt"
 zip="$work/$(basename "$package").zip"
 ditto -c -k --sequesterRsrc --keepParent "$package" "$zip"

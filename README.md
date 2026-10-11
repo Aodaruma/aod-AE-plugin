@@ -13,7 +13,7 @@ This repository is a Cargo
 workspace that builds multiple AE effect plugins, plus shared utilities and a plugin
 template.
 
-現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する40種類のエフェクトを掲載しています。[AOD_CodecMap](plugins/codec-map/README.md)はマップでH.264の圧縮を制御し、過去フレームの影響を再現します。
+現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する40種類のエフェクトを掲載しています。[AOD_CodecMap](plugins/codec-map/README.md)はH.264・VP9・MPEG-4の圧縮をマップで制御し、I/Bフレームの除去によるデータモッシュに対応します。
 
 ## Effect List / エフェクト一覧
 

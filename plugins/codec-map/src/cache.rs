@@ -7,7 +7,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
 };
 
-const CLASS: &std::ffi::CStr = c"com.aodaruma.codec-map.decoded-frame.v1";
+const CLASS: &std::ffi::CStr = c"com.aodaruma.codec-map.decoded-frame.v2";
 
 struct Suite {
     input: ae::InData,
@@ -207,7 +207,10 @@ mod tests {
             height: 2,
             time_scale: 24,
             time_step: 1,
-            crf: 28.0,
+            codec: crate::codec::Codec::H264,
+            quality: 28.0,
+            use_b: false,
+            target: 0,
             frames: vec![],
         };
         let mut calls = 0;

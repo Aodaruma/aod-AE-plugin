@@ -7,19 +7,20 @@
 ## AOD_CodecMap
 
 - **分類:** P：一般写真・連続階調画像
-- **プレビュー:** 左半分は黒マップで保持、右半分は白マップで強く圧縮。Base CRF=40、White QP Offset=24。
+- **プレビュー:** 左半分は黒マップで保持、右半分は白マップで強く圧縮。MPEG-4 Part 2、Quantizer=20、Map Isolated。
 
 ![AOD_CodecMap](assets/previews/codec-map.png)
 
-映像コーデックの圧縮をマップで制御します。初版はH.264の実際の圧縮・復号を使用し、過去フレームの影響を固定GOP内で再現します。未来参照はOFF固定です。
+H.264・VP9・MPEG-4 Part 2の圧縮と適用範囲をマップで制御します。未来参照は初期OFF。キーフレーム可能なI/Bフレーム除去でデータモッシュも作れます。
 
 ### パラメーター
 
-- `Base CRF`: 全体の品質。大きいほど強く圧縮します。
+- `Codec`: コーデックを選択し、Base CRF / VP9 CQ / MPEG-4 Quantizerの品質設定を動的に切り替えます。
+- `Drop I-Frames` / `Drop B-Frames`: 符号化後のフレームを破棄。BフレームにはAllow Future FramesのONが必要です。
 - `Temporal Mode` / `GOP Length`: 過去参照またはフレーム単位の独立圧縮と、その区間長。
 - `Map Source` / `Compression Map`: 全体適用、または圧縮領域を指定するレイヤー。
 - `Map Channel` / `Invert Map` / `Map Gamma`: マップの読み方と濃淡の調整。
-- `Black QP Offset` / `White QP Offset`: マップの黒・白に対応する量子化オフセット。
+- `Black QP Offset` / `White QP Offset`: H.264・VP9の量子化オフセット。VP9はPフレームのみ。MPEG-4ではマップ合成だけを使います。
 - `Output`: 黒領域を保持するMap Isolated、または復号画像全体を表示するCodec Result。
 - `Mix` / `Preview`: 適用率、マップ・要求offset・差分の確認。
 

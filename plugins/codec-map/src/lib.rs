@@ -6,6 +6,7 @@ mod codec;
 mod compute_ffi;
 mod core;
 mod render_error;
+mod temporal;
 
 use after_effects as ae;
 use core::{MapSettings, Rgba};
@@ -29,6 +30,12 @@ enum Params {
     Preview,
     Reset,
     Generation,
+    Codec,
+    Vp9Quality,
+    Mpeg4Quality,
+    Future,
+    DropI,
+    DropB,
 }
 
 #[derive(Default)]
@@ -46,7 +53,11 @@ struct Plan {
     times: Vec<i32>,
     maps: Vec<MapSettings>,
     map_enabled: bool,
-    crf: f64,
+    codec: codec::Codec,
+    quality: f64,
+    use_b: bool,
+    target: usize,
+    controls: Vec<codec::Controls>,
     mix: f32,
     isolated: bool,
     preview: i32,
@@ -113,7 +124,7 @@ impl AdobePluginGlobal for Plugin {
                     .set_slider_min(1)
                     .set_slider_max(60);
             }),
-            fixed(),
+            fixed() | F::SUPERVISE,
             U::NONE,
         )?;
         params.add_with_flags(
@@ -173,6 +184,51 @@ impl AdobePluginGlobal for Plugin {
             fixed(),
             U::INVISIBLE,
         )?;
+        // Append IDs to preserve existing AE projects and expressions.
+        params.add_with_flags(
+            Params::Codec,
+            "Codec",
+            popup(&["H.264 (libx264)", "VP9 (libvpx)", "MPEG-4 Part 2"]),
+            fixed() | F::SUPERVISE,
+            U::NONE,
+        )?;
+        params.add_with_flags(
+            Params::Vp9Quality,
+            "VP9 CQ",
+            slider(35.0, 0.0, 63.0),
+            fixed(),
+            U::NONE,
+        )?;
+        params.add_with_flags(
+            Params::Mpeg4Quality,
+            "MPEG-4 Quantizer",
+            slider(8.0, 1.0, 31.0),
+            fixed(),
+            U::NONE,
+        )?;
+        params.add_with_flags(
+            Params::Future,
+            "Allow Future Frames",
+            ae::CheckBoxDef::setup(|p| {
+                p.set_default(false).set_value(false);
+            }),
+            fixed() | F::SUPERVISE,
+            U::NONE,
+        )?;
+        params.add(
+            Params::DropI,
+            "Drop I-Frames",
+            ae::CheckBoxDef::setup(|p| {
+                p.set_default(false).set_value(false);
+            }),
+        )?;
+        params.add(
+            Params::DropB,
+            "Drop B-Frames",
+            ae::CheckBoxDef::setup(|p| {
+                p.set_default(false).set_value(false);
+            }),
+        )?;
         Ok(())
     }
 
@@ -185,7 +241,7 @@ impl AdobePluginGlobal for Plugin {
     ) -> Result<(), Error> {
         match cmd {
             ae::Command::About => output.set_return_msg(&format!(
-                "AOD_CodecMap {}\r{PLUGIN_DESCRIPTION}\rH.264 / Past Only / 8-bit YUV 4:2:0",
+                "AOD_CodecMap {}\r{PLUGIN_DESCRIPTION}\rH.264 / VP9 / MPEG-4 Part 2 / 8-bit YUV 4:2:0",
                 env!("CARGO_PKG_VERSION")
             )),
             ae::Command::GlobalSetup => {
@@ -220,7 +276,7 @@ impl AdobePluginGlobal for Plugin {
             }
             ae::Command::SmartPreRender { mut extra } => {
                 render_error::finish(
-                    pre_render(input, params, &mut extra).map_err(Into::into),
+                    pre_render(input, params, &mut extra),
                     &mut output,
                 )?;
             }
@@ -255,22 +311,47 @@ fn update_ui(
     plugin_id: Option<ae::aegp::PluginId>,
     params: &mut Parameters<Params>,
 ) -> Result<(), Error> {
+    let codec = codec::Codec::from_choice(choice(params, Params::Codec)?)
+        .map_err(|_| Error::InvalidParms)?;
+    let independent = choice(params, Params::Mode)? == 2;
+    let gop = params.get(Params::Gop)?.as_slider()?.value();
+    let b_available = codec.supports_b() && !independent && gop >= 3;
+    let use_b = b_available && params.get(Params::Future)?.as_checkbox()?.value();
+    let roi =
+        codec != codec::Codec::Mpeg4 && (codec != codec::Codec::Vp9 || (!independent && gop > 1));
     if !input.is_premiere()
         && let Some(plugin_id) = plugin_id
-        && let Some(index) = params.index(Params::Generation)
         && let Ok(effect) = input.effect().aegp_effect(plugin_id)
-        && let Ok(stream) = effect.new_stream_by_index(plugin_id, index as i32)
     {
-        stream.set_dynamic_stream_flag(ae::aegp::DynamicStreamFlags::Hidden, false, true)?;
+        for (id, hidden) in [
+            (Params::Generation, true),
+            (Params::Crf, codec != codec::Codec::H264),
+            (Params::Vp9Quality, codec != codec::Codec::Vp9),
+            (Params::Mpeg4Quality, codec != codec::Codec::Mpeg4),
+        ] {
+            if let Some(index) = params.index(id)
+                && let Ok(stream) = effect.new_stream_by_index(plugin_id, index as i32)
+            {
+                stream.set_dynamic_stream_flag(
+                    ae::aegp::DynamicStreamFlags::Hidden,
+                    false,
+                    hidden,
+                )?;
+            }
+        }
     }
     let map_enabled = choice(params, Params::MapSource)? == 2;
-    let independent = choice(params, Params::Mode)? == 2;
     for (id, disabled) in [
         (Params::Gop, independent),
         (Params::MapLayer, !map_enabled),
         (Params::Channel, !map_enabled),
         (Params::Invert, !map_enabled),
         (Params::Gamma, !map_enabled),
+        (Params::Black, !roi),
+        (Params::White, !roi),
+        (Params::Future, !b_available),
+        (Params::DropI, independent),
+        (Params::DropB, !use_b),
     ] {
         let mut p = params.get_mut(id)?;
         if p.ui_flags().contains(ae::ParamUIFlags::DISABLED) != disabled {
@@ -285,14 +366,37 @@ fn pre_render(
     input: InData,
     params: &Parameters<Params>,
     extra: &mut ae::PreRenderExtra,
-) -> Result<(), Error> {
-    let times = core::times(
+) -> Result<(), RenderError> {
+    let codec = codec::Codec::from_choice(choice(params, Params::Codec)?)?;
+    let independent = choice(params, Params::Mode)? == 2;
+    let gop = params.get(Params::Gop)?.as_slider()?.value();
+    let use_b = codec.supports_b()
+        && !independent
+        && gop >= 3
+        && params.get(Params::Future)?.as_checkbox()?.value();
+    let replay = temporal::plan(
         input.current_time(),
         input.time_step(),
-        params.get(Params::Gop)?.as_slider()?.value(),
-        choice(params, Params::Mode)? == 2,
-    )
-    .map_err(|_| Error::InvalidParms)?;
+        gop,
+        independent,
+        use_b,
+        |time| {
+            input.interact().abort()?;
+            let at = |id| {
+                params.checkout_at(
+                    id,
+                    Some(time),
+                    Some(input.time_step()),
+                    Some(input.time_scale()),
+                )
+            };
+            Ok((
+                at(Params::DropI)?.as_checkbox()?.value(),
+                at(Params::DropB)?.as_checkbox()?.value(),
+            ))
+        },
+    )?;
+    let times = replay.times;
     let map_enabled = choice(params, Params::MapSource)? == 2;
     let mut request = extra.output_request();
     // A codec frame is a full image; AE may ask for a tile or a preview ROI.
@@ -316,7 +420,7 @@ fn pre_render(
             input.time_step(),
             input.time_scale(),
         )?;
-        if i + 1 == times.len() {
+        if i == replay.target {
             extra.union_result_rect(result.result_rect.into());
             extra.union_max_result_rect(result.max_result_rect.into());
         }
@@ -351,7 +455,7 @@ fn pre_render(
         scale: input.time_scale(),
     };
     let duration = ae::Time {
-        value: i32::try_from(i64::from(input.current_time()) - i64::from(times[0]) + 1)
+        value: i32::try_from(i64::from(*times.last().unwrap()) - i64::from(times[0]) + 1)
             .map_err(|_| Error::InvalidParms)?,
         scale: input.time_scale(),
     };
@@ -364,7 +468,18 @@ fn pre_render(
         times,
         maps,
         map_enabled,
-        crf: float(params, Params::Crf)?,
+        codec,
+        quality: float(
+            params,
+            match codec {
+                codec::Codec::H264 => Params::Crf,
+                codec::Codec::Vp9 => Params::Vp9Quality,
+                codec::Codec::Mpeg4 => Params::Mpeg4Quality,
+            },
+        )?,
+        use_b,
+        target: replay.target,
+        controls: replay.controls,
         mix: (float(params, Params::Mix)? / 100.0) as f32,
         isolated: choice(params, Params::Output)? == 1,
         preview: choice(params, Params::Preview)?,
@@ -406,7 +521,7 @@ impl Plugin {
     ) -> Result<(), RenderError> {
         let abort = || input.interact().abort().map_err(RenderError::from);
         abort()?;
-        let current = CheckedLayer::new(cb, ((plan.times.len() - 1) * 2) as u32)?;
+        let current = CheckedLayer::new(cb, (plan.target * 2) as u32)?;
         // SmartFX requires an input checkout before the output checkout.
         let Some(mut output) = cb.checkout_output()? else {
             return Ok(());
@@ -426,7 +541,7 @@ impl Plugin {
         let (width, height) = (source.width(), source.height());
         let (pw, ph, size) = core::padded_size(width, height)?;
         if size * plan.times.len() > MAX_REPLAY_BYTES {
-            return Err("Replay exceeds 256 MiB. Reduce GOP Length or preview resolution.".into());
+            return Err("Replay exceeds 256 MiB. Reduce preview resolution/GOP Length, or keep a recent I-frame by turning Drop I-Frames off.".into());
         }
         let original = pixels(source);
         let mut job = codec::Job {
@@ -438,7 +553,10 @@ impl Plugin {
                 .checked_abs()
                 .filter(|v| *v > 0)
                 .ok_or("Invalid frame duration")?,
-            crf: plan.crf,
+            codec: plan.codec,
+            quality: plan.quality,
+            use_b: plan.use_b,
+            target: plan.target,
             frames: Vec::with_capacity(plan.times.len()),
         };
         let mut current_map = Vec::new();
@@ -468,8 +586,12 @@ impl Plugin {
             } else {
                 vec![1.0; width * height]
             };
-            let offsets = settings.blocks(&map, width, height);
-            let yuv = if i + 1 == plan.times.len() {
+            let offsets = settings
+                .blocks(&map, width, height)
+                .into_iter()
+                .map(|value| plan.codec.roi_offset(value))
+                .collect();
+            let yuv = if i == plan.target {
                 core::to_yuv(&original, width, height)?
             } else {
                 let checked = CheckedLayer::new(cb, (i * 2) as u32)?;
@@ -487,8 +609,12 @@ impl Plugin {
                     black
                 }
             };
-            job.frames.push(codec::Frame { yuv, offsets });
-            if i + 1 == plan.times.len() {
+            job.frames.push(codec::Frame {
+                yuv,
+                offsets,
+                controls: plan.controls[i],
+            });
+            if i == plan.target {
                 current_map = map;
             }
         }
@@ -549,7 +675,7 @@ impl Plugin {
                     }
                     3 => {
                         let block = (sy / 16) * pw.div_ceil(16) + sx / 16;
-                        let m = (job.frames.last().unwrap().offsets[block] + 24.0) / 48.0;
+                        let m = (job.frames[plan.target].offsets[block] + 24.0) / 48.0;
                         [m, m, m, 1.0]
                     }
                     4 => [

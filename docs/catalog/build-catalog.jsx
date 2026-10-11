@@ -181,10 +181,10 @@
             addMaskedSolid(mapComp, "White", [1, 1, 1], [[256, 0], [512, 0], [512, 512], [256, 512]], 100);
             var mapLayer = comp.layers.add(mapComp);
             mapLayer.enabled = false;
-            setProperty(effect, "Base CRF", 40);
+            setProperty(effect, "Codec", 3);
+            setProperty(effect, "MPEG-4 Quantizer", 20);
             setProperty(effect, "Map Source", 2);
             setProperty(effect, "Compression Map", mapLayer.index);
-            setProperty(effect, "White QP Offset", 24);
         } else if (item.match === "ColorAjust") {
             setProperty(effect, "Color Space", 1);
             setProperty(effect, "Hue Shift (deg)", 42);
