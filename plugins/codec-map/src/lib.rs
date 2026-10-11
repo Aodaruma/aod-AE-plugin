@@ -5,9 +5,11 @@ mod cache;
 mod codec;
 mod compute_ffi;
 mod core;
+mod render_error;
 
 use after_effects as ae;
 use core::{MapSettings, Rgba};
+use render_error::RenderError;
 use utils::ToPixel;
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
@@ -217,23 +219,16 @@ impl AdobePluginGlobal for Plugin {
                 update_ui(input, self.aegp_id, params)?;
             }
             ae::Command::SmartPreRender { mut extra } => {
-                let result = pre_render(input, params, &mut extra);
-                if let Err(error) = result {
-                    report_error(&mut output, &error.to_string());
-                    return Err(error);
-                }
+                render_error::finish(
+                    pre_render(input, params, &mut extra).map_err(Into::into),
+                    &mut output,
+                )?;
             }
             ae::Command::SmartRender { extra } => {
                 let plan = extra
                     .pre_render_data::<Plan>()
                     .ok_or(Error::InternalStructDamaged)?;
-                if let Err(error) = self.render(input, extra.callbacks(), plan) {
-                    if input.interact().abort().is_err() {
-                        return Err(Error::InterruptCancel);
-                    }
-                    report_error(&mut output, &error);
-                    return Err(Error::BadCallbackParameter);
-                }
+                render_error::finish(self.render(input, extra.callbacks(), plan), &mut output)?;
             }
             ae::Command::Render { .. } => {
                 report_error(&mut output, "Requires After Effects Smart Render.");
@@ -387,11 +382,9 @@ struct CheckedLayer {
     layer: Option<Layer>,
 }
 impl CheckedLayer {
-    fn new(callbacks: ae::SmartRenderCallbacks, id: u32) -> Result<Self, String> {
+    fn new(callbacks: ae::SmartRenderCallbacks, id: u32) -> Result<Self, RenderError> {
         Ok(Self {
-            layer: callbacks
-                .checkout_layer_pixels(id)
-                .map_err(|e| e.to_string())?,
+            layer: callbacks.checkout_layer_pixels(id)?,
             callbacks,
             id,
         })
@@ -410,12 +403,12 @@ impl Plugin {
         input: InData,
         cb: ae::SmartRenderCallbacks,
         plan: &Plan,
-    ) -> Result<(), String> {
-        let abort = || input.interact().abort().map_err(|e| e.to_string());
+    ) -> Result<(), RenderError> {
+        let abort = || input.interact().abort().map_err(RenderError::from);
         abort()?;
         let current = CheckedLayer::new(cb, ((plan.times.len() - 1) * 2) as u32)?;
         // SmartFX requires an input checkout before the output checkout.
-        let Some(mut output) = cb.checkout_output().map_err(|e| e.to_string())? else {
+        let Some(mut output) = cb.checkout_output()? else {
             return Ok(());
         };
         let Some(source) = current
@@ -499,19 +492,16 @@ impl Plugin {
                 current_map = map;
             }
         }
-        let state = input
-            .effect()
-            .current_param_state(
-                ae::pf::PARAM_INDEX_CHECK_ALL,
-                Some(plan.start),
-                Some(plan.duration),
-            )
-            .map_err(|e| e.to_string())?;
-        if !ae::pf::suites::ParamUtils::new()
-            .map_err(|e| e.to_string())?
-            .are_states_identical(input.effect(), &plan.state, &state)
-            .map_err(|e| e.to_string())?
-        {
+        let state = input.effect().current_param_state(
+            ae::pf::PARAM_INDEX_CHECK_ALL,
+            Some(plan.start),
+            Some(plan.duration),
+        )?;
+        if !ae::pf::suites::ParamUtils::new()?.are_states_identical(
+            input.effect(),
+            &plan.state,
+            &state,
+        )? {
             return Err("Inputs changed during render; render again.".into());
         }
         let mut salt = plan.generation.to_le_bytes().to_vec();

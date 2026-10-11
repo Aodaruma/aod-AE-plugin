@@ -46,6 +46,14 @@ MFR無効の`aerender -mfr OFF 50`と、AE上で`app.setMultiFrameRenderingConfi
 
 ## macOS Universalパッケージ
 
+## 描画キャンセルの修正（0.1.1）
+
+ホストの`PF_Interrupt_CANCEL`を文字列へ変換し、処理終了時にabortを再確認していたため、一度だけのキャンセル通知が通常エラーとして表示される経路があった。PreRenderのレイヤーcheckoutで返るキャンセルにもエラーメッセージフラグを付けていた。ホストのエラー型をCompute Cacheのコールバックを含めて維持し、再問い合わせやダイアログ表示をせずそのまま返すよう修正した。
+
+7単体試験で、単発のキャンセルがキャッシュ値を公開せず、エラーメッセージフラグも立てずに戻ることを確認。AE 2025の`tests/gop-one.jsx`では、Uniform / Layer、GOP=1 / Independent、キャッシュpurgeの前後、順序を入れ替えた5時刻の40PNGを生成し、同条件の結果がSHA-256で一致した。報告元のOS・AEバージョンは不明で、報告環境での直接再現は未確認。
+
+### 0.1.0のmacOSビルド記録
+
 2026-10-11、[CodecMap macOS PreviewのCI](https://github.com/Aodaruma/aod-AE-plugin/actions/runs/38079738940)で成功。対象ソースは`5b4186295645f0895694d565f504feb46f7c4280`。macOS 15.7.9 / arm64、Rust 1.99.0、Apple clang 17.0.0でビルドした。
 
 - プラグイン、FFmpeg 8.1.2、x264のarm64 / x86_64ビルドとUniversal化に成功。

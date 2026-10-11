@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+use crate::render_error::RenderError;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr::NonNull;
 
@@ -64,7 +65,11 @@ impl Job {
         h.finalize().as_bytes()[..16].try_into().unwrap()
     }
 
-    pub fn render(&self, mut abort: impl FnMut() -> Result<(), String>) -> Result<Vec<u8>, String> {
+    pub fn render(
+        &self,
+        mut abort: impl FnMut() -> Result<(), RenderError>,
+    ) -> Result<Vec<u8>, RenderError> {
+        abort()?;
         let mut session = Session::new(self)?;
         let mut result = Vec::new();
         for frame in &self.frames {

@@ -214,6 +214,7 @@ mod tests {
             let ts = times(now, -7, 12, false).unwrap();
             assert_eq!(ts.last(), Some(&now));
             assert!(ts.len() <= 12 && ts.iter().all(|t| *t <= now));
+            assert_eq!(times(now, -7, 1, false).unwrap(), vec![now]);
         }
         assert!(times(0, 0, 12, false).is_err());
         assert_eq!(times(24, 1, 12, false).unwrap(), vec![24]);
