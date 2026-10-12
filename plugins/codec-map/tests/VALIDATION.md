@@ -9,6 +9,9 @@
 - Grow Boundsの拡大・縮小、および黒いDrop Shadowの方向・距離の変化を3コーデックで確認。I除去後もレイヤー座標が揃い、現在alphaを保持した通常GOP=1描画と一致。逆順取得・purge後も一致。
 - 64 MiB設定かつ6500フレーム目でも、Mix=0は元画像と完全一致、Mapは全白、MPEG-4のRequested QP Offsetは中立値の表示に成功。圧縮不要の表示で履歴上限を評価しないことを確認。
 - 単体試験は負原点、異なるサイズ、領域外、空入力、原点の整数境界、旧256 MiB／1024 MiB／2048 MiBの容量判定、サイズ計算overflowを確認。
+- 既存の`codecs.jsx`を再実行し40枚・21項目が成功。40枚すべてが0.2.0時のPNGとSHA-256一致。旧AEPのReplay Memory既定値1024、Drop IのID=20を確認し、同じ時刻のPNGも旧出力と一致。
+- `smoke.jsx`を再実行し19枚・11項目が成功。8 / 16 / 32 bpc、Mix=0、alpha、マップ、過去変更を確認。新規試験と合わせて114枚・61項目。
+- カタログの個別プレビュー、P一覧、全体一覧をAEで再生成・目視確認し、3枚とも従来と同じ内容。AEPは新パラメーターを含む状態で保存。
 
 テスト出力は`target/codec-map-replay-bounds/`のAEP、PNG、host-report、shadow-report、pixel-report。Replay MemoryはAE全体の使用量を制限するものではなく、履歴バッファだけの上限。
 
