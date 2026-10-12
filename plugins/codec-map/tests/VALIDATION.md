@@ -15,6 +15,13 @@
 
 テスト出力は`target/codec-map-replay-bounds/`のAEP、PNG、host-report、shadow-report、pixel-report。Replay MemoryはAE全体の使用量を制限するものではなく、履歴バッファだけの上限。
 
+0.2.1パッケージも両OS分を作成。Windows本体のSHA-256は`c80d8c3ee39b824dce1357e7b765636aa4732bef114956e4c6c7fb4da2815cfd`で、AEに設置・検証した本体と一致。Windowsのソーススナップショットは98e11c5、実装は905b03e。macOSは[CI run 38243129653](https://github.com/Aodaruma/aod-AE-plugin/actions/runs/38243129653)で905b03eをビルドし、Apple Silicon上で13テスト成功。両CPUのMach-O、依存先、アドホック署名、ソース同梱、ZIP CRC・SHA-256を確認した。macOS版AE実機とIntelでの実行は未確認。
+
+Downloadsへ配置したZIP（SHA-256）:
+
+- `AOD_CodecMap-0.2.1-windows-x64.zip`: `bf01479a70625abaf193d57f051b9d5266332bca8e6da85898f954d07094af58`
+- `AOD_CodecMap-0.2.1-macos-universal.zip`: `2815591c94d5d5cb9431bc047aeb043598f77df6fb14a5f84ae1feb1ae63a3b3`
+
 2026-10-11、Windows x64、Rust MSVC、FFmpeg 8.1.2 sharedで確認。
 
 ## 初版（0.1.0）で完了した確認
