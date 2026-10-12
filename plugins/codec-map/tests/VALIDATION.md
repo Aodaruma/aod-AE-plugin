@@ -1,5 +1,17 @@
 # CodecMap 検証記録
 
+## 0.2.1：履歴メモリ・可変入力範囲（2026-10-12）
+
+- Windows x64でfmt、clippy（all-targets、warningsをエラー扱い）、実コーデックを含む13テスト、releaseビルドに成功。
+- AE 2025（25.6.6x4）で`replay-bounds.jsx`と`shadow-bounds.jsx`から55枚を生成し、Pillowによる29項目の画素検証に成功。
+- Replay Memoryの既定1024 MiB、追加ID=22、時間変化不可をAE上で確認。既存のDrop I/BなどのIDは変更なし。
+- Full HDの90フレーム（YUV＋ROI約270 MiB）、GOP=1、I除去ONで旧256 MiB上限を超えるレンダーに成功。seedとの一致、キャッシュpurge後の完全一致を確認。
+- Grow Boundsの拡大・縮小、および黒いDrop Shadowの方向・距離の変化を3コーデックで確認。I除去後もレイヤー座標が揃い、現在alphaを保持した通常GOP=1描画と一致。逆順取得・purge後も一致。
+- 64 MiB設定かつ6500フレーム目でも、Mix=0は元画像と完全一致、Mapは全白、MPEG-4のRequested QP Offsetは中立値の表示に成功。圧縮不要の表示で履歴上限を評価しないことを確認。
+- 単体試験は負原点、異なるサイズ、領域外、空入力、原点の整数境界、旧256 MiB／1024 MiB／2048 MiBの容量判定、サイズ計算overflowを確認。
+
+テスト出力は`target/codec-map-replay-bounds/`のAEP、PNG、host-report、shadow-report、pixel-report。Replay MemoryはAE全体の使用量を制限するものではなく、履歴バッファだけの上限。
+
 2026-10-11、Windows x64、Rust MSVC、FFmpeg 8.1.2 sharedで確認。
 
 ## 初版（0.1.0）で完了した確認

@@ -94,7 +94,7 @@ pub struct Job {
 impl Job {
     pub fn key(&self, salt: &[u8]) -> [u8; 16] {
         let mut h = blake3::Hasher::new();
-        h.update(b"com.aodaruma.codec-map.v2.ffmpeg8.1.yuv709limited");
+        h.update(b"com.aodaruma.codec-map.v3.ffmpeg8.1.yuv709limited");
         h.update(salt);
         for v in [
             self.width as u64,

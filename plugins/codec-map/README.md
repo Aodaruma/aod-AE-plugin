@@ -26,6 +26,7 @@ Applies map-controlled video codec compression with deterministic temporal repla
 | Allow Future Frames | 初期値OFF。H.264 / MPEG-4、Past Only、GOP≧3でONにすると最大2枚先を参照してBフレームを生成。 |
 | Drop I-Frames | 初期値OFF。符号化後のIフレームを捨てる。キーフレーム可。Independentでは無効。 |
 | Drop B-Frames | 初期値OFF。符号化後のBフレームを捨てる。キーフレーム可。Bフレーム生成時だけ有効。VP9では無効。 |
+| Replay Memory (MiB) | 再計算用の履歴バッファ上限。初期値1024（1 GiB）、64〜8192。必要な分だけ確保。 |
 | Map Source / Compression Map | Uniform、または指定レイヤー。Uniformは全白。 |
 | Map Channel | Luma / Red / Green / Blue / Alpha。初期値Luma。 |
 | Invert Map / Map Gamma | マップの反転とガンマ。完全透明な画素は反転しても0。 |
@@ -35,7 +36,7 @@ Applies map-controlled video codec compression with deterministic temporal repla
 | Preview | Result / Map / Requested QP Offset / Difference。Offset表示は実測QPではなく要求値。 |
 | Reset Cache | このエフェクトのキャッシュ世代を進める。旧世代はAEのキャッシュ管理で解放。 |
 
-Codec、各品質設定、Temporal Mode、GOP Length、Allow Future Frames、Map Sourceは時間変化不可です。Drop I/B-Framesやマップ調整・Mixはキーフレームを打てます。
+Codec、各品質設定、Temporal Mode、GOP Length、Allow Future Frames、Map Source、Replay Memoryは時間変化不可です。Drop I/B-Framesやマップ調整・Mixはキーフレームを打てます。
 
 H.264はマップの16×16ブロック平均をQP offsetに変換し、CRFとAQに加えます。VP9は同じ平均値を−24 / −16 / −8 / 0 / 8 / 16 / 24へ丸め、8×8のセグメントへ渡します。VP9のROIはPフレームのみで、GOP=1・Independentではoffset設定が無効になります。MPEG-4は局所QPに未対応のためoffset設定は無効で、マップはMap Isolatedの合成範囲を指定します。
 
@@ -57,13 +58,15 @@ Bフレームを除去するにはAllow Future FramesをONにしてDrop B-Frames
 
 各要求は独立したencoder/decoderを作り、逆再生・ランダムアクセス・並列要求でも過去の描画順序に依存しません。Compute Cacheには対象フレームの完成結果のみを保存し、キーに全入力YUV・全offset・コーデック・品質・I/B除去設定・対象時刻を含めます。過去・未来のマップや除去設定も各時刻で取得します。スイートがないホストでは再計算します。
 
+v0.2.1では256 MiB固定の上限をReplay Memoryへ置き換えました。履歴のYUVとROI offsetの合計を制限する値で、AE全体のRAM割り当てではありません。AEの入力画像・キャッシュ・コーデック内部のメモリは別途必要で、同時レンダー中は要求ごとに確保します。上限エラーには必要量も表示します。Mix=0やMap / Requested QP Offset表示では履歴取得・圧縮を省略します。
+
 ## 色・制限
 
 - AEの8 / 16 / 32 bpc入力に対応。コーデック内部は8-bit BT.709 limited-range YUV 4:2:0固定で、HDR値は圧縮経路で0〜1へ制限。作業色空間のICC変換は行いません。
 - 元のalphaを保持し、RGBを非乗算にしてから圧縮。Map Isolatedの重み0では元のRGB/alphaを直接コピー。
 - 奇数サイズは右端・下端を複製して偶数へ補い、復号後に戻します。
-- 履歴内で入力のサイズや原点が変わる場合はエラー。固定サイズのプリコンポーズまたはIndependentを使用してください。
-- 1辺16384画素、再計算用YUV合計256 MiBまで、モッシュの履歴は6000フレーム未満。上限を超える場合はプレビュー解像度を下げるか、直近のGOP境界でDrop I-FramesをOFFにしてIフレームを残してください。
+- 履歴内で入力のサイズや原点が変わる場合は、現在フレームの範囲へレイヤー座標で位置合わせします。伸縮せず、はみ出しを切り取り、足りない領域は黒で補います。alphaは現在入力を保持します。全時刻で同じ圧縮キャンバスを使いたい場合は固定サイズのプリコンポーズを使用してください。
+- 1辺16384画素、履歴バッファはReplay Memoryまで、モッシュの履歴は6000フレーム未満。上限を超える場合はReplay Memoryを上げる、プレビュー解像度を下げる、直近のGOP境界でDrop I-FramesをOFFにしてIフレームを残す、のいずれかで調整してください。
 - CPU処理です。ハードウェアエンコーダー、H.265、AV1、CBR/VBR、Premiereは未対応。
 - macOS版AE、Intel Mac実機、異なるOS・CPU・FFmpegビルド間のビット一致は未確認。[検証記録](tests/VALIDATION.md)を参照。
 
@@ -79,7 +82,7 @@ AOD_CodecMap.aexとCodecMapフォルダーを一緒に設置します。スク�
 
 macOS、Xcode Command Line Tools、Rust、Python 3.11以降、NASM、pkg-configを用意し、bash scripts/prepare-codec-map-macos.sh を実行します。FFmpeg 8.1.2、固定x264、libvpx 1.15.2のSHA-256を確認し、3コーデックに必要な構成をビルドします。
 
-生成先はtarget/codec-map-macos/AOD_CodecMap-0.2.0-macos-universal.zip。Apple Silicon・Intel両対応のAOD_CodecMap.pluginを /Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/ へコピーします。共有ライブラリは.plugin内に同梱し、外部FFmpegは不要です。
+生成先はtarget/codec-map-macos/AOD_CodecMap-0.2.1-macos-universal.zip。Apple Silicon・Intel両対応のAOD_CodecMap.pluginを /Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/ へコピーします。共有ライブラリは.plugin内に同梱し、外部FFmpegは不要です。
 
 開発検証用のアドホック署名で、Developer ID署名・Apple公証はありません。両CPU・依存先・署名を検証し、ネイティブCPUで実コーデック試験を行います。専用CIは[CodecMap macOS Preview](../../.github/workflows/codec_map_macos_preview.yml)です。GitHub Releaseは作成しません。
 
@@ -88,6 +91,8 @@ macOS、Xcode Command Line Tools、Rust、Python 3.11以降、NASM、pkg-config�
 cargo fmt --all -- --check、cargo clippy -p codec_map --all-targets、cargo test -p codec_map を実行します。CODECMAP_CODEC_DIRへ同梱ランタイムの場所を設定し、cargo test -p codec_map -- --include-ignored で実コーデック試験も実行します。
 
 ROI、各コーデックの品質、符号化後のI/B除去、表示時刻の保持、過去の入力・マップ変更、並列セッション、キャンセルを検証します。AE実機用は[smoke.jsx](tests/smoke.jsx)、[GOP=1](tests/gop-one.jsx)、[コーデック・データモッシュ](tests/codecs.jsx)です。
+
+メモリと可変入力範囲の回帰試験は、空プロジェクトで[replay-bounds.jsx](tests/replay-bounds.jsx)、続けて[shadow-bounds.jsx](tests/shadow-bounds.jsx)を実行します。PNG保存完了後に、PillowのあるPythonで[replay-bounds.py](tests/replay-bounds.py)を実行すると55枚・29項目を検証します。
 
 ## ライセンスと設計
 

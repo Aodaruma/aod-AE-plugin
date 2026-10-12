@@ -36,6 +36,7 @@ enum Params {
     Future,
     DropI,
     DropB,
+    ReplayMemory,
 }
 
 #[derive(Default)]
@@ -47,7 +48,6 @@ ae::define_effect!(Plugin, (), Params);
 
 const PLUGIN_DESCRIPTION: &str =
     "Applies map-controlled video codec compression with deterministic temporal replay.";
-const MAX_REPLAY_BYTES: usize = 256 * 1024 * 1024;
 
 struct Plan {
     times: Vec<i32>,
@@ -58,6 +58,8 @@ struct Plan {
     use_b: bool,
     target: usize,
     controls: Vec<codec::Controls>,
+    decode: bool,
+    replay_memory: i32,
     mix: f32,
     isolated: bool,
     preview: i32,
@@ -229,6 +231,20 @@ impl AdobePluginGlobal for Plugin {
                 p.set_default(false).set_value(false);
             }),
         )?;
+        params.add_with_flags(
+            Params::ReplayMemory,
+            "Replay Memory (MiB)",
+            ae::SliderDef::setup(|p| {
+                p.set_default(1024)
+                    .set_value(1024)
+                    .set_valid_min(64)
+                    .set_valid_max(8192)
+                    .set_slider_min(64)
+                    .set_slider_max(8192);
+            }),
+            fixed(),
+            U::NONE,
+        )?;
         Ok(())
     }
 
@@ -374,12 +390,15 @@ fn pre_render(
         && !independent
         && gop >= 3
         && params.get(Params::Future)?.as_checkbox()?.value();
+    let mix = (float(params, Params::Mix)? / 100.0) as f32;
+    let preview = choice(params, Params::Preview)?;
+    let decode = preview != 2 && preview != 3 && mix != 0.0;
     let replay = temporal::plan(
         input.current_time(),
         input.time_step(),
         gop,
-        independent,
-        use_b,
+        independent || !decode,
+        use_b && decode,
         |time| {
             input.interact().abort()?;
             let at = |id| {
@@ -480,9 +499,11 @@ fn pre_render(
         use_b,
         target: replay.target,
         controls: replay.controls,
-        mix: (float(params, Params::Mix)? / 100.0) as f32,
+        decode,
+        replay_memory: params.get(Params::ReplayMemory)?.as_slider()?.value(),
+        mix,
         isolated: choice(params, Params::Output)? == 1,
-        preview: choice(params, Params::Preview)?,
+        preview,
         generation: params.get(Params::Generation)?.as_slider()?.value(),
         state,
         start,
@@ -539,11 +560,11 @@ impl Plugin {
             return Ok(());
         };
         let (width, height) = (source.width(), source.height());
-        let (pw, ph, size) = core::padded_size(width, height)?;
-        if size * plan.times.len() > MAX_REPLAY_BYTES {
-            return Err("Replay exceeds 256 MiB. Reduce preview resolution/GOP Length, or keep a recent I-frame by turning Drop I-Frames off.".into());
+        let (pw, ph, _) = core::padded_size(width, height)?;
+        if plan.decode {
+            core::check_replay_memory(width, height, plan.times.len(), plan.replay_memory)?;
         }
-        let original = pixels(source);
+        let canvas = layer_canvas(source);
         let mut job = codec::Job {
             width: pw,
             height: ph,
@@ -570,14 +591,8 @@ impl Plugin {
                     .filter(|s| s.width() > 0 && s.height() > 0)
                 {
                     core::padded_size(layer.width(), layer.height())?;
-                    let p = pixels(layer)
-                        .into_iter()
-                        .map(|p| ae::PixelF32 {
-                            red: p[0],
-                            green: p[1],
-                            blue: p[2],
-                            alpha: p[3],
-                        })
+                    let p = (0..layer.height())
+                        .flat_map(|y| (0..layer.width()).map(move |x| pixel(layer, x, y)))
                         .collect::<Vec<_>>();
                     settings.sample(&p, layer.width(), layer.height(), width, height)
                 } else {
@@ -591,23 +606,13 @@ impl Plugin {
                 .into_iter()
                 .map(|value| plan.codec.roi_offset(value))
                 .collect();
-            let yuv = if i == plan.target {
-                core::to_yuv(&original, width, height)?
+            let yuv = if !plan.decode {
+                Vec::new()
+            } else if i == plan.target {
+                layer_yuv(canvas, Some(source))?
             } else {
                 let checked = CheckedLayer::new(cb, (i * 2) as u32)?;
-                if let Some(layer) = checked.layer.as_ref() {
-                    if layer.width() != width
-                        || layer.height() != height
-                        || layer.origin() != source.origin()
-                    {
-                        return Err("Input bounds changed inside GOP. Precompose the input or use Independent mode.".into());
-                    }
-                    core::to_yuv(&pixels(layer), width, height)?
-                } else {
-                    let mut black = vec![128; size];
-                    black[..pw * ph].fill(16);
-                    black
-                }
+                layer_yuv(canvas, checked.layer.as_ref())?
             };
             job.frames.push(codec::Frame {
                 yuv,
@@ -634,23 +639,19 @@ impl Plugin {
         for time in &plan.times {
             salt.extend_from_slice(&time.to_le_bytes());
         }
-        let decoded = if plan.preview == 2 || plan.preview == 3 || plan.mix == 0.0 {
+        let decoded = if !plan.decode {
             Vec::new()
         } else {
             cache::render(input, self.cache_registered, &job, &salt, abort)?
         };
-        let dx = output.origin().h - source.origin().h;
-        let dy = output.origin().v - source.origin().v;
+        let output_canvas = layer_canvas(&output);
         for y in 0..output.height() {
             abort()?;
             for x in 0..output.width() {
-                let sx = x as i32 + dx;
-                let sy = y as i32 + dy;
-                if sx < 0 || sy < 0 || sx >= width as i32 || sy >= height as i32 {
+                let Some((sx, sy)) = output_canvas.source_pixel(canvas, x, y) else {
                     write_pixel(&mut output, x, y, [0.0; 4]);
                     continue;
-                }
-                let (sx, sy) = (sx as usize, sy as usize);
+                };
                 let index = sy * width + sx;
                 let weight = core::finite_unit(plan.mix)
                     * if plan.isolated {
@@ -667,7 +668,9 @@ impl Plugin {
                 } else {
                     core::decoded_rgb(&decoded, pw, ph, sx, sy)
                 };
-                let result = core::composite(original[index], rgb, weight);
+                let p = pixel(source, sx, sy);
+                let original = [p.red, p.green, p.blue, p.alpha];
+                let result = core::composite(original, rgb, weight);
                 let result = match plan.preview {
                     2 => {
                         let m = current_map[index];
@@ -679,9 +682,9 @@ impl Plugin {
                         [m, m, m, 1.0]
                     }
                     4 => [
-                        (result[0] - original[index][0]).abs(),
-                        (result[1] - original[index][1]).abs(),
-                        (result[2] - original[index][2]).abs(),
+                        (result[0] - original[0]).abs(),
+                        (result[1] - original[1]).abs(),
+                        (result[2] - original[2]).abs(),
                         1.0,
                     ],
                     _ => result,
@@ -693,19 +696,35 @@ impl Plugin {
     }
 }
 
-fn pixels(layer: &Layer) -> Vec<Rgba> {
-    (0..layer.height())
-        .flat_map(|y| {
-            (0..layer.width()).map(move |x| {
-                let p = match layer.bit_depth() {
-                    8 => layer.as_pixel8(x, y).to_pixel32(),
-                    16 => layer.as_pixel16(x, y).to_pixel32(),
-                    _ => *layer.as_pixel32(x, y),
-                };
-                [p.red, p.green, p.blue, p.alpha]
-            })
-        })
-        .collect()
+fn pixel(layer: &Layer, x: usize, y: usize) -> ae::PixelF32 {
+    match layer.bit_depth() {
+        8 => layer.as_pixel8(x, y).to_pixel32(),
+        16 => layer.as_pixel16(x, y).to_pixel32(),
+        _ => *layer.as_pixel32(x, y),
+    }
+}
+fn layer_canvas(layer: &Layer) -> core::Canvas {
+    core::Canvas {
+        width: layer.width(),
+        height: layer.height(),
+        x: layer.origin().h,
+        y: layer.origin().v,
+    }
+}
+fn layer_yuv(canvas: core::Canvas, layer: Option<&Layer>) -> Result<Vec<u8>, String> {
+    // All historical frames use the current frame's canvas. Preserve layer
+    // coordinates, clip excess pixels and fill uncovered regions with black.
+    let source = layer.map(layer_canvas);
+    core::to_yuv_from(canvas.width, canvas.height, |x, y| {
+        if let Some((layer, (sx, sy))) =
+            layer.zip(source.and_then(|s| canvas.source_pixel(s, x, y)))
+        {
+            let p = pixel(layer, sx, sy);
+            [p.red, p.green, p.blue, p.alpha]
+        } else {
+            [0.0; 4]
+        }
+    })
 }
 fn write_pixel(layer: &mut Layer, x: usize, y: usize, p: Rgba) {
     let p = ae::PixelF32 {

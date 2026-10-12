@@ -131,13 +131,68 @@ pub fn padded_size(width: usize, height: usize) -> Result<(usize, usize, usize),
     Ok((w, h, w * h * 3 / 2))
 }
 
-pub fn to_yuv(pixels: &[Rgba], width: usize, height: usize) -> Result<Vec<u8>, String> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Canvas {
+    pub width: usize,
+    pub height: usize,
+    pub x: i32,
+    pub y: i32,
+}
+
+impl Canvas {
+    /// Map a canvas pixel into another buffer in the same layer coordinates.
+    pub fn source_pixel(self, source: Self, x: usize, y: usize) -> Option<(usize, usize)> {
+        let sx = x as i64 + i64::from(self.x) - i64::from(source.x);
+        let sy = y as i64 + i64::from(self.y) - i64::from(source.y);
+        if sx < 0 || sy < 0 || sx >= source.width as i64 || sy >= source.height as i64 {
+            None
+        } else {
+            Some((sx as usize, sy as usize))
+        }
+    }
+}
+
+pub fn check_replay_memory(
+    width: usize,
+    height: usize,
+    frames: usize,
+    limit_mib: i32,
+) -> Result<(), String> {
     let (w, h, size) = padded_size(width, height)?;
+    let per_frame = size + w.div_ceil(16) * h.div_ceil(16) * size_of::<f32>();
+    let bytes = per_frame
+        .checked_mul(frames)
+        .ok_or("Replay size overflow")?;
+    if !(64..=8192).contains(&limit_mib) {
+        return Err("Replay Memory must be 64..8192 MiB".into());
+    }
+    if bytes > limit_mib as usize * 1024 * 1024 {
+        return Err(format!(
+            "Replay needs {} MiB; Replay Memory is {} MiB. Increase Replay Memory, lower preview resolution, or keep a recent I-frame.",
+            bytes.div_ceil(1024 * 1024),
+            limit_mib
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub fn to_yuv(pixels: &[Rgba], width: usize, height: usize) -> Result<Vec<u8>, String> {
     if pixels.len() != width * height {
         return Err("Invalid RGBA buffer length".into());
     }
+    to_yuv_from(width, height, |x, y| pixels[y * width + x])
+}
+
+/// Convert directly from host pixels without retaining a float RGBA copy.
+pub fn to_yuv_from(
+    width: usize,
+    height: usize,
+    pixel: impl Fn(usize, usize) -> Rgba,
+) -> Result<Vec<u8>, String> {
+    let (w, h, size) = padded_size(width, height)?;
     let rgb = |x: usize, y: usize| {
-        let p = pixels[y.min(height - 1) * width + x.min(width - 1)];
+        let p = pixel(x.min(width - 1), y.min(height - 1));
         let a = finite_unit(p[3]);
         if a == 0.0 {
             [0.0; 3]
@@ -149,7 +204,10 @@ pub fn to_yuv(pixels: &[Rgba], width: usize, height: usize) -> Result<Vec<u8>, S
             ]
         }
     };
-    let mut out = vec![0; size];
+    let mut out = Vec::new();
+    out.try_reserve_exact(size)
+        .map_err(|_| "Not enough available memory for a codec frame. Lower preview resolution or Replay Memory.")?;
+    out.resize(size, 0);
     for y in 0..h {
         for x in 0..w {
             let [r, g, b] = rgb(x, y);
@@ -204,6 +262,84 @@ pub fn composite(original: Rgba, rgb: [f32; 3], weight: f32) -> Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn replay_budget_includes_roi_and_can_exceed_old_limit() {
+        // Ninety full-HD frames require 270 MiB including ROI offsets.
+        let error = check_replay_memory(1920, 1080, 90, 256).unwrap_err();
+        assert!(error.contains("270 MiB"));
+        assert!(check_replay_memory(1920, 1080, 90, 1024).is_ok());
+        assert!(check_replay_memory(3840, 2160, 90, 1024).is_err());
+        assert!(check_replay_memory(3840, 2160, 90, 2048).is_ok());
+        assert!(check_replay_memory(1920, 1080, usize::MAX, 8192).is_err());
+        assert!(check_replay_memory(1920, 1080, 1, 0).is_err());
+    }
+
+    #[test]
+    fn varying_bounds_align_without_scaling_and_pad_black() {
+        let canvas = Canvas {
+            width: 5,
+            height: 3,
+            x: -2,
+            y: 4,
+        };
+        let source = Canvas {
+            width: 3,
+            height: 2,
+            x: 0,
+            y: 5,
+        };
+        let pixels = [
+            [1.0, 0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0, 1.0],
+            [1.0, 1.0, 0.0, 1.0],
+            [0.0, 1.0, 1.0, 1.0],
+            [1.0, 0.0, 1.0, 1.0],
+        ];
+        let aligned = to_yuv_from(5, 3, |x, y| {
+            canvas
+                .source_pixel(source, x, y)
+                .map_or([0.0; 4], |(sx, sy)| pixels[sy * 3 + sx])
+        })
+        .unwrap();
+        let mut expected = vec![[0.0; 4]; 15];
+        expected[7..10].copy_from_slice(&pixels[..3]);
+        expected[12..15].copy_from_slice(&pixels[3..]);
+        assert_eq!(aligned, to_yuv(&expected, 5, 3).unwrap());
+        // A larger preceding frame is cropped; empty/disjoint inputs are black.
+        assert_eq!(source.source_pixel(canvas, 0, 0), Some((2, 1)));
+        assert_eq!(
+            canvas.source_pixel(Canvas { width: 0, ..source }, 2, 1),
+            None
+        );
+        assert_eq!(
+            canvas.source_pixel(
+                Canvas {
+                    x: i32::MAX,
+                    ..source
+                },
+                2,
+                1
+            ),
+            None
+        );
+        assert_eq!(
+            Canvas {
+                x: i32::MAX,
+                ..canvas
+            }
+            .source_pixel(
+                Canvas {
+                    x: i32::MIN,
+                    ..source
+                },
+                0,
+                0
+            ),
+            None
+        );
+    }
+
     #[test]
     fn temporal_plan_has_no_future_and_preserves_phase() {
         assert_eq!(

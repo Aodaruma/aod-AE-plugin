@@ -18,6 +18,7 @@ H.264・VP9・MPEG-4 Part 2の圧縮と適用範囲をマップで制御しま�
 - `Codec`: コーデックを選択し、Base CRF / VP9 CQ / MPEG-4 Quantizerの品質設定を動的に切り替えます。
 - `Drop I-Frames` / `Drop B-Frames`: 符号化後のフレームを破棄。BフレームにはAllow Future FramesのONが必要です。
 - `Temporal Mode` / `GOP Length`: 過去参照またはフレーム単位の独立圧縮と、その区間長。
+- `Replay Memory (MiB)`: 履歴バッファの上限。既定1 GiB、最大8 GiB。入力サイズが時間変化する場合も現在の範囲へ位置合わせして処理します。
 - `Map Source` / `Compression Map`: 全体適用、または圧縮領域を指定するレイヤー。
 - `Map Channel` / `Invert Map` / `Map Gamma`: マップの読み方と濃淡の調整。
 - `Black QP Offset` / `White QP Offset`: H.264・VP9の量子化オフセット。VP9はPフレームのみ。MPEG-4ではマップ合成だけを使います。

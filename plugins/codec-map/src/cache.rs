@@ -7,7 +7,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
 };
 
-const CLASS: &std::ffi::CStr = c"com.aodaruma.codec-map.decoded-frame.v2";
+const CLASS: &std::ffi::CStr = c"com.aodaruma.codec-map.decoded-frame.v3";
 
 struct Suite {
     input: ae::InData,
