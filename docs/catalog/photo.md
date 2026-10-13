@@ -181,7 +181,8 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 - `Input B/C`、`Layer B/C`、`Value B/C`: 第2・第3引数を数値またはレイヤーから指定します。
 - `Epsilon`: 除算や比較で使用する微小値です。
 - `Channel`、`Calculation Color Space`: 対象チャンネルと演算空間を選択します。
-- `Clamp Result`、`Use Original Alpha`: 出力範囲とアルファを制御します。
+- `Clamp Mode`: None（既定）、Clamp、Wrap、Pingpongから出力範囲の処理を選びます。Noneは32bpcで範囲外の値を保持し、8／16bpcでは0～1に制限します。
+- `Use Original Alpha`: 入力アルファを保持し、範囲処理後のRGBへ乗算します。Wrap／Pingpongでアルファも処理するのは、ChannelがRGBAまたはAの場合です。
 
 ## AOD_ImageCrypt
 

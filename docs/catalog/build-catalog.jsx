@@ -249,7 +249,7 @@
             setProperty(effect, "Operation", 3);
             setProperty(effect, "Input B (Operand)", 1);
             setProperty(effect, "Value B (Operand)", 1.75);
-            setProperty(effect, "Clamp Result 0..1", 1);
+            setProperty(effect, "Clamp Mode", 2);
             setProperty(effect, "Use Original Alpha", 1);
         } else if (item.match === "ImageEncryptDecrypt") {
             setProperty(effect, "Operation", 1);

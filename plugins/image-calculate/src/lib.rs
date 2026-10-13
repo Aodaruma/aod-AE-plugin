@@ -20,7 +20,8 @@ enum Params {
     LayerC,
     ValueC,
     Epsilon,
-    ClampResult,
+    // Parameter names are hashed into disk IDs; do not reuse the old checkbox's ClampResult ID.
+    ClampMode,
     UseOriginalAlpha,
     Channel,
     CalculationColorSpace,
@@ -84,6 +85,14 @@ enum ChannelMode {
     B,
     A,
     Luminance,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClampMode {
+    None,
+    Clamp,
+    Wrap,
+    PingPong,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -257,10 +266,11 @@ impl AdobePluginGlobal for Plugin {
         )?;
 
         params.add(
-            Params::ClampResult,
-            "Clamp Result 0..1",
-            CheckBoxDef::setup(|d| {
-                d.set_default(false);
+            Params::ClampMode,
+            "Clamp Mode",
+            PopupDef::setup(|d| {
+                d.set_options(&["None", "Clamp", "Wrap", "Pingpong"]);
+                d.set_default(1);
             }),
         )?;
 
@@ -532,7 +542,7 @@ impl Plugin {
         let value_c = params.get(Params::ValueC)?.as_float_slider()?.value() as f32;
         let epsilon = params.get(Params::Epsilon)?.as_float_slider()?.value() as f32;
         let epsilon = epsilon.max(1.0e-12);
-        let clamp_result = params.get(Params::ClampResult)?.as_checkbox()?.value();
+        let clamp_mode = clamp_mode_from_popup(params.get(Params::ClampMode)?.as_popup()?.value());
         let use_original_alpha = params.get(Params::UseOriginalAlpha)?.as_checkbox()?.value();
         let channel_mode =
             channel_mode_from_popup(params.get(Params::Channel)?.as_popup()?.value());
@@ -655,6 +665,8 @@ impl Plugin {
                 let encoded =
                     encode_from_linear(CalcColorSpace::Rgb, LinSrgb::new(luma, luma, luma));
                 [encoded.r, encoded.g, encoded.b]
+            } else if color_changed && calc_color_space == CalcColorSpace::Rgb {
+                [out_calc.c0, out_calc.c1, out_calc.c2]
             } else if color_changed {
                 out_calc.c0 = sanitize_non_finite(out_calc.c0);
                 out_calc.c1 = sanitize_non_finite(out_calc.c1);
@@ -673,27 +685,19 @@ impl Plugin {
                 [src_a.red, src_a.green, src_a.blue]
             };
 
-            let mut out_alpha = sanitize_non_finite(out_calc.alpha);
-            let clamp_01 = clamp_result || !out_is_f32;
-
-            let mut out_px = PixelF32 {
-                red: sanitize_output(out_rgb[0], clamp_01),
-                green: sanitize_output(out_rgb[1], clamp_01),
-                blue: sanitize_output(out_rgb[2], clamp_01),
-                alpha: sanitize_output(out_alpha, clamp_01),
-            };
-
-            if use_original_alpha {
-                out_alpha = src_a.alpha;
-                if !out_alpha.is_finite() {
-                    out_alpha = 0.0;
-                }
-                out_alpha = out_alpha.clamp(0.0, 1.0);
-                out_px.red *= out_alpha;
-                out_px.green *= out_alpha;
-                out_px.blue *= out_alpha;
-                out_px.alpha = out_alpha;
-            }
+            let out_px = finalize_output(
+                PixelF32 {
+                    red: out_rgb[0],
+                    green: out_rgb[1],
+                    blue: out_rgb[2],
+                    alpha: out_calc.alpha,
+                },
+                clamp_mode,
+                channel_mode,
+                use_original_alpha,
+                src_a.alpha,
+                out_is_f32,
+            );
 
             match out_world_type {
                 ae::aegp::WorldType::U8 => dst.set_from_u8(out_px.to_pixel8()),
@@ -726,6 +730,15 @@ fn channel_mode_from_popup(value: i32) -> ChannelMode {
         6 => ChannelMode::A,
         7 => ChannelMode::Luminance,
         _ => ChannelMode::Rgba,
+    }
+}
+
+fn clamp_mode_from_popup(value: i32) -> ClampMode {
+    match value {
+        2 => ClampMode::Clamp,
+        3 => ClampMode::Wrap,
+        4 => ClampMode::PingPong,
+        _ => ClampMode::None,
     }
 }
 
@@ -1192,14 +1205,52 @@ fn fill_pixel(v: f32) -> PixelF32 {
     }
 }
 
-fn sanitize_output(mut v: f32, clamp_01: bool) -> f32 {
-    if !v.is_finite() {
-        v = 0.0;
+fn sanitize_output(v: f32, mode: ClampMode, out_is_f32: bool) -> f32 {
+    let v = sanitize_non_finite(v);
+    let mapped = match mode {
+        ClampMode::None => v,
+        ClampMode::Clamp => v.clamp(0.0, 1.0),
+        // rem_euclid can round tiny negative inputs up to 1.0; keep the upper bound exclusive.
+        ClampMode::Wrap => v.rem_euclid(1.0) % 1.0,
+        ClampMode::PingPong => ping_pong(v, 1.0, 0.0),
+    };
+    if out_is_f32 {
+        mapped
+    } else {
+        mapped.clamp(0.0, 1.0)
     }
-    if clamp_01 {
-        v = v.clamp(0.0, 1.0);
+}
+
+fn finalize_output(
+    px: PixelF32,
+    mode: ClampMode,
+    channel: ChannelMode,
+    use_original_alpha: bool,
+    original_alpha: f32,
+    out_is_f32: bool,
+) -> PixelF32 {
+    // Periodic modes must not wrap an untouched opaque alpha to zero.
+    let alpha_mode = if matches!(channel, ChannelMode::Rgba | ChannelMode::A) {
+        mode
+    } else if mode == ClampMode::Clamp {
+        ClampMode::Clamp
+    } else {
+        ClampMode::None
+    };
+    let mut out = PixelF32 {
+        red: sanitize_output(px.red, mode, out_is_f32),
+        green: sanitize_output(px.green, mode, out_is_f32),
+        blue: sanitize_output(px.blue, mode, out_is_f32),
+        alpha: sanitize_output(px.alpha, alpha_mode, out_is_f32),
+    };
+    if use_original_alpha {
+        let alpha = sanitize_non_finite(original_alpha).clamp(0.0, 1.0);
+        out.red *= alpha;
+        out.green *= alpha;
+        out.blue *= alpha;
+        out.alpha = alpha;
     }
-    v
+    out
 }
 
 #[inline]
@@ -1248,6 +1299,16 @@ fn calc_pixel_from_scalar(value: f32) -> CalcPixel {
 }
 
 fn encode_calc_pixel(space: CalcColorSpace, px: PixelF32) -> CalcPixel {
+    // Avoid round-trip errors at exact Wrap/Pingpong boundaries and retain HDR values.
+    if space == CalcColorSpace::Rgb {
+        return CalcPixel {
+            c0: px.red,
+            c1: px.green,
+            c2: px.blue,
+            aux: 0.0,
+            alpha: px.alpha,
+        };
+    }
     let lin = decode_to_linear(CalcColorSpace::Rgb, px.red, px.green, px.blue, px.alpha);
     let encoded = encode_from_linear(space, lin);
     CalcPixel {
@@ -1533,5 +1594,176 @@ fn read_pixel_f32(layer: &Layer, world_type: ae::aegp::WorldType, x: usize, y: u
         ae::aegp::WorldType::U8 => layer.as_pixel8(x, y).to_pixel32(),
         ae::aegp::WorldType::U15 => layer.as_pixel16(x, y).to_pixel32(),
         ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => *layer.as_pixel32(x, y),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_modes_handle_negative_values_and_period_boundaries() {
+        let cases = [
+            // input, clamp, wrap, pingpong
+            (-2.0, 0.0, 0.0, 0.0),
+            (-1.25, 0.0, 0.75, 0.75),
+            (-1.0, 0.0, 0.0, 1.0),
+            (-0.25, 0.0, 0.75, 0.25),
+            (0.0, 0.0, 0.0, 0.0),
+            (0.25, 0.25, 0.25, 0.25),
+            (1.0, 1.0, 0.0, 1.0),
+            (1.25, 1.0, 0.25, 0.75),
+            (2.0, 1.0, 0.0, 0.0),
+            (2.25, 1.0, 0.25, 0.25),
+        ];
+        for (input, clamp, wrap, pingpong) in cases {
+            assert_eq!(sanitize_output(input, ClampMode::None, true), input);
+            for out_is_f32 in [true, false] {
+                for (mode, expected) in [
+                    (ClampMode::Clamp, clamp),
+                    (ClampMode::Wrap, wrap),
+                    (ClampMode::PingPong, pingpong),
+                ] {
+                    assert_eq!(sanitize_output(input, mode, out_is_f32), expected);
+                }
+            }
+            assert_eq!(sanitize_output(input, ClampMode::None, false), clamp);
+        }
+    }
+
+    #[test]
+    fn all_output_modes_sanitize_non_finite_results() {
+        for input in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for mode in [
+                ClampMode::None,
+                ClampMode::Clamp,
+                ClampMode::Wrap,
+                ClampMode::PingPong,
+            ] {
+                for out_is_f32 in [true, false] {
+                    assert_eq!(sanitize_output(input, mode, out_is_f32), 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn periodic_modes_remain_bounded_for_extreme_finite_values() {
+        for input in [f32::MIN, f32::MAX, -f32::EPSILON / 4.0, -f32::MIN_POSITIVE] {
+            let wrap = sanitize_output(input, ClampMode::Wrap, true);
+            let pingpong = sanitize_output(input, ClampMode::PingPong, true);
+            assert!((0.0..1.0).contains(&wrap), "wrap({input}) = {wrap}");
+            assert!(
+                (0.0..=1.0).contains(&pingpong),
+                "pingpong({input}) = {pingpong}"
+            );
+        }
+    }
+
+    #[test]
+    fn rgb_calculation_preserves_exact_boundaries_and_hdr() {
+        for input in [-2.0, -0.25, 0.0, 0.25, 1.0, 1.25, 16.0, f32::MAX] {
+            let encoded = encode_calc_pixel(CalcColorSpace::Rgb, fill_pixel(input));
+            assert_eq!([encoded.c0, encoded.c1, encoded.c2], [input; 3]);
+            let result = apply_math(MathOp::Add, encoded.c0, 0.0, 0.0, 1.0e-5);
+            assert_eq!(sanitize_output(result, ClampMode::None, true), input);
+            assert_eq!(
+                sanitize_output(result, ClampMode::Wrap, true),
+                input.rem_euclid(1.0)
+            );
+        }
+    }
+
+    #[test]
+    fn none_retains_hdr_only_for_float_output() {
+        let input = PixelF32 {
+            red: -0.25,
+            green: 1.25,
+            blue: 2.0,
+            alpha: 1.0,
+        };
+        let float = finalize_output(input, ClampMode::None, ChannelMode::Rgb, false, 1.0, true);
+        assert_eq!([float.red, float.green, float.blue], [-0.25, 1.25, 2.0]);
+        let integer = finalize_output(input, ClampMode::None, ChannelMode::Rgb, false, 1.0, false);
+        let px8 = integer.to_pixel8();
+        let px16 = integer.to_pixel16();
+        assert_eq!([px8.red, px8.green, px8.blue], [0, 255, 255]);
+        assert_eq!([px16.red, px16.green, px16.blue], [0, 32768, 32768]);
+    }
+
+    #[test]
+    fn integer_output_maps_before_quantization() {
+        let input = PixelF32 {
+            red: -0.25,
+            green: 1.25,
+            blue: 2.0,
+            alpha: 1.0,
+        };
+        for (mode, expected) in [
+            (ClampMode::Wrap, [0.75, 0.25, 0.0]),
+            (ClampMode::PingPong, [0.25, 0.75, 0.0]),
+        ] {
+            let out = finalize_output(input, mode, ChannelMode::Rgb, false, 1.0, false);
+            let px8 = out.to_pixel8();
+            let px16 = out.to_pixel16();
+            assert_eq!(
+                [px8.red, px8.green, px8.blue],
+                expected.map(|v| (v * ae::MAX_CHANNEL8 as f32) as u8)
+            );
+            assert_eq!(
+                [px16.red, px16.green, px16.blue],
+                expected.map(|v| (v * ae::MAX_CHANNEL16 as f32) as u16)
+            );
+            assert_eq!(px8.alpha, 255);
+            assert_eq!(px16.alpha, 32768);
+        }
+    }
+
+    #[test]
+    fn periodic_modes_preserve_alpha_when_it_is_not_calculated() {
+        for channel in [
+            ChannelMode::Rgb,
+            ChannelMode::R,
+            ChannelMode::G,
+            ChannelMode::B,
+            ChannelMode::Luminance,
+        ] {
+            for mode in [ClampMode::Wrap, ClampMode::PingPong] {
+                for alpha in [0.25, 1.0, 1.25] {
+                    let out = finalize_output(fill_pixel(alpha), mode, channel, false, alpha, true);
+                    assert_eq!(out.alpha, alpha);
+                }
+            }
+        }
+        for channel in [ChannelMode::Rgba, ChannelMode::A] {
+            let wrapped =
+                finalize_output(fill_pixel(1.25), ClampMode::Wrap, channel, false, 1.0, true);
+            let reflected = finalize_output(
+                fill_pixel(1.25),
+                ClampMode::PingPong,
+                channel,
+                false,
+                1.0,
+                true,
+            );
+            assert_eq!(wrapped.alpha, 0.25);
+            assert_eq!(reflected.alpha, 0.75);
+        }
+    }
+
+    #[test]
+    fn original_alpha_overrides_mapping_and_premultiplies_after_it() {
+        let out = finalize_output(
+            fill_pixel(1.25),
+            ClampMode::Wrap,
+            ChannelMode::Rgba,
+            true,
+            0.5,
+            true,
+        );
+        assert_eq!(
+            [out.red, out.green, out.blue, out.alpha],
+            [0.125, 0.125, 0.125, 0.5]
+        );
     }
 }
