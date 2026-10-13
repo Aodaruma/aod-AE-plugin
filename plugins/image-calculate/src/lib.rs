@@ -25,6 +25,7 @@ enum Params {
     UseOriginalAlpha,
     Channel,
     CalculationColorSpace,
+    Mix,
 }
 
 #[derive(Clone, Copy)]
@@ -302,6 +303,19 @@ impl AdobePluginGlobal for Plugin {
             }),
         )?;
 
+        params.add(
+            Params::Mix,
+            "Mix (%)",
+            FloatSliderDef::setup(|d| {
+                d.set_valid_min(0.0);
+                d.set_valid_max(100.0);
+                d.set_slider_min(0.0);
+                d.set_slider_max(100.0);
+                d.set_default(100.0);
+                d.set_precision(1);
+            }),
+        )?;
+
         Ok(())
     }
 
@@ -531,6 +545,24 @@ impl Plugin {
             return Ok(());
         }
 
+        let mix =
+            (params.get(Params::Mix)?.as_float_slider()?.value() / 100.0).clamp(0.0, 1.0) as f32;
+        let in_world_type = in_layer.world_type();
+        if mix == 0.0 {
+            // Preserve the original samples exactly, bypassing math, range mapping and alpha processing.
+            return out_layer.iterate(0, h as i32, None, |x, y, mut dst| {
+                let (x, y) = (x as usize, y as usize);
+                match in_world_type {
+                    ae::aegp::WorldType::U8 => dst.set_from_u8(*in_layer.as_pixel8(x, y)),
+                    ae::aegp::WorldType::U15 => dst.set_from_u16(*in_layer.as_pixel16(x, y)),
+                    ae::aegp::WorldType::F32 | ae::aegp::WorldType::None => {
+                        dst.set_from_f32(*in_layer.as_pixel32(x, y));
+                    }
+                }
+                Ok(())
+            });
+        }
+
         let op = math_op_from_popup(params.get(Params::Operation)?.as_popup()?.value());
         let uses_b = operation_uses_b(op);
         let uses_c = operation_uses_c(op);
@@ -565,7 +597,6 @@ impl Plugin {
         let use_layer_c =
             uses_c && matches!(input_c_source, InputSource::Layer) && layer_c.is_some();
 
-        let in_world_type = in_layer.world_type();
         let out_world_type = out_layer.world_type();
         let out_is_f32 = matches!(
             out_world_type,
@@ -698,6 +729,7 @@ impl Plugin {
                 src_a.alpha,
                 out_is_f32,
             );
+            let out_px = mix_output(src_a, out_px, mix);
 
             match out_world_type {
                 ae::aegp::WorldType::U8 => dst.set_from_u8(out_px.to_pixel8()),
@@ -1253,6 +1285,17 @@ fn finalize_output(
     out
 }
 
+fn mix_output(original: PixelF32, processed: PixelF32, mix: f32) -> PixelF32 {
+    // Return endpoints directly to avoid rounding or contamination from the unused image.
+    if mix <= 0.0 {
+        original
+    } else if mix >= 1.0 {
+        processed
+    } else {
+        utils::image::lerp_pixel(original, processed, mix)
+    }
+}
+
 #[inline]
 fn sanitize_non_finite(v: f32) -> f32 {
     if v.is_finite() { v } else { 0.0 }
@@ -1765,5 +1808,77 @@ mod tests {
             [out.red, out.green, out.blue, out.alpha],
             [0.125, 0.125, 0.125, 0.5]
         );
+    }
+
+    fn components(px: PixelF32) -> [f32; 4] {
+        [px.red, px.green, px.blue, px.alpha]
+    }
+
+    #[test]
+    fn mix_endpoints_preserve_the_selected_image_exactly() {
+        let original = PixelF32 {
+            red: -2.0,
+            green: 4.0,
+            blue: -0.0,
+            alpha: 0.25,
+        };
+        let processed = PixelF32 {
+            red: 0.5,
+            green: 0.75,
+            blue: 1.0,
+            alpha: 0.5,
+        };
+        let unused = fill_pixel(f32::NAN);
+        for (a, b, mix, expected) in [
+            (original, processed, 0.0, original),
+            (original, processed, 1.0, processed),
+            (original, unused, 0.0, original),
+            (unused, processed, 1.0, processed),
+        ] {
+            assert_eq!(
+                components(mix_output(a, b, mix)).map(f32::to_bits),
+                components(expected).map(f32::to_bits)
+            );
+        }
+    }
+
+    #[test]
+    fn mix_interpolates_rgba_after_range_and_alpha_processing() {
+        let original = PixelF32 {
+            red: 0.0,
+            green: 0.5,
+            blue: 1.0,
+            alpha: 0.5,
+        };
+        let processed = finalize_output(
+            fill_pixel(1.25),
+            ClampMode::Wrap,
+            ChannelMode::Rgba,
+            true,
+            original.alpha,
+            true,
+        );
+        assert_eq!(
+            components(mix_output(original, processed, 0.5)),
+            [0.0625, 0.3125, 0.5625, 0.5]
+        );
+        assert_eq!(
+            components(mix_output(original, fill_pixel(0.0), 0.25)),
+            [0.0, 0.375, 0.75, 0.375]
+        );
+    }
+
+    #[test]
+    fn mix_keeps_original_hdr_and_quantizes_only_the_blended_result() {
+        let hdr = mix_output(fill_pixel(-4.0), fill_pixel(2.0), 0.25);
+        assert_eq!(components(hdr), [-2.5; 4]);
+        let hdr = mix_output(fill_pixel(4.0), fill_pixel(0.0), 0.5);
+        assert_eq!(components(hdr), [2.0; 4]);
+
+        let mixed = mix_output(fill_pixel(0.0), fill_pixel(1.0), 0.5);
+        let px8 = mixed.to_pixel8();
+        let px16 = mixed.to_pixel16();
+        assert_eq!([px8.red, px8.green, px8.blue, px8.alpha], [127; 4]);
+        assert_eq!([px16.red, px16.green, px16.blue, px16.alpha], [16384; 4]);
     }
 }

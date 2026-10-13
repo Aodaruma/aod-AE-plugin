@@ -21,6 +21,15 @@ This is the After Effects plugin **AOD_ImageCalculate**, which provides the **Im
 - NaN／Infinityは、どのモードでも0に置換します。
 - 旧 `Clamp Result 0..1` とは保存パラメーターを分けています。旧版のプロジェクトでは `Clamp Mode` が `None` で追加されます。旧チェックボックスがONだった場合は `Clamp` を選び直してください。他のパラメーターの保存IDは維持しています。
 
+## Mix (%)
+
+元画像とエフェクト適用後の画像を0～100%で混ぜます。既定値は `100%` で、既存のプロジェクトの描画結果も維持します。
+
+- `0%`: 演算・Clamp Mode・アルファ処理を迂回し、元画像をそのまま出力します。
+- `100%`: エフェクト適用後の画像をそのまま出力します。
+- 中間値: Clamp Modeと `Use Original Alpha` を適用した後、元画像との間でRGBAを線形補間します。`50%` なら両者が半分ずつになります。
+- Mix後にClamp Modeを再適用しないため、32bpcでは元画像の負値や1を超える値も混ざります。8／16bpcでは混合後に整数化します。
+
 ## Building the Plugin
 
 See the [main README](../../README.md) for instructions on how to build the plugin.

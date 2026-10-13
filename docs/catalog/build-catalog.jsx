@@ -251,6 +251,7 @@
             setProperty(effect, "Value B (Operand)", 1.75);
             setProperty(effect, "Clamp Mode", 2);
             setProperty(effect, "Use Original Alpha", 1);
+            setProperty(effect, "Mix (%)", 100.0);
         } else if (item.match === "ImageEncryptDecrypt") {
             setProperty(effect, "Operation", 1);
             setProperty(effect, "Algorithm", 7);
