@@ -33,6 +33,7 @@
         { name: "Gradient Displace", aod: "AOD_GradientDisplace", slug: "gradient-displace", category: "P", comp: "13 Gradient Displace" },
         { name: "Glass Displace", aod: "AOD_GlassDisplace", slug: "glass-displace", category: "P", match: "GlassDisplace", fresh: true },
         { name: "Image Calculate", aod: "AOD_ImageCalculate", slug: "image-calculate", category: "P", match: "ImageCalculate" },
+        { name: "Image Pattern", aod: "AOD_ImagePattern", slug: "image-pattern", category: "P", match: "ImagePattern", fresh: true },
         { name: "Image Crypt", aod: "AOD_ImageCrypt", slug: "image-encrypt-decrypt", category: "P", match: "ImageEncryptDecrypt", fresh: true },
         { name: "Image Scaler", aod: "AOD_ImageScaler", slug: "image-scaler", category: "P", comp: "15 Image Scaler" },
         { name: "Image Transform", aod: "AOD_ImageTransform", slug: "image-transform", category: "P", match: "ImageTransform", fresh: true },
@@ -288,6 +289,20 @@
             setProperty(effect, "Environment Strength", 0.16);
             setProperty(effect, "Exposure (EV)", -0.15);
             setProperty(effect, "Output", 1);
+        } else if (item.match === "ImagePattern") {
+            setProperty(effect, "Pattern Mode", 3);
+            setProperty(effect, "Angle", 8.0);
+            setProperty(effect, "Width (px)", 60.0);
+            setProperty(effect, "Delta Angle", 4.0);
+            setProperty(effect, "Delta Width (px)", 2.0);
+            setProperty(effect, "Delta X (px)", 18.0);
+            setProperty(effect, "Delta Y (px)", -8.0);
+            setProperty(effect, "Clipping", 2);
+            setProperty(effect, "Overlap Order", 1);
+            setProperty(effect, "Copies Each Side", 4);
+            setProperty(effect, "Split Overlaps", 0);
+            setProperty(effect, "Strip Image Affect (%)", 100.0);
+            setProperty(effect, "Edge", 2);
         } else if (item.match === "ImageTransform") {
             setProperty(effect, "Separate Dimensions", 1);
             setProperty(effect, "Scale X", 136.0);

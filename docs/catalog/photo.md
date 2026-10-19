@@ -268,6 +268,43 @@ AE標準Transformに近いアフィン変換を、多様な再構成フィルタ
 - `Seed`、`Temporal Mode`、`Edge Mode`: 再現性、フレーム変化、境界処理を指定します。
 - `Blend Opacity`、`Preserve Original Alpha`、`Clamp`: 原画像との合成と出力を制御します。
 
+## AOD_ImagePattern
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_ImagePattern](assets/previews/image-pattern.png)
+
+フィードバック、万華鏡、帯状リピート、隙間のない多角形タイルで画像パターンを作り、コピーごとに参照時刻をずらします。
+
+### パラメーター
+
+- `Pattern Mode`: Feedback／Polar Kaleidoscope／Strip Repeat／Polygon Tileを選択します。
+- `Center`: 初期値はレイヤーの幅・高さの半分です。座標入力、ポイント選択、キーフレーム、エクスプレッションで直接指定できます。
+- Feedbackの`Decay`: 既定値1.0。`Opacity (%)`、`Iterations`、回転・拡縮・移動、合成順序を調整できます。
+- Stripの`Angle`、`Width (px)`、`Repeat`: 中心を通る帯を切り取り、法線方向へTile／Mirrorで繰り返します。Angle 0°は水平の帯です。
+- Stripの`Clipping`: 両側（Both Edges、初期値）／負側のみ（Negative Edge Only）／正側のみ（Positive Edge Only）／なし（None）。Angle 0°では負側が上、正側が下です。開いた側には画像の続きを描画します。
+- Stripの`Overlap Order`: クリッピング解除時の重なり順です。Overは反復番号の大きいスリットが手前、Underは小さいスリットが手前になり、元画像の透明度で合成します。
+- Stripの`Strip Rotation`、`Strip Scale X/Y (%)`、`Strip Skew (deg)`、`Strip Skew Axis`: 帯の配置を回転・拡縮・せん断します。
+- `Delta Angle`、`Delta Width (px)`、`Delta Mode`: 隣の帯と共有する境界線の角度と、Centerの法線上での境界間隔を変えます。Forward／Reverse／Outward／Ping Pong／Randomを選び、Cycle / RangeとSeedで折り返しや乱数を調整します。
+- `Delta X (px)`、`Delta Y (px)`: 境界を維持したまま、帯ごとの内部画像をソース画像のX/Y座標でずらします。初期値0。ずらし量はDelta Modeに従い、Centerの帯が基準です。Time Originを動かしても位置ずれの基準は変わりません。
+- Stripの`Split Overlaps`: オン（既定値）は交差した境界でも領域を分割します。オフはCenter側の領域へ戻ってくる境界を省き、重なった部分の追加分割を抑えます。省かれた反復の番号はMirrorとTime Deltaでも維持します。
+- `Copies Each Side`: Delta Angle／Width使用時、またはクリッピング解除時の反復数です。1なら中心を含め3枚を描画します。Both Edgesでは境界間に幾何学的な隙間や重なりがなく、外側は透明です。Both EdgesかつAngle／WidthのDeltaが両方0なら、X/YのDeltaを使っていても無制限に反復します。
+- Polygonの`Shape`、`Tile Width/Height (px)`: 三角形・四角形・六角形を隙間なく敷き詰めます。
+- Polygonの`Repeat`、`Rotation`、`Scale X/Y (%)`、`Skew (deg)`、`Skew Axis`: Tile／Mirrorと格子全体の変形を調整します。
+- `Image Affect (%)`／`Strip Image Affect (%)`: 0%はマスクのみ、100%は画像も変形します。途中の影響率にも調節できます。
+- `Mix (%)`、`Sampling`、`Edge`: 原画像との混合、補間、画像外の扱いです。EdgeはTransparentが既定値です。
+- Stripの`Edge Direction`: Along Stripは帯の方向に沿ってExtend／Tile／Mirrorを適用し、Image Axesは通常の画像端処理です。
+- `Time Delta (frames)`、`Time Origin (i = 0)`、`Time Index Offset`: 基準から1段ごとの参照時刻差です。時間差の基準点はCenterと独立しています。Feedbackでは反復番号とIndex Offsetを使います。
+- `Tile Time Direction`: Polygonの時間差を基準タイルからの段数／X方向／Y方向で選びます。`Time Edge`は範囲外の時刻をTransparent／Extend／Loop／Ping Pongで扱います。
+
+### 補足
+
+Polygon Tileの幾何学的な隙間はありません。入力の透明部分や画像外のサンプリングは元の透明度とEdge設定に従います。StripのDelta Angleは共有境界の間に画像を配置し、Image Affect 100%では画像の両端を境界に合わせます。Split Overlapsがオンの場合、境界が交差した箇所は法線方向の順序で領域を割り当てます。プレビューではオフの動作を使用しています。三角形のCenterは重心です。
+
+Time Delta使用時は境界の並び順と直近の参照画像を再利用します。改善幅と測定条件は[ImagePatternの説明](../../plugins/image-pattern/README.md)の「Time Deltaの処理速度」を参照してください。
+
+PatternTransformからの改名に伴いWave Lattice／Complex Mapを削除しています。旧インスタンスはImagePatternを追加して設定を移してください。詳細は[ImagePatternの説明](../../plugins/image-pattern/README.md)を参照してください。
+
 ## AOD_SingularValueDecompose
 
 - **分類:** P：一般写真・連続階調画像
