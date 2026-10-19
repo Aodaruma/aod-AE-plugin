@@ -4,6 +4,27 @@
 
 [![A分類の概要グリッド](assets/overview/anime.png)](assets/overview/anime.png)
 
+## AOD_ImageBevel
+
+- **分類:** A：アニメ素材
+
+![AOD_ImageBevel](assets/previews/image-bevel.png)
+
+シルエットから編集可能な断面カーブでベベルを作り、材質とライティングを設定します。
+
+### パラメーター
+
+- `Profile Curve`: クリックで点を追加、ドラッグで移動、Ctrl/Cmdクリックで削除。滑らかな補間・直線補間と5種類のプリセットを選べます。
+- `Surface Method`: SDF、Screened Poisson / Neumann、Screened Poisson / Dirichlet。
+- `Direction`、`Bevel Width`、`Contour Offset`、`Silhouette Blur`、`Height`、`Height Blur`: 内側／外側／両側の生成範囲と断面を調整します。
+- `Base Color`、`Diffuse`、`Roughness`、`Specular IOR Level`、`Metallic`、`IOR`、`Emission`: 簡易材質を設定します。
+- `Light Position`、`Light Height`、`Light Color / Intensity`、`Ambient`: ポイントによるライティングを設定します。
+- `Transmission`、`Refraction Layer`、`Refraction Depth`: 参照画像を歪める2D屈折を設定します。
+- `Alpha`: 元アルファ、カーブがゼロの部分を透明化、切り抜きなしの3方式です。
+- `Output`: 材質、白黒の高さ、法線、拡散、反射、屈折を確認できます。
+
+詳細・制限は [Image Bevelの説明](../../plugins/image-bevel/README.md) を参照してください。
+
 ## AOD_ColorChange
 
 - **分類:** A：アニメ素材
