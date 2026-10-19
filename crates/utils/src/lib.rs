@@ -3,6 +3,7 @@ use ae::{Pixel8, Pixel16, PixelF32};
 use after_effects as ae;
 
 pub mod image;
+pub mod seam;
 #[cfg(feature = "spectral")]
 pub mod spectral;
 #[cfg(feature = "spectral_wgpu")]

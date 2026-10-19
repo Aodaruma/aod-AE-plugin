@@ -30,6 +30,7 @@ impl Channel {
 }
 #[path = "linked.rs"]
 mod linked;
+pub mod mapped;
 use linked::LinkedCarver;
 pub const MAX_PIXELS: usize = 32 * 1024 * 1024;
 pub const MAX_DIMENSION: usize = 32_768;

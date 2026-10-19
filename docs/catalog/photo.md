@@ -298,6 +298,24 @@ v0.2.0、AE 2025、512×384の合成素材、共通倍率50%、RGBA、元サイ�
 
 AE標準のディスプレイスメントマップへ接続する場合は32bpcを推奨します。拡大・元サイズ復元では、座標を補間した結果と直接画像を補間した結果に差が出ます。[接続手順・検証結果](../../plugins/seam-scale/SEAM_MAP.md)を参照してください。既定Imageの描画は変わらないため、上の写真プレビューと一覧画像は維持しています。
 
+## AOD_SeamMap
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_SeamMap](assets/previews/seam-map.png)
+
+入力マップの明るさから黒・白の倍率を直線補間し、指定した明るさの場所を元の位置に固定します。正確なDPで求めたシームの参照座標に位置補正を加える、独立したエフェクトです。
+
+プレビューはAE 2025で、横方向のグラデーション、Xの黒50%・白150%、Y=100%、アンカー50%、Restore OFFを使用しています。
+
+- `Scale Map Layer` / `Map Channel`: 入力マップとLightness / R / G / B / Aを選びます。
+- `Black / White Scale`: 黒・白での倍率。−400〜400%、中間は直線補間します。
+- `Separate X/Y Scale`: OFFで共通倍率、ONでX/Y個別の黒・白倍率を使います。
+- `Anchor Map Value` / `Anchor Tolerance`: 固定する明るさと許容幅。アンカーの指定で倍率の補間は変わりません。
+- `Seam Channel` / `Restore Original Size`: シーム判定チャンネルと、元サイズへの復元を指定します。
+
+複数の固定点の間では位置補正によって実効的な局所倍率が変わります。高解像度では処理負荷が大きい試作版です。[仕様・検証結果](../../plugins/seam-map/README.md)を参照してください。
+
 ## AOD_SingularValueDecompose
 
 - **分類:** P：一般写真・連続階調画像

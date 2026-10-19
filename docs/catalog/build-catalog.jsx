@@ -40,6 +40,7 @@
         { name: "Image Transform", aod: "AOD_ImageTransform", slug: "image-transform", category: "P", match: "ImageTransform", fresh: true },
         { name: "Mobius Transform", aod: "AOD_MobiusTransform", slug: "mobius-transform", category: "P", match: "MobiusTransform" },
         { name: "Seam Scale", aod: "AOD_SeamScale", slug: "seam-scale", category: "P", match: "SeamScale", fresh: true },
+        { name: "Seam Map", aod: "AOD_SeamMap", slug: "seam-map", category: "P", match: "SeamMap", fresh: true },
         { name: "Scatter Map", aod: "AOD_ScatterMap", slug: "scatter-map", category: "P", comp: "19 Scatter Map" },
         { name: "Singular Value Decompose", aod: "AOD_SingularValueDecompose", slug: "singular-value-decompose", category: "P", comp: "20 Singular Value Decompose" },
 
@@ -308,6 +309,22 @@
             setProperty(effect, "Scale X (%)", 60);
             setProperty(effect, "Scale Y (%)", 100);
             setProperty(effect, "Restore Original Size", 1);
+        } else if (item.match === "SeamMap") {
+            var scaleMap = app.project.items.addComp("CATPREVIEW - Seam Map Control", 512, 512, 1, 1, 30);
+            var mapBase = scaleMap.layers.addSolid([0,0,0], "Scale Map", 512, 512, 1, 1);
+            var mapRamp = addEffect(mapBase, "ADBE Ramp");
+            mapRamp.property(1).setValue([0,256]); mapRamp.property(2).setValue([0,0,0,1]);
+            mapRamp.property(3).setValue([512,256]); mapRamp.property(4).setValue([1,1,1,1]);
+            var mapLayer = comp.layers.add(scaleMap);
+            mapLayer.enabled = false; mapLayer.moveToEnd();
+            setProperty(effect, "Scale Map Layer", mapLayer.index);
+            setProperty(effect, "Map Channel", 2);
+            setProperty(effect, "Separate X/Y Scale", 1);
+            setProperty(effect, "Black Scale X (%)", 50);
+            setProperty(effect, "White Scale X (%)", 150);
+            setProperty(effect, "Black Scale Y (%)", 100);
+            setProperty(effect, "White Scale Y (%)", 100);
+            setProperty(effect, "Anchor Map Value (%)", 50);
         } else if (item.match === "MobiusTransform") {
             setProperty(effect, "b.re", 0.18);
             setProperty(effect, "b.im", -0.08);
