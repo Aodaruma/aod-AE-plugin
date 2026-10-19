@@ -1,0 +1,34 @@
+# Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
+[package]
+name = "seam_scale"
+description = "Resizes images with exact dynamic-programming seam carving and optional size restoration."
+version = "0.1.5"
+edition = "2024"
+license.workspace = true
+authors.workspace = true
+
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+utils = { path = "../../crates/utils" }
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1.12"
+
+[lints]
+workspace = true

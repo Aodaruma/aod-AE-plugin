@@ -2,6 +2,8 @@
     var environmentPhase = $.getenv("AOD_CATALOG_PHASE");
     var phase = (typeof AOD_CATALOG_PHASE !== "undefined") ? AOD_CATALOG_PHASE : (environmentPhase || "build");
     var headless = $.getenv("AOD_CATALOG_HEADLESS") === "1";
+    var updateSlug = (typeof AOD_CATALOG_SLUG !== "undefined") ? AOD_CATALOG_SLUG : "";
+    var silent = (typeof AOD_CATALOG_SILENT !== "undefined") && AOD_CATALOG_SILENT;
     var repoRoot = new Folder(File($.fileName).parent.parent.parent.fsName);
     var docsRoot = new Folder(repoRoot.fsName + "/docs/catalog");
     var previewRoot = new Folder(docsRoot.fsName + "/assets/previews");
@@ -14,7 +16,7 @@
     var warnings = [];
 
     function notify(message) {
-        if (headless) {
+        if (headless || silent) {
             $.writeln(message);
         } else {
             alert(message);
@@ -37,6 +39,7 @@
         { name: "Image Scaler", aod: "AOD_ImageScaler", slug: "image-scaler", category: "P", comp: "15 Image Scaler" },
         { name: "Image Transform", aod: "AOD_ImageTransform", slug: "image-transform", category: "P", match: "ImageTransform", fresh: true },
         { name: "Mobius Transform", aod: "AOD_MobiusTransform", slug: "mobius-transform", category: "P", match: "MobiusTransform" },
+        { name: "Seam Scale", aod: "AOD_SeamScale", slug: "seam-scale", category: "P", match: "SeamScale", fresh: true },
         { name: "Scatter Map", aod: "AOD_ScatterMap", slug: "scatter-map", category: "P", comp: "19 Scatter Map" },
         { name: "Singular Value Decompose", aod: "AOD_SingularValueDecompose", slug: "singular-value-decompose", category: "P", comp: "20 Singular Value Decompose" },
 
@@ -300,6 +303,11 @@
             setProperty(effect, "Lanczos Lobes", 3.0);
             setProperty(effect, "Sample Outside Image", 1);
             setProperty(effect, "Outside Pixels", 3);
+        } else if (item.match === "SeamScale") {
+            setProperty(effect, "Separate X/Y Scale", 1);
+            setProperty(effect, "Scale X (%)", 60);
+            setProperty(effect, "Scale Y (%)", 100);
+            setProperty(effect, "Restore Original Size", 1);
         } else if (item.match === "MobiusTransform") {
             setProperty(effect, "b.re", 0.18);
             setProperty(effect, "b.im", -0.08);
@@ -448,7 +456,8 @@
             var card = comp.layers.addSolid([0.035, 0.045, 0.065], "Card - " + items[i].name, 560, 560, 1, comp.duration);
             card.property("ADBE Transform Group").property("ADBE Position").setValue([x, y]);
 
-            var previewSource = findComp(items[i].comp);
+            var previewSource = phase === "update-effect"
+                ? importExistingPreview(items[i]) : findComp(items[i].comp);
             if (!previewSource) {
                 previewSource = importExistingPreview(items[i]);
             }
@@ -555,6 +564,36 @@
             log.push("SAVED " + projectFile.fsName);
             writeReport("Build complete; run render-previews and render-overviews phases next.");
             notify("AOD catalog project built.\n" + projectFile.fsName);
+        } else if (phase === "update-effect") {
+            // Refresh one effect and its grids while preserving other renders.
+            var selected = null;
+            for (var s = 0; s < catalog.length; s++) {
+                if (catalog[s].slug === updateSlug) { selected = catalog[s]; break; }
+            }
+            if (!selected || !selected.match) {
+                throw new Error("Unknown generated preview slug: " + updateSlug);
+            }
+            var oldPreview = findComp(selected.comp);
+            if (oldPreview) { oldPreview.remove(); }
+            var updatedPreview = createOldPreview(selected);
+            var updatedFile = new File(previewRoot.fsName + "/" + selected.slug + ".png");
+            updatedPreview.saveFrameToPng(0, updatedFile);
+            log.push("RENDERED " + updatedFile.fsName);
+            var updatedCategories = [selected.category, "ALL"];
+            var updatedNames = { P: "photo", A: "anime", D: "map-data", G: "generator", ALL: "all-effects" };
+            for (var u = 0; u < updatedCategories.length; u++) {
+                var oldGrid = findComp("CATGRID - " + updatedCategories[u]);
+                if (oldGrid) { oldGrid.remove(); }
+                var updatedGrid = makeGrid(updatedCategories[u]);
+                var updatedGridFile = new File(overviewRoot.fsName + "/" + updatedNames[updatedCategories[u]] + ".png");
+                updatedGrid.saveFrameToPng(0, updatedGridFile);
+                log.push("RENDERED " + updatedGridFile.fsName);
+            }
+            app.project.save(projectFile);
+            writeReport("Single effect and related grids updated.");
+            updatedPreview.openInViewer();
+            updatedPreview.layer(1).selected = true;
+            notify("AOD catalog updated: " + selected.aod);
         } else if (phase === "render-previews") {
             for (var p = 0; p < catalog.length; p++) {
                 var previewFile = new File(previewRoot.fsName + "/" + catalog[p].slug + ".png");

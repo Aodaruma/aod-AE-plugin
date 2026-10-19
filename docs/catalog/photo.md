@@ -268,6 +268,27 @@ AE標準Transformに近いアフィン変換を、多様な再構成フィルタ
 - `Seed`、`Temporal Mode`、`Edge Mode`: 再現性、フレーム変化、境界処理を指定します。
 - `Blend Opacity`、`Preserve Original Alpha`、`Clamp`: 原画像との合成と出力を制御します。
 
+## AOD_SeamScale
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_SeamScale](assets/previews/seam-scale.png)
+
+プレビューはAE 2025でX=60%、Y=100%、Restore Original Size=ON、Seam Channel=RGBAを使用しています。
+
+画像内容に応じたシームを正確な動的計画法で求め、画像を拡大・縮小します。残存画素を保ち、必要に応じて通常のリサイズで元の寸法へ戻せます。
+
+### パラメーター
+
+- `Separate X/Y Scale`: OFFで共通倍率、ONでX/Y個別倍率に切り替えます。
+- `Scale (%)`、`Scale X (%)`、`Scale Y (%)`: 拡縮倍率を−400〜400%で指定します。絶対値でシーム処理し、負の軸を反転します。最小1pxです。
+- `Restore Original Size`: シーム処理後にバイリニア補間で元のサイズに戻します。
+- `Seam Channel`: RGB / RGBA / R / G / B / A / Lightnessから判定成分を選びます。既定RGBAはLightness＋Alphaで、旧版と同じ計算です。画素のRGBAは一緒に移動します。
+
+処理順はX→Y固定です。復元OFF時は元のキャンバス中央へ配置し、縮小時の余白は透明、拡大時のキャンバス外は切れます。動画は毎フレーム計算するため、解像度・変更量によって時間がかかります。
+
+[実装・検証の詳細](../../plugins/seam-scale/README.md)
+
 ## AOD_SingularValueDecompose
 
 - **分類:** P：一般写真・連続階調画像

@@ -13,8 +13,10 @@ This repository is a Cargo
 workspace that builds multiple AE effect plugins, plus shared utilities and a plugin
 template.
 
-現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する39種類のエフェクトを収録しています。
-The current catalog contains 39 effects for photo, anime, data/map, and generator workflows.
+現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する40種類のエフェクトを収録しています。
+The current catalog contains 40 effects for photo, anime, data/map, and generator workflows.
+
+追加した [AOD_SeamScale](plugins/seam-scale/README.md) は、正確なDPによるコンテンツに応じた拡縮、チャンネル選択、負の倍率による反転、元サイズへの復元に対応します。AE 2025で描画・UIを確認し、カタログの個別プレビューと一覧画像へ反映しています。
 
 ## Effect List / エフェクト一覧
 
