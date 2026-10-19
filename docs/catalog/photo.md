@@ -284,10 +284,19 @@ AE標準Transformに近いアフィン変換を、多様な再構成フィルタ
 - `Scale (%)`、`Scale X (%)`、`Scale Y (%)`: 拡縮倍率を−400〜400%で指定します。絶対値でシーム処理し、負の軸を反転します。最小1pxです。
 - `Restore Original Size`: シーム処理後にバイリニア補間で元のサイズに戻します。
 - `Seam Channel`: RGB / RGBA / R / G / B / A / Lightnessから判定成分を選びます。既定RGBAはLightness＋Alphaで、旧版と同じ計算です。画素のRGBAは一緒に移動します。
+- `Output`: Image / Seam Map (Displacement)。Seam Mapは同じシームによる横・縦の参照変位をR/G、有効領域をBへ出力します。
 
 処理順はX→Y固定です。復元OFF時は元のキャンバス中央へ配置し、縮小時の余白は透明、拡大時のキャンバス外は切れます。動画は毎フレーム計算するため、解像度・変更量によって時間がかかります。
 
 [実装・検証の詳細](../../plugins/seam-scale/README.md)
+
+### Seam Map出力の例
+
+![Seam Map](assets/previews/seam-scale-map.png)
+
+v0.2.0、AE 2025、512×384の合成素材、共通倍率50%、RGBA、元サイズ復元OFF、32bpc。R/Gの0.5が変位なし、Bの白い領域が縮小後の有効範囲です。表示例はAEのレンダーキューから出力した16bit PNGです。
+
+AE標準のディスプレイスメントマップへ接続する場合は32bpcを推奨します。拡大・元サイズ復元では、座標を補間した結果と直接画像を補間した結果に差が出ます。[接続手順・検証結果](../../plugins/seam-scale/SEAM_MAP.md)を参照してください。既定Imageの描画は変わらないため、上の写真プレビューと一覧画像は維持しています。
 
 ## AOD_SingularValueDecompose
 

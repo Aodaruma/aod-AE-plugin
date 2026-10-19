@@ -5,7 +5,7 @@
     if (!new File(root.fsName + "/plugins/seam-scale/Cargo.toml").exists) {
         throw new Error("Set AOD_SEAM_TEST_ROOT to the worktree root when running through MCP.");
     }
-    var out = new Folder(root.fsName + "/target/seam-scale-ae-0.1.5");
+    var out = new Folder(root.fsName + "/target/seam-scale-ae-0.2.0");
     if (!out.exists && !out.create()) { throw new Error("Cannot create test output directory."); }
     var log = new File(out.fsName + "/result.txt");
     if (!log.open("w")) { throw new Error("Cannot open test output log."); }
@@ -33,6 +33,7 @@
             var layer = c.layers.add(source);
             save(c, "input-" + depth);
             var e = effect(layer);
+            if (e.property("Output").value !== 1) { throw new Error("Expected default Image output"); }
             if (e.property("Seam Channel").value !== 2) { throw new Error("Expected default RGBA channel"); }
             save(c, "identity-" + depth);
             e.property("Scale (%)").setValue(75);

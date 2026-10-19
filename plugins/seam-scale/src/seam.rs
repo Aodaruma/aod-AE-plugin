@@ -67,6 +67,7 @@ pub struct Image {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<Pixel>,
+    coordinates: Option<Vec<[f32; 2]>>,
 }
 
 impl Image {
@@ -78,7 +79,61 @@ impl Image {
             width,
             height,
             pixels,
+            coordinates: None,
         })
+    }
+
+    /// Track source coordinates independently of the color used for seam energy.
+    pub fn track_coordinates(
+        &mut self,
+        cancel: &mut impl FnMut() -> bool,
+    ) -> Result<(), CarveError> {
+        let mut coordinates = buffer(self.pixels.len(), [0.0; 2])?;
+        for y in 0..self.height {
+            if y % 32 == 0 {
+                check_cancel(cancel)?;
+            }
+            for x in 0..self.width {
+                coordinates[y * self.width + x] = [x as f32, y as f32];
+            }
+        }
+        self.coordinates = Some(coordinates);
+        Ok(())
+    }
+
+    fn blank_like(&self, width: usize, height: usize) -> Result<Self, CarveError> {
+        let n = area(width, height)?;
+        let mut image = Self::new(width, height, buffer(n, [0.0; 4])?)?;
+        if self.coordinates.is_some() {
+            image.coordinates = Some(buffer(n, [0.0; 2])?);
+        }
+        Ok(image)
+    }
+
+    fn copy_sample(&mut self, to: usize, original: &Self, from: usize) {
+        self.pixels[to] = original.pixels[from];
+        if let (Some(dst), Some(src)) = (&mut self.coordinates, &original.coordinates) {
+            dst[to] = src[from];
+        }
+    }
+
+    /// Replace colors only after all seam decisions, including the second axis.
+    pub fn into_coordinate_image(
+        mut self,
+        cancel: &mut impl FnMut() -> bool,
+    ) -> Result<Self, CarveError> {
+        let coordinates = self.coordinates.take().ok_or(CarveError::InvalidSize)?;
+        for y in 0..self.height {
+            if y % 32 == 0 {
+                check_cancel(cancel)?;
+            }
+            for x in 0..self.width {
+                let i = y * self.width + x;
+                let [sx, sy] = coordinates[i];
+                self.pixels[i] = [sx, sy, 1.0, 1.0];
+            }
+        }
+        Ok(self)
     }
 
     /// Flip after carving so signed scales retain the positive scale's exact seams.
@@ -93,6 +148,9 @@ impl Image {
                     check_cancel(cancel)?;
                 }
                 row.reverse();
+                if let Some(coordinates) = &mut self.coordinates {
+                    coordinates[y * self.width..(y + 1) * self.width].reverse();
+                }
             }
         }
         if axes[1] {
@@ -104,25 +162,30 @@ impl Image {
                 let (top, bottom) = self.pixels.split_at_mut(opposite);
                 top[y * self.width..(y + 1) * self.width]
                     .swap_with_slice(&mut bottom[..self.width]);
+                if let Some(coordinates) = &mut self.coordinates {
+                    let (top, bottom) = coordinates.split_at_mut(opposite);
+                    top[y * self.width..(y + 1) * self.width]
+                        .swap_with_slice(&mut bottom[..self.width]);
+                }
             }
         }
         Ok(())
     }
 
     fn transpose(self, cancel: &mut impl FnMut() -> bool) -> Result<Self, CarveError> {
-        let mut pixels = buffer(self.pixels.len(), [0.0; 4])?;
+        let mut output = self.blank_like(self.height, self.width)?;
         // Tiling keeps both sides of a large transpose in cache.
         for by in (0..self.height).step_by(32) {
             check_cancel(cancel)?;
             for bx in (0..self.width).step_by(32) {
                 for y in by..(by + 32).min(self.height) {
                     for x in bx..(bx + 32).min(self.width) {
-                        pixels[x * self.height + y] = self.pixels[y * self.width + x];
+                        output.copy_sample(x * self.height + y, &self, y * self.width + x);
                     }
                 }
             }
         }
-        Self::new(self.height, self.width, pixels)
+        Ok(output)
     }
 }
 
@@ -453,12 +516,12 @@ fn resize_width(
     while image.width < target {
         check_cancel(cancel)?;
         if image.width == 1 {
-            let mut pixels = buffer(area(2, image.height)?, [0.0; 4])?;
+            let mut output = image.blank_like(2, image.height)?;
             for y in 0..image.height {
-                pixels[y * 2] = image.pixels[y];
-                pixels[y * 2 + 1] = image.pixels[y];
+                output.copy_sample(y * 2, &image, y);
+                output.copy_sample(y * 2 + 1, &image, y);
             }
-            image = Image::new(2, image.height, pixels)?;
+            image = output;
             continue;
         }
         // Discover seams by sequential removal on a working copy, mapping each
@@ -477,7 +540,7 @@ fn resize_width(
             }
         }
         let width = image.width + count;
-        let mut pixels = buffer(area(width, image.height)?, [0.0; 4])?;
+        let mut output = image.blank_like(width, image.height)?;
         for y in 0..image.height {
             if y % 32 == 0 {
                 check_cancel(cancel)?;
@@ -485,18 +548,22 @@ fn resize_width(
             let mut out = y * width;
             for x in 0..image.width {
                 let i = y * image.width + x;
-                pixels[out] = image.pixels[i];
+                output.copy_sample(out, &image, i);
                 out += 1;
                 if selected[i] {
                     let neighbor = if x + 1 < image.width { i + 1 } else { i - 1 };
-                    pixels[out] = std::array::from_fn(|c| {
+                    output.pixels[out] = std::array::from_fn(|c| {
                         image.pixels[i][c] * 0.5 + image.pixels[neighbor][c] * 0.5
                     });
+                    if let (Some(dst), Some(src)) = (&mut output.coordinates, &image.coordinates) {
+                        dst[out] =
+                            std::array::from_fn(|c| src[i][c] * 0.5 + src[neighbor][c] * 0.5);
+                    }
                     out += 1;
                 }
             }
         }
-        image = Image::new(width, image.height, pixels)?;
+        image = output;
     }
     Ok(image)
 }
@@ -513,16 +580,20 @@ fn shrink_packed(
         carver.find_seam(cancel)?;
         carver.remove_seam();
     }
-    let mut pixels = buffer(area(target, image.height)?, [0.0; 4])?;
+    let mut output = image.blank_like(target, image.height)?;
     for y in 0..image.height {
         if y % 32 == 0 {
             check_cancel(cancel)?;
         }
         for x in 0..target {
-            pixels[y * target + x] = image.pixels[carver.indices[carver.rows[y] + x] as usize];
+            output.copy_sample(
+                y * target + x,
+                &image,
+                carver.indices[carver.rows[y] + x] as usize,
+            );
         }
     }
-    Image::new(target, image.height, pixels)
+    Ok(output)
 }
 
 pub fn resize(
@@ -574,6 +645,27 @@ pub fn sample_output(image: &Image, canvas: [usize; 2], xy: [i64; 2], restore: b
             + image.pixels[y1 * image.width + x1][c] * tx;
         a * (1.0 - ty) + b * ty
     })
+}
+
+/// Encode the inverse sampling field for AE's Displacement Map effect.
+/// R/G use the canvas width/height as maximum displacement; B is coverage.
+/// Keep alpha opaque so transparent padding cannot premultiply the neutral map.
+pub fn sample_displacement_output(
+    image: &Image,
+    canvas: [usize; 2],
+    xy: [i64; 2],
+    restore: bool,
+) -> Pixel {
+    let sample = sample_output(image, canvas, xy, restore);
+    if sample[3] == 0.0 {
+        return [0.5, 0.5, 0.0, 1.0];
+    }
+    [
+        (0.5 + (f64::from(sample[0]) - xy[0] as f64) / (2.0 * canvas[0] as f64)) as f32,
+        (0.5 + (f64::from(sample[1]) - xy[1] as f64) / (2.0 * canvas[1] as f64)) as f32,
+        sample[2],
+        1.0,
+    ]
 }
 
 #[cfg(test)]

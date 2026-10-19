@@ -233,15 +233,15 @@ impl LinkedCarver {
     }
 
     pub fn image(&self, original: &Image) -> Result<Image, CarveError> {
-        let mut pixels = buffer(self.width * self.height, [0.0; 4])?;
+        let mut output = original.blank_like(self.width, self.height)?;
         for y in 0..self.height {
             let mut id = self.first[y];
             for x in 0..self.width {
-                pixels[y * self.width + x] = original.pixels[id as usize];
+                output.copy_sample(y * self.width + x, original, id as usize);
                 id = self.right[id as usize];
             }
             debug_assert_eq!(id, NONE);
         }
-        Image::new(self.width, self.height, pixels)
+        Ok(output)
     }
 }

@@ -10,6 +10,152 @@ const CHANNELS: [Channel; 7] = [
     Channel::Lightness,
 ];
 
+#[test]
+fn tracked_shrink_coordinates_reconstruct_retained_pixels() {
+    for channel in CHANNELS {
+        for (w, h, tw, th) in [(17, 13, 13, 9), (37, 29, 11, 9), (1, 9, 1, 3), (9, 1, 3, 1)] {
+            for flat in [false, true] {
+                let mut input = fixture(w, h, 924);
+                if flat {
+                    input.pixels.fill([0.3, 0.4, 0.2, 1.0]);
+                }
+                let original = input.pixels.clone();
+                input.track_coordinates(&mut || false).unwrap();
+                let actual = super::resize(input, tw, th, channel, || false).unwrap();
+                let ordinary = super::resize(
+                    Image::new(w, h, original.clone()).unwrap(),
+                    tw,
+                    th,
+                    channel,
+                    || false,
+                )
+                .unwrap();
+                assert_eq!(actual.pixels, ordinary.pixels);
+                assert!(ordinary.coordinates.is_none());
+                for (i, &[x, y]) in actual.coordinates.as_ref().unwrap().iter().enumerate() {
+                    assert!(x >= 0.0 && x < w as f32 && y >= 0.0 && y < h as f32);
+                    assert_eq!([x.fract(), y.fract()], [0.0, 0.0]);
+                    assert_eq!(actual.pixels[i], original[y as usize * w + x as usize]);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn tracked_expansion_flip_and_restore_preserve_affine_source_coordinates() {
+    // R/G are an independent coordinate oracle: linear color interpolation must
+    // agree with coordinate propagation while B/alpha affect the seam decisions.
+    for channel in CHANNELS {
+        for (w, h, tw, th) in [
+            (7, 5, 28, 20),
+            (7, 5, 3, 9),
+            (7, 5, 10, 2),
+            (1, 3, 4, 8),
+            (3, 1, 8, 4),
+        ] {
+            let mut input = fixture(w, h, 394);
+            for y in 0..h {
+                for x in 0..w {
+                    input.pixels[y * w + x][0] = x as f32;
+                    input.pixels[y * w + x][1] = y as f32;
+                }
+            }
+            let original = input.pixels.clone();
+            input.track_coordinates(&mut || false).unwrap();
+            let mut actual = super::resize(input, tw, th, channel, || false).unwrap();
+            let mut ordinary =
+                super::resize(Image::new(w, h, original).unwrap(), tw, th, channel, || {
+                    false
+                })
+                .unwrap();
+            for axes in [[false, false], [true, false], [false, true], [true, true]] {
+                actual.flip(axes, &mut || false).unwrap();
+                ordinary.flip(axes, &mut || false).unwrap();
+                assert_eq!(actual.pixels, ordinary.pixels);
+                let mut coordinate_image = Image::new(tw, th, actual.pixels.clone()).unwrap();
+                coordinate_image.coordinates = actual.coordinates.clone();
+                let coordinate_image = coordinate_image
+                    .into_coordinate_image(&mut || false)
+                    .unwrap();
+                for restore in [false, true] {
+                    for y in 0..h {
+                        for x in 0..w {
+                            let color =
+                                sample_output(&actual, [w, h], [x as i64, y as i64], restore);
+                            let coordinate = sample_output(
+                                &coordinate_image,
+                                [w, h],
+                                [x as i64, y as i64],
+                                restore,
+                            );
+                            assert_eq!(&color[..2], &coordinate[..2]);
+                        }
+                    }
+                }
+                actual.flip(axes, &mut || false).unwrap();
+                ordinary.flip(axes, &mut || false).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn displacement_map_decodes_source_coordinates_and_coverage() {
+    let (w, h) = (17, 13);
+    for (tw, th) in [(17, 13), (8, 6), (24, 19), (1, 1)] {
+        for axes in [[false, false], [true, false], [false, true], [true, true]] {
+            let mut input = fixture(w, h, 682);
+            input.track_coordinates(&mut || false).unwrap();
+            let mut output = super::resize(input, tw, th, Channel::Rgba, || false).unwrap();
+            output.flip(axes, &mut || false).unwrap();
+            let output = output.into_coordinate_image(&mut || false).unwrap();
+            for restore in [false, true] {
+                for y in 0..h {
+                    for x in 0..w {
+                        let xy = [x as i64, y as i64];
+                        let expected = sample_output(&output, [w, h], xy, restore);
+                        let map = sample_displacement_output(&output, [w, h], xy, restore);
+                        assert_eq!(map[3], 1.0);
+                        assert!(map.iter().all(|v| (0.0..=1.0).contains(v)));
+                        if expected[3] == 0.0 {
+                            assert_eq!(map, [0.5, 0.5, 0.0, 1.0]);
+                        } else {
+                            let sx = x as f32 + (map[0] * 2.0 - 1.0) * w as f32;
+                            let sy = y as f32 + (map[1] * 2.0 - 1.0) * h as f32;
+                            assert!((sx - expected[0]).abs() < 0.00001);
+                            assert!((sy - expected[1]).abs() < 0.00001);
+                            assert_eq!(map[2], 1.0);
+                            if tw == w && th == h && axes == [false, false] {
+                                assert_eq!(&map[..2], &[0.5, 0.5]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn coordinate_tracking_honors_cancellation() {
+    let mut image = fixture(4, 3, 1);
+    assert_eq!(
+        image.track_coordinates(&mut || true),
+        Err(CarveError::Cancelled)
+    );
+    assert!(image.coordinates.is_none());
+    image.track_coordinates(&mut || false).unwrap();
+    assert!(matches!(
+        image.into_coordinate_image(&mut || true),
+        Err(CarveError::Cancelled)
+    ));
+    assert!(matches!(
+        fixture(4, 3, 1).into_coordinate_image(&mut || false),
+        Err(CarveError::InvalidSize)
+    ));
+}
+
 // Keep the original regression fixtures on the legacy energy model.
 fn resize(
     image: Image,

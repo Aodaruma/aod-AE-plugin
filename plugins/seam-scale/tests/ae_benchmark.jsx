@@ -4,7 +4,7 @@
     if (!new File(root.fsName + "/plugins/seam-scale/Cargo.toml").exists) {
         throw new Error("Set AOD_SEAM_TEST_ROOT to the worktree root when running through MCP.");
     }
-    var out = new Folder(root.fsName + "/target/seam-scale-ae-0.1.5");
+    var out = new Folder(root.fsName + "/target/seam-scale-ae-0.2.0");
     var log = new File(out.fsName + "/benchmark.txt");
     if (!log.open("w")) { throw new Error("Cannot open benchmark output log."); }
     function record(text) { log.writeln(text); log.close(); log.open("a"); }

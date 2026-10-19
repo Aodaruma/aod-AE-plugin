@@ -17,6 +17,7 @@ enum Params {
     ScaleY,
     Restore,
     Channel,
+    Output,
 }
 
 #[derive(Default)]
@@ -80,6 +81,14 @@ impl AdobePluginGlobal for Plugin {
             PopupDef::setup(|d| {
                 d.set_options(&["RGB", "RGBA", "R", "G", "B", "A", "Lightness"]);
                 d.set_default(2);
+            }),
+        )?;
+        params.add(
+            Params::Output,
+            "Output",
+            PopupDef::setup(|d| {
+                d.set_options(&["Image", "Seam Map (Displacement)"]);
+                d.set_default(1);
             }),
         )?;
         Ok(())
@@ -244,6 +253,7 @@ fn render(
     let target = [scale_target(canvas[0], sx), scale_target(canvas[1], sy)];
     let restore = params.get(Params::Restore)?.as_checkbox()?.value();
     let channel = seam::Channel::from_popup(params.get(Params::Channel)?.as_popup()?.value());
+    let map_output = params.get(Params::Output)?.as_popup()?.value() == 2;
     let count = seam::area(canvas[0], canvas[1]).map_err(|e| host_error(e, out_data))?;
     seam::area(target[0], canvas[1])
         .and_then(|_| seam::area(target[0], target[1]))
@@ -273,7 +283,7 @@ fn render(
             }
         }
     }
-    let image =
+    let mut image =
         seam::Image::new(canvas[0], canvas[1], pixels).map_err(|e| host_error(e, out_data))?;
     in_data.interact().abort()?;
     let mut last_abort_check = std::time::Instant::now();
@@ -286,6 +296,11 @@ fn render(
         last_abort_check = std::time::Instant::now();
         in_data.interact().abort().is_err()
     };
+    if map_output {
+        image
+            .track_coordinates(&mut cancel)
+            .map_err(|e| host_error(e, out_data))?;
+    }
     let mut image = seam::resize(image, target[0], target[1], channel, &mut cancel)
         .map_err(|e| host_error(e, out_data))?;
     image
@@ -294,6 +309,11 @@ fn render(
             &mut cancel,
         )
         .map_err(|e| host_error(e, out_data))?;
+    if map_output {
+        image = image
+            .into_coordinate_image(&mut cancel)
+            .map_err(|e| host_error(e, out_data))?;
+    }
     let origin = if smart {
         [output.origin().h, output.origin().v]
     } else {
@@ -301,7 +321,12 @@ fn render(
         [input_origin[0] - shift.h, input_origin[1] - shift.v]
     };
     output.iterate(0, output.height() as i32, None, |x, y, mut dst| {
-        let p = seam::sample_output(
+        let sample = if map_output {
+            seam::sample_displacement_output
+        } else {
+            seam::sample_output
+        };
+        let p = sample(
             &image,
             canvas,
             [
