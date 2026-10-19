@@ -2,7 +2,7 @@
 [package]
 name = "seam_scale"
 description = "Resizes images with exact dynamic-programming seam carving and optional size restoration."
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license.workspace = true
 authors.workspace = true

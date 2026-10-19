@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "seam_scale"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "after-effects",
  "chrono",

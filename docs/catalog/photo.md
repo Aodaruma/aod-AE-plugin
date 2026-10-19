@@ -274,7 +274,7 @@ AE標準Transformに近いアフィン変換を、多様な再構成フィルタ
 
 ![AOD_SeamScale](assets/previews/seam-scale.png)
 
-プレビューはAE 2025でX=60%、Y=100%、Restore Original Size=ON、Seam Channel=RGBAを使用しています。
+プレビューはv0.3.0・AE 2025・16bpcで、入力マップON、横方向グラデーションのR、XのMin50%・Max150%、YのMin/Max100%、アンカー50%、Restore OFF、Seam Channel=RGBAを使用しています。
 
 画像内容に応じたシームを正確な動的計画法で求め、画像を拡大・縮小します。残存画素を保ち、必要に応じて通常のリサイズで元の寸法へ戻せます。
 
@@ -285,6 +285,10 @@ AE標準Transformに近いアフィン変換を、多様な再構成フィルタ
 - `Restore Original Size`: シーム処理後にバイリニア補間で元のサイズに戻します。
 - `Seam Channel`: RGB / RGBA / R / G / B / A / Lightnessから判定成分を選びます。既定RGBAはLightness＋Alphaで、旧版と同じ計算です。画素のRGBAは一緒に移動します。
 - `Output`: Image / Seam Map (Displacement)。Seam Mapは同じシームによる横・縦の参照変位をR/G、有効領域をBへ出力します。
+- `Use Map Layer`: ONで入力マップとMin/Maxを表示、OFFで通常のScaleを表示します。Separate X/Y Scaleと組み合わせ、不要な倍率は非表示になります。
+- `Scale Map Layer` / `Map Channel`: 制御レイヤーと参照成分を選びます。
+- `Min / Max Scale`: アンカーからの明るさの絶対距離で倍率を補間します。アンカー50%なら黒と白は同じMaxです。共通・X/Y個別の設定を切り替えられます。
+- `Anchor Map Value` / `Anchor Tolerance`: 元の位置を固定する明るさと許容幅です。[入力マップの仕様](../../plugins/seam-scale/LAYER_MAP.md)を参照してください。
 
 処理順はX→Y固定です。復元OFF時は元のキャンバス中央へ配置し、縮小時の余白は透明、拡大時のキャンバス外は切れます。動画は毎フレーム計算するため、解像度・変更量によって時間がかかります。
 
@@ -296,9 +300,11 @@ AE標準Transformに近いアフィン変換を、多様な再構成フィルタ
 
 v0.2.0、AE 2025、512×384の合成素材、共通倍率50%、RGBA、元サイズ復元OFF、32bpc。R/Gの0.5が変位なし、Bの白い領域が縮小後の有効範囲です。表示例はAEのレンダーキューから出力した16bit PNGです。
 
-AE標準のディスプレイスメントマップへ接続する場合は32bpcを推奨します。拡大・元サイズ復元では、座標を補間した結果と直接画像を補間した結果に差が出ます。[接続手順・検証結果](../../plugins/seam-scale/SEAM_MAP.md)を参照してください。既定Imageの描画は変わらないため、上の写真プレビューと一覧画像は維持しています。
+AE標準のディスプレイスメントマップへ接続する場合は32bpcを推奨します。拡大・元サイズ復元では、座標を補間した結果と直接画像を補間した結果に差が出ます。[接続手順・検証結果](../../plugins/seam-scale/SEAM_MAP.md)を参照してください。この出力はUse Map LayerがOFFのときに使用できます。
 
-## AOD_SeamMap
+## AOD_SeamMap（旧独立版）
+
+新規利用では上のAOD_SeamScaleにある`Use Map Layer`を使用してください。この独立版は既存プロジェクトの互換性のために残しています。
 
 - **分類:** P：一般写真・連続階調画像
 

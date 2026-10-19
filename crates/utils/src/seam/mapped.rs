@@ -7,7 +7,7 @@ const END: u32 = u32::MAX;
 
 #[path = "mapped_anchor.rs"]
 mod anchor;
-pub use anchor::{Settings, apply, scale_at};
+pub use anchor::{Settings, apply, apply_distance, scale_at, scale_at_distance};
 
 fn payload(image: &Image, index: usize, coordinates: bool) -> Pixel {
     if coordinates {

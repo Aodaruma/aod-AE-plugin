@@ -3,7 +3,7 @@ use super::{CarveError, Channel, Image, Pixel, buffer, check_cancel, query_width
 
 #[derive(Clone, Copy, Debug)]
 pub struct Settings {
-    /// Black/white endpoint percentages, separately for X and Y.
+    /// Endpoint percentages for X and Y: black/white in apply, Min/Max in apply_distance.
     pub scales: [[f64; 2]; 2],
     /// Normalized brightness defining the fixed contour, independent of scale.
     pub anchor: f64,
@@ -25,6 +25,15 @@ pub fn scale_at(value: f64, endpoints: [f64; 2]) -> f64 {
     let black = finite_clamp(endpoints[0], 100.0, -400.0, 400.0);
     let white = finite_clamp(endpoints[1], 100.0, -400.0, 400.0);
     black + (white - black) * value
+}
+
+/// Normalize brightness distance by the farthest possible endpoint. Equal
+/// absolute distances on either side of the anchor always receive equal scales.
+pub fn scale_at_distance(value: f64, endpoints: [f64; 2], anchor: f64) -> f64 {
+    let anchor = finite_clamp(anchor, 0.0, 0.0, 1.0);
+    let value = finite_clamp(value, 0.0, 0.0, 1.0);
+    let distance = (value - anchor).abs() / anchor.max(1.0 - anchor);
+    scale_at(distance, endpoints)
 }
 
 fn sample_row(image: &Image, y: usize, position: f64) -> Pixel {
@@ -101,9 +110,30 @@ fn pin_row(
 /// then correct positions, independently of the black/white scale interpolation.
 /// Each axis centers or restores its field to the original canvas before pinning.
 pub fn apply(
+    image: Image,
+    map: &[f32],
+    settings: Settings,
+    cancel: &mut impl FnMut() -> bool,
+) -> Result<Image, CarveError> {
+    apply_impl(image, map, settings, false, cancel)
+}
+
+/// Map the absolute brightness distance from the anchor onto Min/Max scales.
+/// Pinning still uses the original map, not its folded distance field.
+pub fn apply_distance(
+    image: Image,
+    map: &[f32],
+    settings: Settings,
+    cancel: &mut impl FnMut() -> bool,
+) -> Result<Image, CarveError> {
+    apply_impl(image, map, settings, true, cancel)
+}
+
+fn apply_impl(
     mut image: Image,
     map: &[f32],
     settings: Settings,
+    distance_mapping: bool,
     cancel: &mut impl FnMut() -> bool,
 ) -> Result<Image, CarveError> {
     if map.len() != image.pixels.len() {
@@ -131,7 +161,12 @@ pub fn apply(
                 check_cancel(cancel)?;
             }
             for x in 0..original[0] {
-                let scale = scale_at(f64::from(map[y * original[0] + x]), settings.scales[axis]);
+                let value = f64::from(map[y * original[0] + x]);
+                let scale = if distance_mapping {
+                    scale_at_distance(value, settings.scales[axis], anchor)
+                } else {
+                    scale_at(value, settings.scales[axis])
+                };
                 let magnitude = (size as f64 * scale.abs() / 100.0).round().max(1.0) as i32;
                 let signed = if scale < 0.0 { -magnitude } else { magnitude };
                 let index = if axis == 0 {
@@ -200,6 +235,117 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anchor_distance_is_symmetric_normalized_and_keeps_signed_endpoints() {
+        for (m, expected) in [
+            (0.0, 150.0),
+            (0.25, 100.0),
+            (0.5, 50.0),
+            (0.75, 100.0),
+            (1.0, 150.0),
+        ] {
+            assert_eq!(scale_at_distance(m, [50.0, 150.0], 0.5), expected);
+        }
+        assert_eq!(
+            scale_at_distance(0.125, [75.0, -150.0], 0.25),
+            scale_at_distance(0.375, [75.0, -150.0], 0.25)
+        );
+        assert_eq!(scale_at_distance(1.0, [75.0, -150.0], 0.25), -150.0);
+        assert_eq!(scale_at_distance(0.25, [75.0, -150.0], 0.25), 75.0);
+        assert_eq!(scale_at_distance(0.0, [50.0, 150.0], 1.0), 150.0);
+        assert!(scale_at_distance(f64::NAN, [f64::NAN, f64::INFINITY], f64::NAN).is_finite());
+    }
+
+    #[test]
+    fn complementing_a_map_around_midgray_produces_identical_pixels() {
+        let (w, h) = (17, 13);
+        let pixels: Vec<_> = (0..w * h)
+            .map(|i| {
+                [
+                    ((i * 13) % 37) as f32 / 36.0,
+                    ((i * 7) % 19) as f32 / 18.0,
+                    (i % 5) as f32 / 4.0,
+                    1.0,
+                ]
+            })
+            .collect();
+        let map: Vec<_> = (0..w * h).map(|i| (i % 5) as f32 / 4.0).collect();
+        let reversed: Vec<_> = map.iter().map(|m| 1.0 - m).collect();
+        for restore in [false, true] {
+            for scales in [
+                [[50.0, 175.0], [125.0, 75.0]],
+                [[-100.0, 200.0], [200.0, -150.0]],
+            ] {
+                let settings = Settings {
+                    scales,
+                    anchor: 0.5,
+                    tolerance: 0.002,
+                    restore,
+                    channel: Channel::Rgba,
+                };
+                let result = apply_distance(
+                    Image::new(w, h, pixels.clone()).unwrap(),
+                    &map,
+                    settings,
+                    &mut || false,
+                )
+                .unwrap();
+                let mirror = apply_distance(
+                    Image::new(w, h, pixels.clone()).unwrap(),
+                    &reversed,
+                    settings,
+                    &mut || false,
+                )
+                .unwrap();
+                assert_eq!(result.pixels, mirror.pixels);
+                assert!(result.pixels.iter().zip(&pixels).any(|(a, b)| a != b));
+                for (i, &value) in map.iter().enumerate() {
+                    if value == 0.5 {
+                        assert_eq!(result.pixels[i], pixels[i]);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn endpoint_anchor_matches_existing_exact_pipeline() {
+        let pixels: Vec<_> = (0..63)
+            .map(|i| [(i % 9) as f32 / 8.0, (i % 7) as f32 / 6.0, 0.2, 1.0])
+            .collect();
+        let map: Vec<_> = (0..63).map(|i| (i % 5) as f32 / 4.0).collect();
+        for anchor in [0.0, 1.0] {
+            let settings = Settings {
+                scales: [[50.0, 150.0], [75.0, 125.0]],
+                anchor,
+                tolerance: 0.002,
+                restore: true,
+                channel: Channel::Rgb,
+            };
+            let mut legacy = settings;
+            if anchor == 1.0 {
+                for endpoints in &mut legacy.scales {
+                    endpoints.reverse();
+                }
+            }
+            let a = apply_distance(
+                Image::new(9, 7, pixels.clone()).unwrap(),
+                &map,
+                settings,
+                &mut || false,
+            )
+            .unwrap();
+            let b = apply(
+                Image::new(9, 7, pixels.clone()).unwrap(),
+                &map,
+                legacy,
+                &mut || false,
+            )
+            .unwrap();
+            assert_eq!(a.pixels, b.pixels);
+        }
+    }
 
     #[test]
     fn scale_interpolation_is_linear_and_independent_of_anchor() {

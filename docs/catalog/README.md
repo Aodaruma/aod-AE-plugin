@@ -15,6 +15,8 @@
 
 AOD_SeamScale・AOD_SeamMapを含む41プラグインを掲載しています。SeamScale・SeamMapの個別プレビュー、Photo一覧、全体一覧はAE 2025の実出力で更新しています。
 
+入力マップの新規利用にはSeamScale v0.3.0の`Use Map Layer`を使用します。独立したSeamMapは旧プロジェクト互換用として掲載しています。
+
 ## Overview
 
 ### P：一般写真・連続階調画像

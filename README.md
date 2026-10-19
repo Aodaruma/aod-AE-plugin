@@ -18,7 +18,7 @@ The current catalog contains 41 effects for photo, anime, data/map, and generato
 
 追加した [AOD_SeamScale](plugins/seam-scale/README.md) は、正確なDPによるコンテンツに応じた拡縮、チャンネル選択、負の倍率による反転、元サイズへの復元に対応します。AE 2025で描画・UIを確認し、カタログの個別プレビューと一覧画像へ反映しています。
 
-[AOD_SeamMap](plugins/seam-map/README.md) は、入力マップの黒・白に対応する倍率を直線補間し、指定した明るさの位置を固定する独立エフェクトです。X/Y個別設定、拡大・縮小、反転に対応し、AE 2025で8/16/32bpcの描画を検証しています。
+SeamScale v0.3.0には[入力マップによる拡縮](plugins/seam-scale/LAYER_MAP.md)を統合しています。`Use Map Layer`で通常の倍率とMin/Maxを切り替え、アンカーから同じ明るさの距離に同じ倍率を割り当てます。[旧AOD_SeamMap](plugins/seam-map/README.md)は、黒・白の直線補間を使う既存プロジェクトとの互換性のために残しています。
 
 ## Effect List / エフェクト一覧
 

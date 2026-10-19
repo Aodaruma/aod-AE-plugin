@@ -304,26 +304,23 @@
             setProperty(effect, "Lanczos Lobes", 3.0);
             setProperty(effect, "Sample Outside Image", 1);
             setProperty(effect, "Outside Pixels", 3);
-        } else if (item.match === "SeamScale") {
-            setProperty(effect, "Separate X/Y Scale", 1);
-            setProperty(effect, "Scale X (%)", 60);
-            setProperty(effect, "Scale Y (%)", 100);
-            setProperty(effect, "Restore Original Size", 1);
-        } else if (item.match === "SeamMap") {
-            var scaleMap = app.project.items.addComp("CATPREVIEW - Seam Map Control", 512, 512, 1, 1, 30);
+        } else if (item.match === "SeamScale" || item.match === "SeamMap") {
+            var integrated = item.match === "SeamScale";
+            var scaleMap = app.project.items.addComp("CATPREVIEW - " + item.name + " Control", 512, 512, 1, 1, 30);
             var mapBase = scaleMap.layers.addSolid([0,0,0], "Scale Map", 512, 512, 1, 1);
             var mapRamp = addEffect(mapBase, "ADBE Ramp");
             mapRamp.property(1).setValue([0,256]); mapRamp.property(2).setValue([0,0,0,1]);
             mapRamp.property(3).setValue([512,256]); mapRamp.property(4).setValue([1,1,1,1]);
             var mapLayer = comp.layers.add(scaleMap);
             mapLayer.enabled = false; mapLayer.moveToEnd();
+            if (integrated) { setProperty(effect, "Use Map Layer", 1); }
             setProperty(effect, "Scale Map Layer", mapLayer.index);
             setProperty(effect, "Map Channel", 2);
             setProperty(effect, "Separate X/Y Scale", 1);
-            setProperty(effect, "Black Scale X (%)", 50);
-            setProperty(effect, "White Scale X (%)", 150);
-            setProperty(effect, "Black Scale Y (%)", 100);
-            setProperty(effect, "White Scale Y (%)", 100);
+            setProperty(effect, integrated ? "Min Scale X (%)" : "Black Scale X (%)", 50);
+            setProperty(effect, integrated ? "Max Scale X (%)" : "White Scale X (%)", 150);
+            setProperty(effect, integrated ? "Min Scale Y (%)" : "Black Scale Y (%)", 100);
+            setProperty(effect, integrated ? "Max Scale Y (%)" : "White Scale Y (%)", 100);
             setProperty(effect, "Anchor Map Value (%)", 50);
         } else if (item.match === "MobiusTransform") {
             setProperty(effect, "b.re", 0.18);

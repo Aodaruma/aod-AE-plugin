@@ -1,6 +1,6 @@
 # Seam Map出力（v0.2.0）
 
-AOD_SeamScaleの`Output`を`Seam Map (Displacement)`へ切り替えると、同じシームで画素がどこから移動してきたかをマップとして出力します。現在はユーザー確認用にSeamScaleへ統合しており、独立したAOD_SeamMapへの分離はまだ行っていません。
+AOD_SeamScaleの`Output`を`Seam Map (Displacement)`へ切り替えると、同じシームで画素がどこから移動してきたかをマップとして出力します。v0.3.0でも`Use Map Layer`がOFFのときに利用できます。入力レイヤーの明るさで倍率を制御する機能については、[入力マップの仕様](LAYER_MAP.md)を参照してください。
 
 ![Seam Map出力](../../docs/catalog/assets/previews/seam-scale-map.png)
 

@@ -3,7 +3,9 @@
 use ae::pf::*;
 use after_effects as ae;
 
-use utils::seam;
+use utils::seam::{self, mapped};
+
+mod map_ui;
 
 #[cfg(all(test, target_os = "windows"))]
 #[path = "pipl_tests.rs"]
@@ -18,10 +20,23 @@ enum Params {
     Restore,
     Channel,
     Output,
+    UseMap,
+    MapLayer,
+    MapChannel,
+    MinScale,
+    MaxScale,
+    MinX,
+    MaxX,
+    MinY,
+    MaxY,
+    Anchor,
+    Tolerance,
 }
 
 #[derive(Default)]
-struct Plugin;
+struct Plugin {
+    aegp_id: Option<ae::aegp::PluginId>,
+}
 ae::define_effect!(Plugin, (), Params);
 
 const PLUGIN_DESCRIPTION: &str =
@@ -91,6 +106,7 @@ impl AdobePluginGlobal for Plugin {
                 d.set_default(1);
             }),
         )?;
+        map_ui::add_parameters(params)?;
         Ok(())
     }
 
@@ -111,36 +127,43 @@ impl AdobePluginGlobal for Plugin {
                 out_data.set_out_flag(OutFlags::PixIndependent, false);
                 out_data.set_out_flag(OutFlags::UseOutputExtent, false);
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
+                if let Ok(suite) = ae::aegp::suites::Utility::new() {
+                    self.aegp_id = suite.register_with_aegp("AOD_SeamScale").ok();
+                }
             }
             Command::UserChangedParam { .. } => out_data.set_out_flag(OutFlags::RefreshUi, true),
             Command::UpdateParamsUi => {
-                let separate = params.get(Params::SeparateXY)?.as_checkbox()?.value();
                 let mut copy = params.cloned();
-                for (id, enabled) in [
-                    (Params::Scale, !separate),
-                    (Params::ScaleX, separate),
-                    (Params::ScaleY, separate),
-                ] {
-                    let disabled = copy.get(id)?.ui_flags().contains(ParamUIFlags::DISABLED);
-                    if disabled == enabled {
-                        let mut param = copy.get_mut(id)?;
-                        param.set_ui_flag(ParamUIFlags::DISABLED, !enabled);
-                        param.update_param_ui()?;
-                    }
-                }
+                map_ui::update(self, in_data, &mut copy)?;
             }
             Command::Render {
                 in_layer,
                 out_layer,
             } => {
-                render(
-                    in_data,
-                    Some(in_layer),
-                    out_layer,
-                    params,
-                    false,
-                    &mut out_data,
-                )?;
+                let settings = read_settings(params)?;
+                if settings.map.is_some() {
+                    let checkout = params.checkout_at(Params::MapLayer, None, None, None)?;
+                    let map = checkout.as_layer()?.value();
+                    render(
+                        in_data,
+                        Some(in_layer),
+                        map.as_ref(),
+                        out_layer,
+                        settings,
+                        false,
+                        &mut out_data,
+                    )?;
+                } else {
+                    render(
+                        in_data,
+                        Some(in_layer),
+                        None,
+                        out_layer,
+                        settings,
+                        false,
+                        &mut out_data,
+                    )?;
+                }
             }
             Command::SmartPreRender { mut extra } => {
                 let canvas = canvas_size(in_data);
@@ -164,6 +187,19 @@ impl AdobePluginGlobal for Plugin {
                     in_data.time_step(),
                     in_data.time_scale(),
                 )?;
+                if params.get(Params::UseMap)?.as_checkbox()?.value() {
+                    let index = params
+                        .index(Params::MapLayer)
+                        .ok_or(Error::BadCallbackParameter)?;
+                    extra.callbacks().checkout_layer(
+                        index as i32,
+                        1,
+                        &full,
+                        in_data.current_time(),
+                        in_data.time_step(),
+                        in_data.time_scale(),
+                    )?;
+                }
                 let rect: ae::Rect = request.rect.into();
                 let left = rect.left.max(0).min(bounds.right);
                 let top = rect.top.max(0).min(bounds.bottom);
@@ -176,17 +212,40 @@ impl AdobePluginGlobal for Plugin {
                 extra.set_max_result_rect(bounds);
             }
             Command::SmartRender { extra } => {
+                let settings = read_settings(params)?;
                 let cb = extra.callbacks();
                 let source = cb.checkout_layer_pixels(0)?;
+                let mut map_checked_out = false;
                 let result: Result<(), Error> = (|| {
+                    let map = if settings.map.is_some() {
+                        let map = cb.checkout_layer_pixels(1)?;
+                        map_checked_out = true;
+                        map
+                    } else {
+                        None
+                    };
                     if let Some(output) = cb.checkout_output()? {
-                        render(in_data, source, output, params, true, &mut out_data)?;
+                        render(
+                            in_data,
+                            source,
+                            map.as_ref(),
+                            output,
+                            settings,
+                            true,
+                            &mut out_data,
+                        )?;
                     }
                     Ok(())
                 })();
                 // Always release a successful checkout, including cancellation/error paths.
+                let map_checkin = if map_checked_out {
+                    cb.checkin_layer_pixels(1)
+                } else {
+                    Ok(())
+                };
                 let checkin = cb.checkin_layer_pixels(0);
                 result?;
+                map_checkin?;
                 checkin?;
             }
             _ => {}
@@ -229,15 +288,22 @@ fn host_error(error: seam::CarveError, output: &mut OutData) -> Error {
     }
 }
 
-fn render(
-    in_data: InData,
-    source: Option<Layer>,
-    mut output: Layer,
-    params: &mut Parameters<Params>,
-    smart: bool,
-    out_data: &mut OutData,
-) -> Result<(), Error> {
-    let canvas = canvas_size(in_data);
+#[derive(Clone, Copy)]
+struct MapSettings {
+    carve: mapped::Settings,
+    channel: i32,
+}
+
+#[derive(Clone, Copy)]
+struct Settings {
+    scales: [f64; 2],
+    restore: bool,
+    channel: seam::Channel,
+    map_output: bool,
+    map: Option<MapSettings>,
+}
+
+fn read_settings(params: &Parameters<Params>) -> Result<Settings, Error> {
     let separate = params.get(Params::SeparateXY)?.as_checkbox()?.value();
     let shared = params.get(Params::Scale)?.as_float_slider()?.value();
     let sx = if separate {
@@ -250,14 +316,79 @@ fn render(
     } else {
         shared
     };
-    let target = [scale_target(canvas[0], sx), scale_target(canvas[1], sy)];
     let restore = params.get(Params::Restore)?.as_checkbox()?.value();
     let channel = seam::Channel::from_popup(params.get(Params::Channel)?.as_popup()?.value());
-    let map_output = params.get(Params::Output)?.as_popup()?.value() == 2;
+    let use_map = params.get(Params::UseMap)?.as_checkbox()?.value();
+    let map = if use_map {
+        let get = |id| -> Result<f64, Error> { Ok(params.get(id)?.as_float_slider()?.value()) };
+        let scales = if separate {
+            [
+                [get(Params::MinX)?, get(Params::MaxX)?],
+                [get(Params::MinY)?, get(Params::MaxY)?],
+            ]
+        } else {
+            [[get(Params::MinScale)?, get(Params::MaxScale)?]; 2]
+        };
+        Some(MapSettings {
+            carve: mapped::Settings {
+                scales,
+                restore,
+                channel,
+                anchor: get(Params::Anchor)? / 100.0,
+                tolerance: get(Params::Tolerance)? / 100.0,
+            },
+            channel: params.get(Params::MapChannel)?.as_popup()?.value(),
+        })
+    } else {
+        None
+    };
+    Ok(Settings {
+        scales: [sx, sy],
+        restore,
+        channel,
+        map,
+        // The legacy displacement output remains available in ordinary scale mode.
+        map_output: !use_map && params.get(Params::Output)?.as_popup()?.value() == 2,
+    })
+}
+
+fn map_value(pixel: PixelF32, channel: i32) -> f32 {
+    let v = match channel {
+        2 => pixel.red,
+        3 => pixel.green,
+        4 => pixel.blue,
+        5 => pixel.alpha,
+        _ => 0.2126 * pixel.red + 0.7152 * pixel.green + 0.0722 * pixel.blue,
+    };
+    if v.is_finite() {
+        v.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render(
+    in_data: InData,
+    source: Option<Layer>,
+    map_layer: Option<&Layer>,
+    mut output: Layer,
+    settings: Settings,
+    smart: bool,
+    out_data: &mut OutData,
+) -> Result<(), Error> {
+    let canvas = canvas_size(in_data);
+    let [sx, sy] = settings.scales;
+    let target = [scale_target(canvas[0], sx), scale_target(canvas[1], sy)];
+    let restore = settings.restore;
+    let channel = settings.channel;
+    let map_output = settings.map_output;
     let count = seam::area(canvas[0], canvas[1]).map_err(|e| host_error(e, out_data))?;
-    seam::area(target[0], canvas[1])
-        .and_then(|_| seam::area(target[0], target[1]))
-        .map_err(|e| host_error(e, out_data))?;
+    if settings.map.is_none() {
+        seam::area(target[0], canvas[1])
+            .and_then(|_| seam::area(target[0], target[1]))
+            .map_err(|e| host_error(e, out_data))?;
+    }
     let mut pixels = seam::buffer(count, [0.0; 4]).map_err(|e| host_error(e, out_data))?;
     let pre = in_data.pre_effect_source_origin();
     let mut input_origin = [-pre.h, -pre.v];
@@ -301,14 +432,41 @@ fn render(
             .track_coordinates(&mut cancel)
             .map_err(|e| host_error(e, out_data))?;
     }
-    let mut image = seam::resize(image, target[0], target[1], channel, &mut cancel)
-        .map_err(|e| host_error(e, out_data))?;
-    image
-        .flip(
-            [sx.is_finite() && sx < 0.0, sy.is_finite() && sy < 0.0],
-            &mut cancel,
-        )
-        .map_err(|e| host_error(e, out_data))?;
+    if let Some(map_settings) = settings.map {
+        if let Some(layer) = map_layer {
+            let mut values = seam::buffer(count, 0.0).map_err(|e| host_error(e, out_data))?;
+            let origin = layer.origin();
+            for y in 0..canvas[1] {
+                if y % 32 == 0 {
+                    in_data.interact().abort()?;
+                }
+                let iy = y as i64 - i64::from(origin.v);
+                if iy < 0 || iy >= layer.height() as i64 {
+                    continue;
+                }
+                for x in 0..canvas[0] {
+                    let ix = x as i64 - i64::from(origin.h);
+                    if ix >= 0 && ix < layer.width() as i64 {
+                        values[y * canvas[0] + x] = map_value(
+                            utils::image::read_pixel(layer, ix as usize, iy as usize),
+                            map_settings.channel,
+                        );
+                    }
+                }
+            }
+            image = mapped::apply_distance(image, &values, map_settings.carve, &mut cancel)
+                .map_err(|e| host_error(e, out_data))?;
+        }
+    } else {
+        image = seam::resize(image, target[0], target[1], channel, &mut cancel)
+            .map_err(|e| host_error(e, out_data))?;
+        image
+            .flip(
+                [sx.is_finite() && sx < 0.0, sy.is_finite() && sy < 0.0],
+                &mut cancel,
+            )
+            .map_err(|e| host_error(e, out_data))?;
+    }
     if map_output {
         image = image
             .into_coordinate_image(&mut cancel)
@@ -333,7 +491,7 @@ fn render(
                 i64::from(x) + i64::from(origin[0]),
                 i64::from(y) + i64::from(origin[1]),
             ],
-            restore,
+            restore && settings.map.is_none(),
         );
         // Round integer output instead of truncating: retained pixels stay bit-exact.
         match &mut dst {
