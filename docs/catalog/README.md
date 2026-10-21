@@ -1,10 +1,10 @@
 # AOD After Effects Plugin Catalog
 
-用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる39プラグインを4分類に整理しています。
+用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる40プラグインを4分類に整理しています。
 
 | 分類 | 適した素材 | 収録数 | 詳細 |
 |---|---|---:|---|
-| P | Photo：一般写真・連続階調画像 | 17 | [Photo / 一般画像](photo.md) |
+| P | Photo：一般写真・連続階調画像 | 18 | [Photo / 一般画像](photo.md) |
 | A | Anime：アニメ素材（セル塗り・線画・透過キャラクター） | 13 | [Anime / アニメ素材](anime.md) |
 | D | Data & Map：データ・マップ画像 | 4 | [Data & Map / データ・マップ](map-data.md) |
 | G | Generator：生成用キャンバス | 5 | [Generator / 生成系](generator.md) |
@@ -52,3 +52,7 @@ After Effects 2025で[`catalog/ae2025-plugin-catalog/aod-plugin-catalog-ae2025.a
 3. `run-overviews.jsx`: P／A／D／G分類と全エフェクト一覧のPNGを保存します。
 
 生成先は`docs/catalog/assets/`です。素材プロジェクトに`Cat Crop 512x512`がない場合は、比較用の手続きテスト素材を自動生成します。
+
+個別エフェクトだけを更新する場合は、`AOD_CATALOG_PHASE`を`update-preview`、`AOD_CATALOG_SLUG`を対象ディレクトリ名（例：`image-resize`）に設定して`build-catalog.jsx`を実行します。対象のコンポジションとPNGを作成し、保存済みの各プレビューPNGから該当分類・全体一覧を再生成します。他のエフェクトの個別プレビューは変更しません。
+
+大きな一覧で`saveFrameToPng`がファイルを生成しない場合は、PNG出力モジュールテンプレートを使ってレンダーキューから1フレームを書き出します。既存のキュー項目は実行せず、有効状態を復元します。一時出力は`target/catalog-export/`に置き、正常に生成できたPNGだけでカタログ画像を更新します。

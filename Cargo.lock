@@ -1362,6 +1362,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_resize"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
+]
+
+[[package]]
 name = "image_scaler"
 version = "0.1.0"
 dependencies = [
