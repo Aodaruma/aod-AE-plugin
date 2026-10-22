@@ -6,6 +6,17 @@
     var report = new File(output.fsName + "/report.txt");
     report.open("w");
     function log(text) { report.writeln(text); report.close(); report.open("a"); }
+    function param(group, name) {
+        for (var i = 1; i <= group.numProperties; i++) {
+            var p = group.property(i);
+            if (p.name === name || p.name.replace(/\s+\((px|%)\)$/, "") === name) { return p; }
+            if (p.numProperties) {
+                var nested = param(p, name);
+                if (nested) { return nested; }
+            }
+        }
+        return null;
+    }
     function saveLegacyFrame(comp, destination) {
         // saveFrameToPng can silently skip a frame just after opening a project.
         if (destination.exists && !destination.remove()) { throw new Error("Cannot replace " + destination.fsName); }
@@ -68,11 +79,12 @@
             ["none", {"Left":-25, "Top":-25, "Right":-25, "Bottom":-25}],
             ["mirror", {"Left":-25, "Top":-25, "Right":-25, "Bottom":-25, "Extend":2}],
             ["tile", {"Left":-25, "Top":-25, "Right":-25, "Bottom":-25, "Extend":3}],
-            ["clamp", {"Left":-25, "Top":-25, "Right":-25, "Bottom":-25, "Extend":4}],
+            ["repeat", {"Left":-25, "Top":-25, "Right":-25, "Bottom":-25, "Extend":4}],
             ["empty", {"Left":100}],
             ["rotate", {"Angle":90}],
             ["rotate_all0", {"Angle":90, "Left":25, "All %":0}],
             ["rotate27", {"Angle":27, "Left":-25, "Extend":2}],
+            ["rotate27_nearest", {"Angle":27, "Left":-25, "Extend":2, "Interpolation":1}],
             ["fractional", {"Mode":1, "Left":0.25}],
             ["size_disabled", {"Output Width (px)":40, "Output Height (px)":20}],
             ["size_crop", {"Mode":3, "Output Width (px)":40, "Output Height (px)":20}],
@@ -82,7 +94,7 @@
             ["size_none", {"Mode":3, "Output Width (px)":120, "Output Height (px)":60}],
             ["size_mirror", {"Mode":3, "Output Width (px)":120, "Output Height (px)":60, "Extend":2}],
             ["size_tile", {"Mode":3, "Output Width (px)":120, "Output Height (px)":60, "Extend":3}],
-            ["size_clamp", {"Mode":3, "Output Width (px)":120, "Output Height (px)":60, "Extend":4}],
+            ["size_repeat", {"Mode":3, "Output Width (px)":120, "Output Height (px)":60, "Extend":4}],
             ["size_rotate", {"Mode":3, "Output Width (px)":40, "Output Height (px)":80, "Angle":90}],
             ["size_rotate_crop", {"Mode":3, "Output Width (px)":20, "Output Height (px)":60, "Angle":90}],
             ["size_rotate_extend", {"Mode":3, "Output Width (px)":60, "Output Height (px)":120, "Angle":90, "Extend":2}],
@@ -99,13 +111,14 @@
                     var fx = layer.property("ADBE Effect Parade").addProperty("ImageResize");
                     if (!fx) { throw new Error("ImageResize not loaded"); }
                     var values = cases[c][1];
-                    for (var key in values) { fx.property(key).setValue(values[key]); }
+                    for (var key in values) { param(fx, key).setValue(values[key]); }
                     if (c === 1 && depth === 8) {
-                        if (fx.property("Mode").maxValue !== 3) { throw new Error("Mode must have three choices"); }
-                        if (fx.property("All %").minValue > -300 || fx.property("All %").maxValue < 300) { throw new Error("All % range is too narrow"); }
-                        if (fx.property("Set Output Size") !== null) { throw new Error("Old output-size checkbox still present"); }
+                        if (param(fx, "Mode").maxValue !== 3) { throw new Error("Mode must have three choices"); }
+                        if (param(fx, "All %").minValue > -300 || param(fx, "All %").maxValue < 300) { throw new Error("All % range is too narrow"); }
+                        if (param(fx, "Set Output Size") !== null) { throw new Error("Old output-size checkbox still present"); }
                         for (var pi = 1; pi <= fx.numProperties; pi++) {
-                            log("PARAM " + pi + " " + fx.property(pi).name + "=" + fx.property(pi).value);
+                            var logged = fx.property(pi);
+                            log("PARAM " + pi + " " + logged.name + "=" + (logged.propertyValueType === PropertyValueType.NO_VALUE ? "<group>" : logged.value));
                         }
                     }
                 }
@@ -118,63 +131,67 @@
         half.resolutionFactor = [2,2];
         var halfLayer = half.layers.add(source);
         var halfFx = halfLayer.property("ADBE Effect Parade").addProperty("ImageResize");
-        halfFx.property("Left").setValue(25);
-        halfFx.property("Top").setValue(25);
+        param(halfFx, "Left").setValue(25);
+        param(halfFx, "Top").setValue(25);
         half.saveFrameToPng(0, new File(output.fsName + "/half.png"));
         log("RENDERED half");
-        halfFx.property("Mode").setValue(3);
-        halfFx.property("Output Width (px)").setValue(40);
-        halfFx.property("Output Height (px)").setValue(20);
-        halfFx.property("Top").setValue(0);
+        param(halfFx, "Mode").setValue(3);
+        param(halfFx, "Output Width (px)").setValue(40);
+        param(halfFx, "Output Height (px)").setValue(20);
+        param(halfFx, "Top").setValue(0);
         half.saveFrameToPng(0, new File(output.fsName + "/half-size.png"));
         log("RENDERED half-size");
         half.resolutionFactor = [1,1];
-        halfFx.property("Mode").setValue(1);
-        halfFx.property("Left").setValue(20);
-        halfFx.property("Top").setValue(10);
+        param(halfFx, "Mode").setValue(1);
+        param(halfFx, "Left").setValue(20);
+        param(halfFx, "Top").setValue(10);
         half.saveFrameToPng(0, new File(output.fsName + "/switch-pixels.png"));
-        halfFx.property("Mode").setValue(2);
-        halfFx.property("Left").setValue(25);
-        halfFx.property("Top").setValue(25);
+        param(halfFx, "Mode").setValue(2);
+        param(halfFx, "Left").setValue(25);
+        param(halfFx, "Top").setValue(25);
         half.saveFrameToPng(0, new File(output.fsName + "/switch-percent.png"));
-        halfFx.property("Mode").setValue(3);
-        halfFx.property("Top").setValue(0);
+        param(halfFx, "Mode").setValue(3);
+        param(halfFx, "Top").setValue(0);
         half.saveFrameToPng(0, new File(output.fsName + "/switch-size.png"));
         log("RENDERED mode switches");
         var chained = app.project.items.addComp("chained", 200, 160, 1, 1, 30);
         var chainedLayer = chained.layers.add(source);
         var first = chainedLayer.property("ADBE Effect Parade").addProperty("ImageResize");
-        first.property("Left").setValue(25);
+        param(first, "Left").setValue(25);
         var second = chainedLayer.property("ADBE Effect Parade").addProperty("ImageResize");
-        second.property("Left").setValue(-25);
-        second.property("Right").setValue(-25);
-        second.property("Extend").setValue(3);
+        param(second, "Left").setValue(-25);
+        param(second, "Right").setValue(-25);
+        param(second, "Extend").setValue(3);
         chained.saveFrameToPng(0, new File(output.fsName + "/chained.png"));
         log("RENDERED chained");
         app.project.save(new File(output.fsName + "/image-resize-smoke.aep"));
-        // Optional local fixture saved with v0.1 before replacing the binary.
-        var oldProject = new File(output.fsName + "/image-resize-v0.1.aep");
-        if (oldProject.exists) {
-            app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
-            app.open(oldProject);
-            app.project.bitsPerChannel = 8;
-            var legacyCount = 0;
-            for (var li = 1; li <= app.project.numItems; li++) {
-                var oldComp = app.project.item(li);
-                if (!(oldComp instanceof CompItem)) { continue; }
-                if (oldComp.name !== "pixels-8" && oldComp.name !== "size_shift-8") { continue; }
-                var oldFx = oldComp.layer(1).property("ADBE Effect Parade").property(1);
-                if (oldComp.name === "pixels-8") {
-                    if (oldFx.property("Mode").value !== 1 || oldFx.property("Left").value !== 20) { throw new Error("Old Pixels settings changed"); }
-                } else {
-                    if (oldFx.property("Output Width (px)").value !== 40 || oldFx.property("Output Height (px)").value !== 20) { throw new Error("Old output dimensions changed"); }
-                    oldFx.property("Mode").setValue(3);
+        // Optional local fixtures saved before replacing the binary.
+        for (var versionIndex = 0; versionIndex < 2; versionIndex++) {
+            var version = ["v0.1", "v0.2"][versionIndex];
+            var oldProject = new File(output.fsName + "/image-resize-" + version + ".aep");
+            if (oldProject.exists) {
+                app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+                app.open(oldProject);
+                app.project.bitsPerChannel = 8;
+                var legacyCount = 0;
+                for (var li = 1; li <= app.project.numItems; li++) {
+                    var oldComp = app.project.item(li);
+                    if (!(oldComp instanceof CompItem)) { continue; }
+                    if (oldComp.name !== "pixels-8" && oldComp.name !== "size_shift-8") { continue; }
+                    var oldFx = oldComp.layer(1).property("ADBE Effect Parade").property(1);
+                    if (oldComp.name === "pixels-8") {
+                        if (param(oldFx, "Mode").value !== 1 || param(oldFx, "Left").value !== 20) { throw new Error("Old Pixels settings changed"); }
+                    } else {
+                        if (param(oldFx, "Output Width (px)").value !== 40 || param(oldFx, "Output Height (px)").value !== 20) { throw new Error("Old output dimensions changed"); }
+                        if (version === "v0.2" && param(oldFx, "Mode").value !== 3) { throw new Error("Old Output Size mode changed"); }
+                        param(oldFx, "Mode").setValue(3);
+                    }
+                    saveLegacyFrame(oldComp, new File(output.fsName + "/legacy-" + version + "-" + oldComp.name + ".png"));
+                    legacyCount++;
                 }
-                saveLegacyFrame(oldComp, new File(output.fsName + "/legacy-" + oldComp.name + ".png"));
-                legacyCount++;
+                if (legacyCount !== 2) { throw new Error("Incomplete legacy fixture"); }
+                log("PASS: " + version + " parameter persistence");
             }
-            if (legacyCount !== 2) { throw new Error("Incomplete v0.1 fixture"); }
-            log("PASS: v0.1 parameter persistence");
         }
         log("PASS: all cases rendered with " + app.version);
     } catch (error) {

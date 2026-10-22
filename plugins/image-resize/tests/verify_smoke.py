@@ -48,7 +48,7 @@ def verify():
             "all50": (70, 65, 140, 100),
             "mirror": (40, 50, 160, 110),
             "tile": (40, 50, 160, 110),
-            "clamp": (40, 50, 160, 110),
+            "repeat": (40, 50, 160, 110),
             "rotate": (80, 40, 120, 120),
             "empty": None,
         }.items():
@@ -62,7 +62,7 @@ def verify():
         for name, left, right in (
             ("mirror", red, yellow),
             ("tile", yellow, red),
-            ("clamp", red, yellow),
+            ("repeat", red, yellow),
         ):
             img = load(f"{name}-{depth}")
             assert img.getpixel((50, 65)) == left, (name, depth, "left", img.getpixel((50, 65)))
@@ -85,7 +85,7 @@ def verify():
             assert img.getchannel("A").getbbox() == box, (name, depth, img.getchannel("A").getbbox())
             same(img.crop(box), baseline.crop(box))
             checks += 2
-        for name in ("none", "mirror", "tile", "clamp", "rotate", "rotate_extend"):
+        for name in ("none", "mirror", "tile", "repeat", "rotate", "rotate_extend"):
             same(load(f"size_{name}-{depth}"), load(f"{name}-{depth}"))
             checks += 1
         rotated = load(f"size_rotate_crop-{depth}")
@@ -93,6 +93,8 @@ def verify():
         assert rotated.getchannel("A").getbbox() == box
         same(rotated.crop(box), load(f"rotate-{depth}").crop(box))
         checks += 2
+        assert ImageChops.difference(load(f"rotate27-{depth}"), load(f"rotate27_nearest-{depth}")).getbbox(alpha_only=False) is not None
+        checks += 1
     half = load("half")
     expected = (40, 35, 70, 50) if half.size == (100, 80) else (80, 70, 140, 100)
     assert half.getchannel("A").getbbox() == expected, (half.size, half.getchannel("A").getbbox())
@@ -111,10 +113,11 @@ def verify():
     assert chained.getpixel((70, 65))[3] == 0
     assert chained.getpixel((150, 65))[3] == 0
     checks += 4
-    if "PASS: v0.1 parameter persistence" in report:
-        for name in ("pixels-8", "size_shift-8"):
-            same(load(f"legacy-{name}"), load(name))
-            checks += 1
+    for version in ("v0.1", "v0.2"):
+        if f"PASS: {version} parameter persistence" in report:
+            for name in ("pixels-8", "size_shift-8"):
+                same(load(f"legacy-{version}-{name}"), load(name))
+                checks += 1
     print(f"PASS: {checks} AE image assertions; 8/16/32bpc, extension, crop, signed All %, mode switching, rotation, exact canvas size without scaling, subpixel edges, half resolution.")
 
 

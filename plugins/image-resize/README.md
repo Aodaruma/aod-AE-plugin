@@ -10,12 +10,18 @@ Crops or extends image edges or a fixed-size canvas without scaling, with bounda
 |---|---:|---|
 | Mode | Percent | Pixels／Percent／Output Size。Output Sizeでは幅・高さを指定してクリップ／拡張します。 |
 | All % | 100 | 上下左右の調整量に掛ける係数。0で無効、100で指定値どおり、300で3倍。負値は方向を反転。入力範囲は−30000～30000。 |
-| Top / Bottom / Left / Right | 0 | 正値で内側へクリップ、負値で外側へ拡張。小数値も指定可能。 |
-| Extend | None | 拡張領域の描画方法。None＝透明、Mirror＝鏡像反復、Tile＝繰り返し、Clamp＝端の色を引き伸ばす。 |
+| Top / Bottom / Left / Right | 0 | 正値で内側へクリップ、負値で外側へ拡張。Modeに応じて末尾が(px)／(%)に切り替わります。小数値も指定可能。 |
+| Extend | None | 拡張領域の描画方法。None＝透明、Mirror＝鏡像反復、Tile＝画像全体の繰り返し、Repeat＝最も近い端の画素を引き伸ばす。 |
 | Angle | 0° | 調整後の画像全体を元のレイヤー中心の周りに回転。正値は時計回り。All %とは独立。 |
-| Interpolation | Bilinear | 回転時などの補間。NearestまたはBilinear。 |
-| Output Width (px) | 1920 | 指定出力幅。Mode＝Output Sizeのとき有効。 |
-| Output Height (px) | 1080 | 指定出力高さ。Mode＝Output Sizeのとき有効。 |
+| Interpolation | Bilinear | 回転時の補間。NearestまたはBilinear。Angleが360°の倍数以外のときに表示。 |
+| Output Width (px) | 1920 | 指定出力幅。Mode＝Output Sizeのときだけ表示。 |
+| Output Height (px) | 1080 | 指定出力高さ。Mode＝Output Sizeのときだけ表示。 |
+
+幅・高さは`Output Size`、上下左右は`Edges`グループにまとめ、両グループとも初期状態で展開します。Output Sizeモードでは`Output Size`を`Edges`と同じ設定領域に表示し、上下左右のグループ名を`Center Adjustment`に切り替えます。このモードでも上下左右は枠の中心調整に使うため表示します。
+
+Interpolationは画像を拡大縮小する設定ではなく、回転後の位置が画素の間に来る場合の補間方法です。Nearestは画素を明確に保ち、Bilinearは階段状の輪郭を滑らかにします。非回転時は結果に影響しないため非表示にし、選択値は保持します。
+
+v0.3では旧`Clamp`を`Repeat`へ改名しました。保存済みの選択と描画結果は維持します。
 
 ## %とAll %の計算
 
@@ -67,6 +73,14 @@ Windows用ファイルは`target/release/AOD_ImageResize.aex`です。AEのプ�
 # PNGの生成完了後、Pillowを導入済みのPythonで検証
 python plugins/image-resize/tests/verify_smoke.py
 ```
+
+`tests/ui-smoke.jsx`は空の検証用プロジェクトにエフェクトを作成し、`target/ae-smoke/image-resize-ui.aep`へ保存します。新しいAEプロセスで実行後、検証用レイヤーを選択して次を確認します。
+
+- Pixels → Percent → Output Size → Pixelsと往復し、(px)／(%)とグループ名が更新されること。
+- Output Sizeグループは指定サイズモードだけで表示され、初回表示時に展開されていること。
+- Edges／Center Adjustmentグループは初期状態で展開され、Mode変更で数値が失われないこと。
+- Angleを0° → 27° → 0°に変更するとInterpolationが表示・非表示になること。
+- ExtendにRepeatがあり、Tileと異なって端の画素を延長すること。
 
 ## ライセンス
 

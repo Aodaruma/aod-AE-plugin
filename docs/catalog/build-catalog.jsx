@@ -146,9 +146,21 @@
         }
     }
 
+    function findEffectProperty(group, name) {
+        for (var i = 1; i <= group.numProperties; i++) {
+            var p = group.property(i);
+            if (p.name === name) { return p; }
+            if (p.numProperties) {
+                var nested = findEffectProperty(p, name);
+                if (nested) { return nested; }
+            }
+        }
+        return null;
+    }
+
     function setProperty(effect, name, value) {
         try {
-            var prop = effect.property(name);
+            var prop = effect.property(name) || findEffectProperty(effect, name);
             if (!prop) {
                 warnings.push(effect.name + ": parameter not found: " + name);
                 return;

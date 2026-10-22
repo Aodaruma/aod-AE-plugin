@@ -25,10 +25,16 @@ enum Params {
     Interpolation,
     OutputWidth,
     OutputHeight,
+    EdgesStart,
+    EdgesEnd,
+    OutputSizeStart,
+    OutputSizeEnd,
 }
 
 #[derive(Default)]
-struct Plugin;
+struct Plugin {
+    aegp_id: Option<ae::aegp::PluginId>,
+}
 ae::define_effect!(Plugin, (), Params);
 
 #[derive(Clone, Copy)]
@@ -67,28 +73,67 @@ impl AdobePluginGlobal for Plugin {
                 d.set_precision(2);
             }),
         )?;
-        for (id, name) in [
-            (Params::Top, "Top"),
-            (Params::Bottom, "Bottom"),
-            (Params::Left, "Left"),
-            (Params::Right, "Right"),
-        ] {
-            add_slider(params, id, name, -30000.0, 30000.0, 0.0)?;
-        }
+        params.add_group(
+            Params::OutputSizeStart,
+            Params::OutputSizeEnd,
+            "Output Size",
+            false,
+            |params| {
+                for (id, name, default) in [
+                    (Params::OutputWidth, "Output Width (px)", 1920.0),
+                    (Params::OutputHeight, "Output Height (px)", 1080.0),
+                ] {
+                    params.add_with_flags(
+                        id,
+                        name,
+                        FloatSliderDef::setup(|d| {
+                            d.set_valid_min(1.0);
+                            d.set_valid_max(30000.0);
+                            d.set_slider_min(1.0);
+                            d.set_slider_max(4096.0);
+                            d.set_default(default);
+                            d.set_precision(0);
+                        }),
+                        ParamFlag::empty(),
+                        ParamUIFlags::DISABLED,
+                    )?;
+                }
+                Ok(())
+            },
+        )?;
+        params.add_group(
+            Params::EdgesStart,
+            Params::EdgesEnd,
+            "Edges",
+            false,
+            |params| {
+                for (id, name) in [
+                    (Params::Top, "Top (%)"),
+                    (Params::Bottom, "Bottom (%)"),
+                    (Params::Left, "Left (%)"),
+                    (Params::Right, "Right (%)"),
+                ] {
+                    add_slider(params, id, name, -30000.0, 30000.0, 0.0)?;
+                }
+                Ok(())
+            },
+        )?;
         params.add(
             Params::Extend,
             "Extend",
             PopupDef::setup(|d| {
-                d.set_options(&["None", "Mirror", "Tile", "Clamp"]);
+                d.set_options(&["None", "Mirror", "Tile", "Repeat"]);
                 d.set_default(1);
             }),
         )?;
-        params.add(
+        params.add_with_flags(
             Params::Angle,
             "Angle",
             AngleDef::setup(|d| {
                 d.set_default(0.0);
             }),
+            ParamFlag::SUPERVISE,
+            ParamUIFlags::empty(),
         )?;
         params.add(
             Params::Interpolation,
@@ -98,25 +143,6 @@ impl AdobePluginGlobal for Plugin {
                 d.set_default(2);
             }),
         )?;
-        for (id, name, default) in [
-            (Params::OutputWidth, "Output Width (px)", 1920.0),
-            (Params::OutputHeight, "Output Height (px)", 1080.0),
-        ] {
-            params.add_with_flags(
-                id,
-                name,
-                FloatSliderDef::setup(|d| {
-                    d.set_valid_min(1.0);
-                    d.set_valid_max(30000.0);
-                    d.set_slider_min(1.0);
-                    d.set_slider_max(4096.0);
-                    d.set_default(default);
-                    d.set_precision(0);
-                }),
-                ParamFlag::empty(),
-                ParamUIFlags::DISABLED,
-            )?;
-        }
         Ok(())
     }
 
@@ -139,6 +165,12 @@ impl AdobePluginGlobal for Plugin {
                 out_data.set_out_flag(OutFlags::UseOutputExtent, false);
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
                 out_data.set_out_flag(OutFlags::SendUpdateParamsUi, true);
+                out_data.set_out_flag2(OutFlags2::ParamGroupStartCollapsedFlag, true);
+                if !in_data.is_premiere() {
+                    self.aegp_id = Some(
+                        ae::aegp::suites::Utility::new()?.register_with_aegp("AOD_ImageResize")?,
+                    );
+                }
             }
             ae::Command::FrameSetup { .. } => {
                 let data = read_settings(params, in_data, &mut out_data)?;
@@ -195,14 +227,17 @@ impl AdobePluginGlobal for Plugin {
                 checkin?;
             }
             ae::Command::UserChangedParam { param_index } => {
-                if params.type_at(param_index) == Params::Units {
+                if matches!(params.type_at(param_index), Params::Units | Params::Angle) {
                     out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
             }
             ae::Command::UpdateParamsUi => {
                 let mut params = params.cloned();
-                let enabled = params.get(Params::Units)?.as_popup()?.value() == 3;
+                let mode = params.get(Params::Units)?.as_popup()?.value();
+                let enabled = mode == 3;
+                self.set_visible(in_data, &mut params, Params::OutputSizeStart, enabled)?;
                 for id in [Params::OutputWidth, Params::OutputHeight] {
+                    self.set_visible(in_data, &mut params, id, enabled)?;
                     let disabled = params.get(id)?.ui_flags().contains(ParamUIFlags::DISABLED);
                     if disabled == enabled {
                         let mut param = params.get_mut(id)?;
@@ -210,8 +245,81 @@ impl AdobePluginGlobal for Plugin {
                         param.update_param_ui()?;
                     }
                 }
+                for (id, base) in [
+                    (Params::Top, "Top"),
+                    (Params::Bottom, "Bottom"),
+                    (Params::Left, "Left"),
+                    (Params::Right, "Right"),
+                ] {
+                    self.set_name(
+                        &mut params,
+                        id,
+                        &format!("{base} ({})", if mode == 1 { "px" } else { "%" }),
+                    )?;
+                }
+                self.set_name(
+                    &mut params,
+                    Params::EdgesStart,
+                    if enabled {
+                        "Center Adjustment"
+                    } else {
+                        "Edges"
+                    },
+                )?;
+                let rotated = params
+                    .get(Params::Angle)?
+                    .as_angle()?
+                    .float_value()?
+                    .rem_euclid(360.0)
+                    != 0.0;
+                self.set_visible(in_data, &mut params, Params::Interpolation, rotated)?;
             }
             _ => {}
+        }
+        Ok(())
+    }
+}
+
+impl Plugin {
+    fn set_name(
+        &self,
+        params: &mut Parameters<Params>,
+        id: Params,
+        name: &str,
+    ) -> Result<(), Error> {
+        // PF parameter copies can contain the setup name instead of the
+        // current UI name, so reapply the label for the current mode.
+        let mut param = params.get_mut(id)?;
+        param.set_name(name)?;
+        param.update_param_ui()?;
+        Ok(())
+    }
+
+    fn set_visible(
+        &self,
+        in_data: InData,
+        params: &mut Parameters<Params>,
+        id: Params,
+        visible: bool,
+    ) -> Result<(), Error> {
+        if in_data.is_premiere() {
+            if params.get(id)?.ui_flags().contains(ParamUIFlags::INVISIBLE) == visible {
+                let mut param = params.get_mut(id)?;
+                param.set_ui_flag(ParamUIFlags::INVISIBLE, !visible);
+                param.update_param_ui()?;
+            }
+        } else {
+            let plugin_id = self.aegp_id.ok_or(Error::BadCallbackParameter)?;
+            let index = params.index(id).ok_or(Error::InvalidIndex)?;
+            let effect = in_data.effect().aegp_effect(plugin_id)?;
+            let stream = effect.new_stream_by_index(plugin_id, index as i32)?;
+            // The wrapper's flag getter uses an enum and cannot represent
+            // combined flags. Set only Hidden, preserving the other flags.
+            stream.set_dynamic_stream_flag(
+                ae::aegp::DynamicStreamFlags::Hidden,
+                false,
+                !visible,
+            )?;
         }
         Ok(())
     }

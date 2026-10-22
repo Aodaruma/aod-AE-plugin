@@ -70,6 +70,7 @@ fn main() {
             | OutFlags2::SupportsThreadedRendering
             // | OutFlags2::SupportsGetFlattenedSequenceData // error occured in pipl == v0.1.1, so temporarily commented out
             | OutFlags2::SupportsSmartRender
+            | OutFlags2::ParamGroupStartCollapsedFlag
             // | OutFlags2::SupportsGpuRenderF32
             ,
         ),

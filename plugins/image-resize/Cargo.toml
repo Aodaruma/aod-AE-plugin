@@ -2,7 +2,7 @@
 [package]
 name = "image_resize"
 description = "Crops or extends image edges or a fixed-size canvas without scaling, with boundary sampling and rotation."
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license.workspace = true
 authors.workspace = true
