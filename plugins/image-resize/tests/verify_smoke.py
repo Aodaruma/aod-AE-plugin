@@ -28,6 +28,21 @@ def verify():
         same(load(f"crop-{depth}"), load(f"pixels-{depth}"))
         same(load(f"rotate-{depth}"), load(f"rotate_all0-{depth}"))
         checks += 2
+        for actual, reference in (
+            ("all300", "all300_reference"),
+            ("all_negative", "all_negative_reference"),
+            ("all_negative_crop", "crop"),
+            ("pixels_all_negative", "all_negative_reference"),
+        ):
+            same(load(f"{actual}-{depth}"), load(f"{reference}-{depth}"))
+            checks += 1
+        for name, box in {
+            "all300": (84, 72, 140, 100),
+            "all_negative": (40, 50, 140, 100),
+            "pixels_all300": (75, 66, 140, 100),
+        }.items():
+            assert load(f"{name}-{depth}").getchannel("A").getbbox() == box
+            checks += 1
         for name, expected in {
             "crop": (80, 70, 140, 100),
             "all50": (70, 65, 140, 100),
@@ -87,13 +102,20 @@ def verify():
     assert half_size.getchannel("A").getbbox() == expected
     same(half_size.crop(expected), half.crop(expected))
     checks += 2
+    for name, reference in (("pixels", "pixels-8"), ("percent", "crop-8"), ("size", "size_shift-8")):
+        same(load(f"switch-{name}"), load(reference))
+        checks += 1
     chained = load("chained")
     assert chained.getchannel("A").getbbox() == (40, 60, 140, 100)
     assert chained.getpixel((50, 65)) == load("baseline-8").getpixel((125, 65))
     assert chained.getpixel((70, 65))[3] == 0
     assert chained.getpixel((150, 65))[3] == 0
     checks += 4
-    print(f"PASS: {checks} AE image assertions; 8/16/32bpc, extension, crop, All %, rotation, exact canvas size without scaling, subpixel edges, half resolution.")
+    if "PASS: v0.1 parameter persistence" in report:
+        for name in ("pixels-8", "size_shift-8"):
+            same(load(f"legacy-{name}"), load(name))
+            checks += 1
+    print(f"PASS: {checks} AE image assertions; 8/16/32bpc, extension, crop, signed All %, mode switching, rotation, exact canvas size without scaling, subpixel edges, half resolution.")
 
 
 if __name__ == "__main__":

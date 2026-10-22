@@ -214,13 +214,13 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 
 ### パラメーター
 
-- `Units`: 上下左右の共通単位をPixels／Percentから選択します。
+- `Mode`: Pixels／Percent／Output Sizeから選択します。
 - `Top`、`Bottom`、`Left`、`Right`: 正値でクリップ、負値で拡張。%は元の辺が0%、反対の辺が100%です。
-- `All %`: 全4辺の調整量に掛ける係数。0%で無効、100%で指定値どおりです。
+- `All %`: 全4辺の調整量に掛ける係数。0%で無効、100%で指定値どおり、300%で3倍。負値ではクリップ／拡張の方向を反転します。
 - `Extend`: None（透明）／Mirror（鏡像反復）／Tile（繰り返し）／Clamp（端の色）を選びます。
 - `Angle`: 元のレイヤー中心を軸に時計回りに回転します。初期値0°で、All %から独立しています。
 - `Interpolation`: Nearest／Bilinearを選びます。
-- `Set Output Size`、`Output Width (px)`、`Output Height (px)`: 画像の倍率を保って指定寸法でクリップ／拡張します。寸法はこちらを優先し、上下左右・All %・Angleから枠の中心を求めます。All %＝0%でも指定サイズは有効です。
+- `Output Width (px)`、`Output Height (px)`: Mode＝Output Sizeで有効。画像の倍率を保って指定寸法でクリップ／拡張します。寸法はこちらを優先し、%単位の上下左右・All %・Angleから枠の中心を求めます。All %＝0%でも指定サイズは有効です。
 
 プレビューは12°回転した画像を800×430pxの枠にクリップ／拡張し、画像外をMirrorで埋めた例です。詳しい計算例は[プラグインの説明](../../plugins/image-resize/README.md)を参照してください。
 

@@ -339,9 +339,8 @@
             setProperty(effect, "Exposure (EV)", -0.15);
             setProperty(effect, "Output", 1);
         } else if (item.match === "ImageResize") {
-            setProperty(effect, "Units", 2);
+            setProperty(effect, "Mode", 3);
             setProperty(effect, "All %", 100);
-            setProperty(effect, "Set Output Size", 1);
             setProperty(effect, "Output Width (px)", 800);
             setProperty(effect, "Output Height (px)", 430);
             setProperty(effect, "Extend", 2);

@@ -13,6 +13,7 @@ const PLUGIN_DESCRIPTION: &str = "Crops or extends image edges or a fixed-size c
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
 enum Params {
+    // Keep the original key: the wrapper hashes it for the saved parameter ID.
     Units,
     All,
     Top,
@@ -22,7 +23,6 @@ enum Params {
     Extend,
     Angle,
     Interpolation,
-    SetOutputSize,
     OutputWidth,
     OutputHeight,
 }
@@ -45,15 +45,28 @@ impl AdobePluginGlobal for Plugin {
         _: InData,
         _: OutData,
     ) -> Result<(), Error> {
-        params.add(
+        params.add_with_flags(
             Params::Units,
-            "Units",
+            "Mode",
             PopupDef::setup(|d| {
-                d.set_options(&["Pixels", "Percent"]);
+                d.set_options(&["Pixels", "Percent", "Output Size"]);
                 d.set_default(2);
             }),
+            ParamFlag::SUPERVISE,
+            ParamUIFlags::empty(),
         )?;
-        add_slider(params, Params::All, "All %", 0.0, 100.0, 100.0)?;
+        params.add(
+            Params::All,
+            "All %",
+            FloatSliderDef::setup(|d| {
+                d.set_valid_min(-30000.0);
+                d.set_valid_max(30000.0);
+                d.set_slider_min(-300.0);
+                d.set_slider_max(300.0);
+                d.set_default(100.0);
+                d.set_precision(2);
+            }),
+        )?;
         for (id, name) in [
             (Params::Top, "Top"),
             (Params::Bottom, "Bottom"),
@@ -84,15 +97,6 @@ impl AdobePluginGlobal for Plugin {
                 d.set_options(&["Nearest", "Bilinear"]);
                 d.set_default(2);
             }),
-        )?;
-        params.add_with_flags(
-            Params::SetOutputSize,
-            "Set Output Size",
-            CheckBoxDef::setup(|d| {
-                d.set_default(false);
-            }),
-            ParamFlag::SUPERVISE,
-            ParamUIFlags::empty(),
         )?;
         for (id, name, default) in [
             (Params::OutputWidth, "Output Width (px)", 1920.0),
@@ -191,13 +195,13 @@ impl AdobePluginGlobal for Plugin {
                 checkin?;
             }
             ae::Command::UserChangedParam { param_index } => {
-                if params.type_at(param_index) == Params::SetOutputSize {
+                if params.type_at(param_index) == Params::Units {
                     out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
             }
             ae::Command::UpdateParamsUi => {
                 let mut params = params.cloned();
-                let enabled = params.get(Params::SetOutputSize)?.as_checkbox()?.value();
+                let enabled = params.get(Params::Units)?.as_popup()?.value() == 3;
                 for id in [Params::OutputWidth, Params::OutputHeight] {
                     let disabled = params.get(id)?.ui_flags().contains(ParamUIFlags::DISABLED);
                     if disabled == enabled {
@@ -253,7 +257,7 @@ fn read_settings(
     out_data: &mut OutData,
 ) -> Result<RenderData, Error> {
     let settings = Settings {
-        percent: params.get(Params::Units)?.as_popup()?.value() == 2,
+        percent: params.get(Params::Units)?.as_popup()?.value() != 1,
         all: slider(params, Params::All)?,
         sides: [
             slider(params, Params::Left)?,
@@ -262,7 +266,7 @@ fn read_settings(
             slider(params, Params::Bottom)?,
         ],
         angle: params.get(Params::Angle)?.as_angle()?.float_value()?,
-        output_size: if params.get(Params::SetOutputSize)?.as_checkbox()?.value() {
+        output_size: if params.get(Params::Units)?.as_popup()?.value() == 3 {
             Some([
                 slider(params, Params::OutputWidth)?,
                 slider(params, Params::OutputHeight)?,

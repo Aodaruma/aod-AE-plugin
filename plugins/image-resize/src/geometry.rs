@@ -76,7 +76,7 @@ impl Geometry {
             Some(size) => Some(size.map(f64::round)),
             None => None,
         };
-        let amount = s.all.clamp(0.0, 100.0) * 0.01;
+        let amount = s.all * 0.01;
         let unit = if s.percent {
             [size[0] * 0.01, size[1] * 0.01]
         } else {
@@ -298,9 +298,11 @@ mod tests {
     #[test]
     fn all_interpolates_both_crop_and_extension() {
         for (all, expected) in [
+            (-100.0, [20, -10, 260, 60]),
             (0.0, [0, 0, 200, 100]),
             (50.0, [-10, 5, 170, 120]),
             (100.0, [-20, 10, 140, 140]),
+            (300.0, [-60, 30, 20, 220]),
         ] {
             let g = Geometry::new(
                 [200.0, 100.0],
