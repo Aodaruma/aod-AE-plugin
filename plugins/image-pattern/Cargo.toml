@@ -2,7 +2,7 @@
 license.workspace = true
 name = "image_pattern"
 description = "Creates feedback, kaleidoscope, strip repeats, and seamless polygon image patterns with per-copy time offsets."
-version = "0.4.5"
+version = "0.4.6"
 edition = "2024"
 
 [lib]

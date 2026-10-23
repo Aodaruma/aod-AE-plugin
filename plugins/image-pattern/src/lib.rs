@@ -173,6 +173,12 @@ enum Sampling {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ImageEdge {
+    Standard(SampleEdge),
+    Black,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FeedbackCompositeOrder {
     FrontToBack,
     BackToFront,
@@ -191,7 +197,7 @@ struct RenderSettings {
     center: Vec2,
     mix: f32,
     sampling: Sampling,
-    edge: SampleEdge,
+    edge: ImageEdge,
     feedback_iterations: usize,
     feedback_decay: f32,
     feedback_opacity: f32,
@@ -381,7 +387,8 @@ impl AdobePluginGlobal for Plugin {
             Params::Edge,
             "Edge",
             PopupDef::setup(|d| {
-                d.set_options(&["Transparent", "Extend", "Tile", "Mirror"]);
+                // Append new choices to preserve saved popup values.
+                d.set_options(&["None (Transparent)", "Extend", "Tile", "Mirror", "Black"]);
                 d.set_default(1);
             }),
         )?;
@@ -1101,7 +1108,7 @@ impl Plugin {
             mix: (params.get(Params::Mix)?.as_float_slider()?.value() as f32 / 100.0)
                 .clamp(0.0, 1.0),
             sampling: sampling_from_popup(params.get(Params::Sampling)?.as_popup()?.value()),
-            edge: edge_from_popup(params.get(Params::Edge)?.as_popup()?.value()),
+            edge: image_edge_from_popup(params.get(Params::Edge)?.as_popup()?.value()),
             feedback_iterations: params
                 .get(Params::FeedbackIterations)?
                 .as_slider()?
@@ -1392,6 +1399,14 @@ fn edge_from_popup(value: i32) -> SampleEdge {
         3 => SampleEdge::Tile,
         4 => SampleEdge::Mirror,
         _ => SampleEdge::Transparent,
+    }
+}
+
+fn image_edge_from_popup(value: i32) -> ImageEdge {
+    if value == 5 {
+        ImageEdge::Black
+    } else {
+        ImageEdge::Standard(edge_from_popup(value))
     }
 }
 
@@ -1768,6 +1783,51 @@ fn along_strip_edge(
     Some(point + direction * shift)
 }
 
+fn sample_black_edge(
+    source: &[ae::PixelF32],
+    width: usize,
+    height: usize,
+    coordinate: Vec2,
+    sampling: Sampling,
+) -> ae::PixelF32 {
+    if width == 0 || height == 0 || !coordinate.x.is_finite() || !coordinate.y.is_finite() {
+        return TRANSPARENT;
+    }
+    let black = ae::PixelF32 {
+        alpha: 1.0,
+        ..TRANSPARENT
+    };
+    let (Some(x), Some(y)) = (
+        normalized_sample_coordinate(coordinate.x, width, SampleEdge::Transparent),
+        normalized_sample_coordinate(coordinate.y, height, SampleEdge::Transparent),
+    ) else {
+        return black;
+    };
+    match sampling {
+        Sampling::Nearest => {
+            if x.round() < 0.0
+                || y.round() < 0.0
+                || x.round() >= width as f32
+                || y.round() >= height as f32
+            {
+                black
+            } else {
+                sample_nearest(source, width, height, x, y, SampleEdge::Transparent)
+            }
+        }
+        Sampling::Bilinear => {
+            let mut pixel = sample_bilinear(source, width, height, x, y, SampleEdge::Transparent);
+            // Black padding changes only out-of-bounds taps, not transparent
+            // pixels inside the source. Preserve the same RGB interpolation.
+            let coverage_x = (x + 1.0).clamp(0.0, 1.0) * (width as f32 - x).clamp(0.0, 1.0);
+            let coverage_y = (y + 1.0).clamp(0.0, 1.0) * (height as f32 - y).clamp(0.0, 1.0);
+            let outside = 1.0 - coverage_x * coverage_y;
+            pixel.alpha = (pixel.alpha + outside).clamp(0.0, 1.0);
+            pixel
+        }
+    }
+}
+
 fn sample_buffer(
     source: &[ae::PixelF32],
     width: usize,
@@ -1775,8 +1835,11 @@ fn sample_buffer(
     coordinate: Vec2,
     direction: Option<Vec2>,
     sampling: Sampling,
-    edge: SampleEdge,
+    edge: ImageEdge,
 ) -> ae::PixelF32 {
+    let ImageEdge::Standard(edge) = edge else {
+        return sample_black_edge(source, width, height, coordinate, sampling);
+    };
     let (coordinate, edge) = if let Some(direction) = direction {
         let Some(coordinate) = along_strip_edge(coordinate, direction, width, height, edge) else {
             return TRANSPARENT;
@@ -2101,6 +2164,107 @@ mod host_tests {
             normalized_sample_coordinate(50.0, 10, edge_from_popup(2)),
             Some(9.0)
         );
+    }
+
+    #[test]
+    fn image_edge_choices_preserve_existing_values_and_time_edge_semantics() {
+        for (value, edge) in [
+            (1, SampleEdge::Transparent),
+            (2, SampleEdge::Clamp),
+            (3, SampleEdge::Tile),
+            (4, SampleEdge::Mirror),
+        ] {
+            assert_eq!(image_edge_from_popup(value), ImageEdge::Standard(edge));
+            assert_eq!(edge_from_popup(value), edge);
+        }
+        assert_eq!(image_edge_from_popup(5), ImageEdge::Black);
+    }
+
+    #[test]
+    fn black_edge_filters_match_opaque_padding_without_filling_source_transparency() {
+        let black = ae::PixelF32 {
+            alpha: 1.0,
+            ..TRANSPARENT
+        };
+        let source = [
+            TRANSPARENT,
+            ae::PixelF32 {
+                alpha: 0.25,
+                red: 0.8,
+                green: 0.2,
+                blue: 0.0,
+            },
+            ae::PixelF32 {
+                alpha: 1.0,
+                red: 0.0,
+                green: 0.4,
+                blue: 1.5,
+            },
+            ae::PixelF32 {
+                alpha: 0.7,
+                red: 0.3,
+                green: 0.6,
+                blue: 0.9,
+            },
+        ];
+        let mut padded = [black; 16];
+        padded[5] = source[0];
+        padded[6] = source[1];
+        padded[9] = source[2];
+        padded[10] = source[3];
+        for sampling in [Sampling::Nearest, Sampling::Bilinear] {
+            for y in -6..=10 {
+                for x in -6..=10 {
+                    let point = Vec2::new(x as f32 * 0.25, y as f32 * 0.25);
+                    let expected = match sampling {
+                        Sampling::Nearest => {
+                            // Round in original coordinates, including negative half pixels.
+                            sample_nearest(
+                                &padded,
+                                4,
+                                4,
+                                point.x.round() + 1.0,
+                                point.y.round() + 1.0,
+                                SampleEdge::Clamp,
+                            )
+                        }
+                        Sampling::Bilinear => sample_bilinear(
+                            &padded,
+                            4,
+                            4,
+                            point.x + 1.0,
+                            point.y + 1.0,
+                            SampleEdge::Clamp,
+                        ),
+                    };
+                    for direction in [None, Some(Vec2::new(1.0, 1.0))] {
+                        assert_pixel_near(
+                            sample_buffer(
+                                &source,
+                                2,
+                                2,
+                                point,
+                                direction,
+                                sampling,
+                                ImageEdge::Black,
+                            ),
+                            expected,
+                        );
+                    }
+                }
+            }
+            for point in [Vec2::new(f32::MAX, 0.0), Vec2::new(0.0, f32::MIN)] {
+                assert_pixel_near(sample_black_edge(&source, 2, 2, point, sampling), black);
+            }
+            assert_pixel_near(
+                sample_black_edge(&source, 2, 2, Vec2::new(f32::NAN, 0.0), sampling),
+                TRANSPARENT,
+            );
+            assert_pixel_near(
+                sample_black_edge(&[], 0, 0, Vec2::default(), sampling),
+                TRANSPARENT,
+            );
+        }
     }
 
     #[test]

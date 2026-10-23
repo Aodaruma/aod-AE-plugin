@@ -58,9 +58,21 @@ The animatable **Center** is initialized directly to half the layer width and he
 
 For triangles, Center is the centroid. Inverted triangle cells use a 180-degree orientation; Mirror adds horizontal reflection on alternating lattice columns/rows. Quadrilateral and hexagon Mirror reflect X/Y respectively.
 
-All modes share Mix, Nearest/Bilinear sampling, and Transparent/Extend/Tile/Mirror source-image edge controls. **Edge defaults to Transparent.** Source transparency is preserved. Polygon tessellation has no geometric holes, but sampling outside a transparent image can still yield transparent pixels.
+全モード共通の **Edge** で、参照座標が入力画像の端を越えた場合の扱いを選べます。初期値は **None (Transparent)** です。
 
-Strip Repeat's **Edge Direction** defaults to **Along Strip**. Extend continues the boundary pixel along the source band's tangent; Tile and Mirror wrap or reflect along the intersection of that line with the source image. The cross-strip coordinate is preserved instead of clamping X/Y independently. A line that never intersects the image stays transparent. **Image Axes** restores conventional image-edge sampling. Affect and mirroring are accounted for when deriving the sampling direction.
+| Edge | 画像外の処理 |
+|---|---|
+| None (Transparent) | 透明にします。従来のTransparentと同じです。 |
+| Extend | 端の画素を引き伸ばします。 |
+| Tile | 同じ画像を繰り返します。 |
+| Mirror | 画像を鏡映して繰り返します。 |
+| Black | 不透明な黒にします。画像内の透明部分は保持します。 |
+
+Nearest／Bilinearの両方に対応し、Bilinearでは画像端と黒の間も補間します。Time Deltaで参照する各フレームにも適用されます。Blackは各コピーの画像外を不透明にするため、クリッピング解除時は重なり順に応じて他のコピーを覆います。スリットやタイルのマスク外を塗りつぶす設定ではありません。
+
+保存済みのEdge値1〜4と初期値は維持し、Blackを5番目に追加しています。画像端のEdgeと、時間範囲外の **Time Edge** は独立した設定です。Polygon Tileに幾何学的な隙間はありませんが、画像内の透明部分やNoneで参照した画像外は透明になります。
+
+Strip Repeatの **Edge Direction** は **Along Strip** が初期値です。Extend／Tile／Mirrorを帯の接線方向に適用し、帯に垂直な座標を維持します。その直線が画像と交差しない場合は透明になります。**Image Axes** は画像のX/Y軸ごとに処理します。NoneとBlackは方向に依存しません。接線方向にはAffectとMirrorの影響も反映されます。
 
 Distances use full-resolution, pixel-aspect-corrected layer coordinates. X/Y downsampling is handled independently, and upstream bounds expansion does not move Center. Triangle Height is altitude; Hexagon Width/Height are its bounding box. For an equilateral triangle use Height = Width * sqrt(3)/2; for a regular point-up hexagon use Height = Width * 2/sqrt(3).
 
@@ -120,4 +132,6 @@ cargo build -p image_pattern --release
 
 ImagePatternをインストールしたAEで、[基本テスト](tests/ae_smoke_test.jsx)、[拡張テスト](tests/ae_extended_test.jsx)、[クリッピングテスト](tests/ae_clipping_test.jsx)を実行します。結果はそれぞれ`target/ae-image-pattern-smoke/`、`target/ae-image-pattern-extended/`、`target/ae-image-pattern-clipping/`へ保存します。拡張・クリッピングテストは検証用AEPも保存するため、使い捨てのテストプロジェクトで実行してください。
 
-[tests/verify_ae_outputs.py](tests/verify_ae_outputs.py) は、AEで描画したPNGをソース画像の参照フレームと照合します（Pillowが必要です）。Delta X/Yは405点、時間差は115点を比較します。[tests/verify_clipping_outputs.py](tests/verify_clipping_outputs.py) は、4種類のクリッピング、Over／Under、半透明合成、Mirror、境界交差、Time Origin、負の時間差、同じ時刻を参照するExtend／Loopを照合します。Rustの46テストでは、変形、境界交差、折り返した境界の省略、開いた側への座標の延長、画像位置ずれと反復番号の独立性、アルファ合成、タイルの被覆、ダウンサンプルとピクセル縦横比、境界計算の再利用と参照画像の保持などを確認しています。
+[tests/verify_ae_outputs.py](tests/verify_ae_outputs.py) は、AEで描画したPNGをソース画像の参照フレームと照合します（Pillowが必要です）。Delta X/Yは405点、時間差は115点を比較します。[tests/verify_clipping_outputs.py](tests/verify_clipping_outputs.py) は、4種類のクリッピング、Over／Under、半透明合成、Mirror、境界交差、Time Origin、負の時間差、同じ時刻を参照するExtend／Loopを照合します。Rustの48テストでは、変形、境界交差、折り返した境界の省略、開いた側への座標の延長、画像位置ずれと反復番号の独立性、アルファ合成、タイルの被覆、ダウンサンプルとピクセル縦横比、境界計算の再利用と参照画像の保持などを確認しています。
+
+[画像端テスト](tests/ae_image_edge_test.jsx)は、5種類のEdge、方向、補間、透明部分、Time DeltaとOver／Underを8／16／32bitで描画します。`target/ae-image-pattern-edge/`のPNGと検証用AEPを、[画像端の比較スクリプト](tests/verify_image_edge_outputs.py)で参照画像と照合できます。

@@ -297,12 +297,12 @@
             setProperty(effect, "Delta Width (px)", 2.0);
             setProperty(effect, "Delta X (px)", 18.0);
             setProperty(effect, "Delta Y (px)", -8.0);
-            setProperty(effect, "Clipping", 2);
+            setProperty(effect, "Clipping", 1);
             setProperty(effect, "Overlap Order", 1);
             setProperty(effect, "Copies Each Side", 4);
             setProperty(effect, "Split Overlaps", 0);
             setProperty(effect, "Strip Image Affect (%)", 100.0);
-            setProperty(effect, "Edge", 2);
+            setProperty(effect, "Edge", 5);
         } else if (item.match === "ImageTransform") {
             setProperty(effect, "Separate Dimensions", 1);
             setProperty(effect, "Scale X", 136.0);

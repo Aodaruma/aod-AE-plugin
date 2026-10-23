@@ -58,6 +58,8 @@
         equal(effect.name, "AOD_ImagePattern", "Display name");
         equal(property(effect, "Decay").value, 1, "Default decay");
         equal(property(effect, "Edge").value, 1, "Default edge");
+        equal(property(effect, "Edge").maxValue, 5, "Image edge choices");
+        equal(property(effect, "Time Edge").maxValue, 4, "Time edge choices unchanged");
         equal(property(effect, "Pattern Mode").maxValue, 4, "Mode count");
         equal(property(effect, "Shape").maxValue, 3, "Shape count");
         equal(property(effect, "Delta X (px)").value, 0, "Default Delta X");

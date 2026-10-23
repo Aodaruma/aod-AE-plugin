@@ -292,14 +292,14 @@ AE標準Transformに近いアフィン変換を、多様な再構成フィルタ
 - Polygonの`Shape`、`Tile Width/Height (px)`: 三角形・四角形・六角形を隙間なく敷き詰めます。
 - Polygonの`Repeat`、`Rotation`、`Scale X/Y (%)`、`Skew (deg)`、`Skew Axis`: Tile／Mirrorと格子全体の変形を調整します。
 - `Image Affect (%)`／`Strip Image Affect (%)`: 0%はマスクのみ、100%は画像も変形します。途中の影響率にも調節できます。
-- `Mix (%)`、`Sampling`、`Edge`: 原画像との混合、補間、画像外の扱いです。EdgeはTransparentが既定値です。
+- `Mix (%)`、`Sampling`、`Edge`: 原画像との混合、補間、画像外の扱いです。EdgeはNone (Transparent)／Extend／Tile／Mirror／Blackを選べます。None（既定）は画像外を透明に、Blackは不透明な黒にします。Blackでも画像内の透明部分は保持し、Time Deltaの参照画像にも適用します。
 - Stripの`Edge Direction`: Along Stripは帯の方向に沿ってExtend／Tile／Mirrorを適用し、Image Axesは通常の画像端処理です。
 - `Time Delta (frames)`、`Time Origin (i = 0)`、`Time Index Offset`: 基準から1段ごとの参照時刻差です。時間差の基準点はCenterと独立しています。Feedbackでは反復番号とIndex Offsetを使います。
 - `Tile Time Direction`: Polygonの時間差を基準タイルからの段数／X方向／Y方向で選びます。`Time Edge`は範囲外の時刻をTransparent／Extend／Loop／Ping Pongで扱います。
 
 ### 補足
 
-Polygon Tileの幾何学的な隙間はありません。入力の透明部分や画像外のサンプリングは元の透明度とEdge設定に従います。StripのDelta Angleは共有境界の間に画像を配置し、Image Affect 100%では画像の両端を境界に合わせます。Split Overlapsがオンの場合、境界が交差した箇所は法線方向の順序で領域を割り当てます。プレビューではオフの動作を使用しています。三角形のCenterは重心です。
+Polygon Tileの幾何学的な隙間はありません。入力の透明部分や画像外のサンプリングは元の透明度とEdge設定に従います。StripのDelta Angleは共有境界の間に画像を配置し、Image Affect 100%では画像の両端を境界に合わせます。Split Overlapsがオンの場合、境界が交差した箇所は法線方向の順序で領域を割り当てます。プレビューはSplit Overlapsオフ、両側クリップ、EdgeをBlackに設定しています。Blackはクリッピング解除時に他のコピーを覆うことがあります。三角形のCenterは重心です。
 
 Time Delta使用時は境界の並び順と直近の参照画像を再利用します。改善幅と測定条件は[ImagePatternの説明](../../plugins/image-pattern/README.md)の「Time Deltaの処理速度」を参照してください。
 
