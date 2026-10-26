@@ -1989,6 +1989,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e6eb142958d64335fb0e345c5b9ead2ecd6fc438c307e9d7d3c4fd428dbaf12"
 
 [[package]]
+name = "panorama_reframe"
+version = "0.1.4"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
+ "winres",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
