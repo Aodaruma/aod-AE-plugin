@@ -1347,6 +1347,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_pattern"
+version = "0.4.6"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
+ "winres",
+]
+
+[[package]]
 name = "image_relight"
 version = "0.5.0"
 dependencies = [
