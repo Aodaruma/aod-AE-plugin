@@ -59,11 +59,15 @@ RGBA各出力チャンネルを、入力チャンネル・定数・別レイヤ�
 
 ![AOD_SpaceConvert](assets/previews/space-convert.png)
 
-画像を極座標、曲線座標、円盤写像、Radon、直線Houghなどの表現へ変換し、対応モードでは逆変換します。
+画像をマスクパスに沿う座標、極座標、曲線座標、円盤写像、Radon、チャンネル別の直線Houghなどの表現へ変換し、対応モードでは逆変換します。
 
 ### パラメーター
 
-- `Space`、`Direction`: Polar、Log-Polar、Spiral Polar、Square-Disc、Elliptic、Parabolic、Bipolar、Radon、Line HoughとForward／Inverseを選択します。
+- `Space`、`Direction`: Polar、Log-Polar、Spiral Polar、Square-Disc、Elliptic、Parabolic、Bipolar、Radon、Line Hough、CurveAlongedとForward／Inverseを選択します。
+- `Mask Path`、`Band Width`: CurveAlongedで展開するマスクパスと帯幅です。Forwardは帯を長方形へ展開し、Inverseは長方形をパスに沿わせます。マスクモード「なし」で元画像を切り抜かずにパスを使えます。
+- `Loop Closed Path`、`Along Offset (%)`: 閉路の周回と開始位置を調整します。OFF時や開いたパスでは端を超える部分は透明になります。
+- `Fit`: Fillは縦横別倍率、Containは縦横比保持＋透明余白、Coverは縦横比保持＋切り抜きです。Forwardの帯→長方形を基準とし、Inverseは同じ対応を逆にたどります。
+- `Normal Offset`、`Reverse Along`、`Flip Normal`、`Path Quality`: 帯の位置・横軸／縦軸の方向・パス近似精度を調整します。
 - `Center`、`Custom Center`、`Radius`、`Custom Radius`、`Angle Offset`: Polar／Log-Polar系の座標範囲を設定します。
 - `Spiral Turns`、`Focus / Radius`、`Coordinate Extent`: Spiral、Elliptic、Bipolar固有の座標形状を設定します。
 - `Angle Samples`、`Detector Samples`、`Samples per Ray`: 積分変換の内部解析解像度を指定します。
@@ -76,3 +80,5 @@ RGBA各出力チャンネルを、入力チャンネル・定数・別レイヤ�
 ### 補足
 
 RadonのInverseは離散フィルター付き逆投影、HoughのInverseは検出線の可視化を目的とした逆投影です。後者は厳密な元画像復元ではありません。
+
+CurveAlongedのInverseは最寄りのパス位置を使います。自己交差や急カーブで帯が重なると完全には復元できません。パス未選択時は透明出力です。詳しくは[CurveAlongedの使い方](../../plugins/space-convert/README.md#curvealongedマスクパスと直交空間の変換)を参照してください。
