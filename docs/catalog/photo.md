@@ -204,6 +204,26 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 
 機密保護用の暗号ではなく、モーショングラフィックスやグリッチ表現向けの可逆変換です。厳密な復元には同一寸法・ビット深度・キー・設定と、途中で未加工のエンコード画像が必要です。Resilient Replicasは論理解像度を下げる代わりに、局所的な画素破損を中央値で復元するlossy方式です。
 
+## AOD_ImageResize
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_ImageResize](assets/previews/image-resize.png)
+
+画像の上下左右をピクセル数または%で拡張・クリッピングし、回転や指定幅・高さでの出力も行えます。画像の拡大縮小は行いません。
+
+### パラメーター
+
+- `Mode`: Pixels／Percent／Output Sizeから選択します。
+- `Top`、`Bottom`、`Left`、`Right`: 展開済みのEdgesグループ内に配置し、Pixels／Percentに合わせて(px)／(%)を表示します。正値でクリップ、負値で拡張。%は元の辺が0%、反対の辺が100%です。
+- `All %`: 全4辺の調整量に掛ける係数。0%で無効、100%で指定値どおり、300%で3倍。負値ではクリップ／拡張の方向を反転します。
+- `Extend`: None（透明）／Mirror（鏡像反復）／Tile（画像全体の繰り返し）／Repeat（端の画素を引き伸ばす、旧Clamp）を選びます。
+- `Angle`: 元のレイヤー中心を軸に時計回りに回転します。初期値0°で、All %から独立しています。
+- `Interpolation`: 回転時のみ表示し、Nearest／Bilinearを選びます。
+- `Output Width (px)`、`Output Height (px)`: Mode＝Output Sizeでのみ、展開済みのOutput Sizeグループに表示します。画像の倍率を保って指定寸法でクリップ／拡張します。寸法はこちらを優先し、Center Adjustmentグループの%単位の上下左右・All %・Angleから枠の中心を求めます。All %＝0%でも指定サイズは有効です。
+
+プレビューは12°回転した画像を800×430pxの枠にクリップ／拡張し、画像外をMirrorで埋めた例です。詳しい計算例は[プラグインの説明](../../plugins/image-resize/README.md)を参照してください。
+
 ## AOD_ImageScaler
 
 - **分類:** P：一般写真・連続階調画像
