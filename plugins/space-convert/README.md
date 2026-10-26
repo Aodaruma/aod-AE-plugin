@@ -1,58 +1,89 @@
 # space-convert ( AOD_SpaceConvert )
 
-Converts images between Cartesian, curvilinear coordinate, Radon, and line Hough representations.
+画像を直交座標、マスクパスに沿う座標、各種の曲線座標、Radon、チャンネル別の直線Hough表現へ変換します。
 
-![AOD_SpaceConvert preview](../../docs/catalog/assets/previews/space-convert.png)
+![AOD_SpaceConvertのプレビュー](../../docs/catalog/assets/previews/space-convert.png)
 
-## Modes
+## 変換モード
 
-- **Polar / Log-Polar**: angle is horizontal and radius is vertical.
-- **Spiral Polar**: polar coordinates with a parametric radial twist. `Spiral Turns` may be
-  positive or negative and remains analytically invertible.
-- **Square-Disc**: concentric square/disc mapping with an analytic coordinate map. The default
-  `Auto (Full Coverage)` radius uses the canvas-inscribed disc so the mapped square is not clipped.
-- **Elliptic Coordinates**: confocal ellipse/hyperbola coordinates. `Focus / Radius` controls the
-  focal distance.
-- **Parabolic Coordinates**: an analytic complex-square coordinate map using signed parabolic axes.
-- **Bipolar Coordinates**: two-focus coordinates with adjustable focus distance and finite
-  coordinate extent.
-- **Radon**: angle is horizontal and signed detector distance is vertical. Forward projections are
-  path-length normalized; inverse applies the corresponding finite Ram-Lak/FBP normalization.
-- **Line Hough**: line-evidence accumulator in the same layout. `Luminance` preserves the original
-  behavior; `RGBA` transforms all four channels independently; `Red`, `Green`, `Blue`, and `Alpha`
-  provide single-channel grayscale analysis and reconstruction views.
+- **Polar / Log-Polar**：横軸を角度、縦軸を半径とする極座標／対数極座標です。
+- **Spiral Polar**：半径に応じたねじれを加える極座標です。`Spiral Turns` に正負の値を指定でき、座標の対応は数式で逆算できます。
+- **Square-Disc**：同心的な正方形と円盤の座標写像です。半径の初期設定 `Auto (Full Coverage)` はキャンバスに内接する円盤を使い、変換対象の正方形が切れないようにします。
+- **Elliptic Coordinates**：共通の焦点を持つ楕円と双曲線による座標です。`Focus / Radius` で焦点距離を調整します。
+- **Parabolic Coordinates**：複素数の二乗写像を用いた放物線座標です。符号付きの軸で座標の対応を求めます。
+- **Bipolar Coordinates**：2つの焦点を使う双極座標です。焦点距離と座標範囲を調整できます。
+- **Radon**：横軸を角度、縦軸を符号付きの検出器距離とする投影表現です。Forwardでは経路長で正規化し、Inverseでは有限長のRam-Lakフィルターを使う逆投影と、それに対応する正規化を行います。
+- **Line Hough**：Radonと同じ軸配置で、直線を示すエッジの投票結果を表示します。`Luminance` は輝度、`RGBA` は4チャンネルを独立に処理します。`Red`、`Green`、`Blue`、`Alpha` は指定チャンネルをグレースケールで解析・逆変換します。
+- **CurveAlonged**：マスクパス周辺の帯を直交空間へ展開し、逆変換では画像をパスに沿わせます。詳しくは次の節を参照してください。
 
-Spatial geometry is evaluated in full-resolution square-pixel coordinates. Pixel aspect ratio and
-independent horizontal/vertical downsampling are accounted for, so custom and log radii, circular
-maps, Radon lines, and Hough edge thresholds remain stable across render resolutions. Custom Center
-is localized against the checked-out world's origin when preceding effects expand the bounds.
+座標はフル解像度の正方形ピクセル換算で計算します。ピクセルの縦横比と水平・垂直それぞれの縮小率を考慮し、
+描画解像度を変えても半径、円盤写像、Radonの投影線、Houghのエッジしきい値の扱いが変わらないようにしています。
+前段エフェクトが画像の範囲を拡張した場合は、取得した入力画像の原点に合わせて `Custom Center` を補正します。
 
-Coordinate modes use inverse-mapped sampling, so repeated conversion loses information through
-resampling. `Radon` inverse uses finite Ram-Lak filtered backprojection and `Line Hough` inverse uses
-normalized backprojection. Both are labelled **Inverse (Approximate)** in the UI and are not exact
-reconstruction methods.
+座標変換では出力位置から入力位置を逆算して画像をサンプリングするため、変換を繰り返すと再サンプリングによる情報の損失が生じます。
+Radonの逆変換は有限長のRam-Lakフィルターを使う逆投影、Line Houghの逆変換は正規化した逆投影です。
+画面上では **Inverse (Approximate)** と表示され、完全な元画像の復元を保証するものではありません。
 
-## Post Transform
+## CurveAlonged：マスクパスと直交空間の変換
 
-The appended **Post Transform** group transforms the result of the selected space conversion. It
-uses the familiar AE controls `Anchor Point`, `Position`, uniform or separated `Scale`, `Rotation`,
-`Skew`, and `Skew Axis`. Enabling `Separate Dimensions` dynamically replaces the single scale
-control with `Scale X` and `Scale Y`.
+`Space = CurveAlonged` では、同じレイヤーのマスクを `Mask Path` で選択します。
+画像をマスクで切り抜かずにパスだけを使う場合は、マスクモードを「なし」にしてください。
 
-Rendering inverse-maps each output pixel through the post transform before evaluating the selected
-space equation. Coordinate modes therefore continue their analytic equations beyond the visible
-output rectangle where the equation has a valid extension; they do not tile or mirror a bounded
-intermediate image. Forward Radon and Line Hough likewise evaluate the inverse-mapped angle and
-detector distance directly on their analysis lattice. Inverse projection modes apply the same
-mapping before backprojection. The identity defaults take the original rendering path unchanged.
+- `Forward`：パス周辺の帯状領域を、横軸がパス上の距離、縦軸が法線方向の距離となる長方形へ展開します。
+- `Inverse (Approximate)`：同じ設定の長方形をパス周辺へ戻します。平面の画像をパスに沿わせる場合もこちらを使います。
 
-`Angle Samples`, `Detector Samples`, and `Samples per Ray` explicitly trade analysis quality for CPU
-cost. At extreme combinations the effective ray count, filter radius, and inverse working resolution
-are reduced to a fixed safe work budget. The analysis buffer is resampled to the layer dimensions for
-display.
+| パラメーター | 動作 |
+|---|---|
+| `Mask Path` | 同じレイヤーのマスクパス。キーフレーム・式による形状変化も現在時刻で取得します。未選択・削除済み・長さゼロのパスは透明出力です。 |
+| `Loop Closed Path` | 閉じたパスで、開始位置をずらしたときに終点から始点へ周回します。OFFでは範囲外を透明にします。閉じたパスの最終セグメントはどちらでも保持します。開いたパスはONでも周回しません。 |
+| `Fit` | `Fill`：帯全体を長方形へ縦横別倍率で合わせます。`Contain`：縦横比を保って帯全体を収め、余白を透明にします。`Cover`：縦横比を保って長方形を埋め、はみ出す部分を切り抜きます。 |
+| `Band Width` | パスの両側を合わせた帯の幅。フル解像度の正方形ピクセル換算です。初期値は200pxです。 |
+| `Along Offset (%)` | パス全長に対する開始位置のオフセット。100%で1周分です。負値も指定できます。 |
+| `Normal Offset` | 帯の中心をパスの法線方向へ移動します。単位は `Band Width` と同じです。 |
+| `Reverse Along` | 横軸の進行方向を反転します。 |
+| `Flip Normal` | 縦軸の向きを反転します。正の法線はパス接線を画面上で時計回りに90度回した向きです。 |
+| `Path Quality` | `Draft / Normal / High`：パス近似の間隔を約2／0.5／0.25pxにします。非常に長いパスでは計算量を制限するため間隔を広げます。 |
 
-This is the After Effects plugin **AOD_SpaceConvert**, which provides the **AOD_SpaceConvert.aex** plugin file for Adobe After Effects.
+`Fit` は **Forwardで帯を長方形へ収める規則**です。Inverseでも同じ対応を逆にたどるため、
+同じパス・帯幅・Fit・オフセットで往復できます。Containの余白はInverseでは使われず、
+Coverで切り抜かれた帯の部分は復元できません。縦横比の保持はパス上の距離と法線距離についてのもので、
+湾曲そのものによる内側・外側の伸縮は残ります。
 
-## Building the Plugin
+`Post Transform`、`Interpolation`、`Edge`、出力調整も利用できます。
+`Edge` は画像のサンプリング境界を制御し、帯や非ループパスの範囲外は透明のままです。
+ピクセル縦横比、水平・垂直別のプレビュー縮小率、前段エフェクトで拡張された入力の原点を考慮します。
 
-See the [main README](../../README.md) for instructions on how to build the plugin.
+パスの自己交差、角、帯が重なる急カーブでは対応が一意でなくなるため、Inverseは最寄りのパス位置を採用します。
+同距離の候補はパス順で最初のものを採用します。帯幅を小さくすると重なりを抑えられます。
+再サンプリングとパスの有限精度近似を伴うため、画像の往復変換は完全な可逆変換ではありません。
+マスクパスAPIを使うため、このモードはAfter Effects用です。
+
+### 検証
+
+`cargo test -p space_convert` で座標変換・Fit・ループ・探索・原点・Post Transformの回帰テストを実行できます。
+AEでは [`tests/ae_smoke_test.jsx`](tests/ae_smoke_test.jsx) を実行し、
+`target/curve-smoke/` に8／16／32bpc、アニメーション、各Fit、閉路、BezierのPNGと結果ログを出力します。
+その後 `python plugins/space-convert/tests/verify_ae_smoke.py` で画像比較を実行できます（Pillow・NumPyが必要です）。
+
+## Post Transform：変換後の位置・大きさ・角度
+
+**Post Transform** グループでは、空間変換の結果に `Anchor Point`、`Position`、`Scale`、`Rotation`、
+`Skew`、`Skew Axis` を適用できます。`Separate Dimensions` を有効にすると、
+共通の `Scale` に代わって `Scale X` と `Scale Y` が表示され、縦横を個別に調整できます。
+
+描画時は各出力ピクセルにPost Transformの逆変換を適用してから、選択した空間の座標式を計算します。
+表示範囲外へ座標式を拡張できるモードでは、その式に従って描画が続きます。
+有限の変換済み画像をタイル状に繰り返したり、鏡映したりする処理ではありません。
+RadonとLine HoughのForwardでも、逆変換後の角度と検出器距離を内部の解析格子上で直接評価します。
+Inverseでは逆投影の前に同じ座標変換を適用します。Post Transformの初期値では、追加の変形は行いません。
+
+## 解析品質と処理負荷
+
+`Angle Samples`、`Detector Samples`、`Samples per Ray` で、解析品質とCPU負荷のバランスを調整できます。
+計算量が大きくなる組み合わせでは、実際のサンプル数、フィルター半径、逆変換の作業解像度を制限します。
+解析結果はレイヤーの大きさへ再サンプリングして表示します。
+
+## ビルド
+
+このプラグインのAE表示名は **AOD_SpaceConvert**、Windows版のファイル名は **AOD_SpaceConvert.aex** です。
+ビルド手順は[ルートREADME](../../README.md)を参照してください。
