@@ -1,10 +1,10 @@
 # AOD After Effects Plugin Catalog
 
-用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる39プラグインを4分類に整理しています。
+用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる40プラグインを4分類に整理しています。
 
 | 分類 | 適した素材 | 収録数 | 詳細 |
 |---|---|---:|---|
-| P | Photo：一般写真・連続階調画像 | 17 | [Photo / 一般画像](photo.md) |
+| P | Photo：一般写真・連続階調画像 | 18 | [Photo / 一般画像](photo.md) |
 | A | Anime：アニメ素材（セル塗り・線画・透過キャラクター） | 13 | [Anime / アニメ素材](anime.md) |
 | D | Data & Map：データ・マップ画像 | 4 | [Data & Map / データ・マップ](map-data.md) |
 | G | Generator：生成用キャンバス | 5 | [Generator / 生成系](generator.md) |
@@ -52,3 +52,7 @@ After Effects 2025で[`catalog/ae2025-plugin-catalog/aod-plugin-catalog-ae2025.a
 3. `run-overviews.jsx`: P／A／D／G分類と全エフェクト一覧のPNGを保存します。
 
 生成先は`docs/catalog/assets/`です。素材プロジェクトに`Cat Crop 512x512`がない場合は、比較用の手続きテスト素材を自動生成します。
+
+PanoramaConvertの個別画像は、[検証手順](../../plugins/panorama-convert/README.md#ビルドと確認)の描画テスト後に `plugins/panorama-convert/tests/extra-smoke.jsx` を空の別プロセスのAEで実行し、`target/panorama-smoke/catalog.png` を `assets/previews/panorama-convert.png` へコピーして更新します。色はXYZ方向をRGBへ符号化した手続き素材で、上段が入力、下段がAEによる変換結果です。
+
+既存の個別PNGから一覧だけを組み直す場合は、Pillowを導入済みのPythonで `python docs/catalog/rebuild-overviews.py` を実行できます。再描画はせず、現在のPNGを使ってPhoto分類と全体一覧を更新します。
