@@ -371,26 +371,24 @@
         if (item.match === "ImageBevel") {
             comp.layers.addSolid([0.025, 0.035, 0.055], "Background", 512, 512, 1, 1);
             var bevelSource = app.project.items.addComp("CATPREVIEW - Image Bevel Source", 512, 512, 1, 1, 30);
-            var bevelText = bevelSource.layers.addText("AOD");
-            var bevelDoc = bevelText.property("ADBE Text Properties").property("ADBE Text Document").value;
-            bevelDoc.font = "Arial-BoldMT";
-            bevelDoc.fontSize = 156;
-            bevelDoc.fillColor = [1,1,1];
-            bevelDoc.justification = ParagraphJustification.CENTER_JUSTIFY;
-            bevelText.property("ADBE Text Properties").property("ADBE Text Document").setValue(bevelDoc);
-            bevelText.property("ADBE Transform Group").property("ADBE Position").setValue([256,310]);
+            var silhouetteFile = new File(docsRoot.fsName + "/assets/sources/cat-silhouette.png");
+            if (!silhouetteFile.exists) {
+                throw new Error("Missing cat silhouette: " + silhouetteFile.fsName);
+            }
+            var silhouette = app.project.importFile(new ImportOptions(silhouetteFile));
+            bevelSource.layers.add(silhouette);
             layer = comp.layers.add(bevelSource);
             var bevelEffect = addEffect(layer, item.match);
-            setProperty(bevelEffect, "Bevel Width (px)", 12);
-            setProperty(bevelEffect, "Height (px)", 10);
-            setProperty(bevelEffect, "Height Blur (px)", 1.2);
+            setProperty(bevelEffect, "Bevel Width (px)", 28);
+            setProperty(bevelEffect, "Height (px)", 22);
+            setProperty(bevelEffect, "Height Blur (px)", 1.5);
             setProperty(bevelEffect, "Base Color", [0.2,0.55,0.9,1]);
-            setProperty(bevelEffect, "Roughness", 0.36);
+            setProperty(bevelEffect, "Roughness", 0.42);
             setProperty(bevelEffect, "Metallic", 0.3);
             setProperty(bevelEffect, "Ambient", 0.3);
-            setProperty(bevelEffect, "Light Position", [145,70]);
+            setProperty(bevelEffect, "Light Position", [95,55]);
             setProperty(bevelEffect, "Light Height (px)", 300);
-            setProperty(bevelEffect, "Light Intensity", 4);
+            setProperty(bevelEffect, "Light Intensity", 3);
             item.comp = comp.name;
             return comp;
         } else if (item.match === "TextureStroke") {

@@ -6,6 +6,8 @@ Creates curve-shaped bevels from silhouettes with configurable materials and lig
 
 ![プレビュー](../../docs/catalog/assets/previews/image-bevel.png)
 
+プレビューは[猫の透過シルエット](../../docs/catalog/assets/sources/cat-silhouette.png)からSDFでベベルを作り、青い材質と左上のライトを適用したAEの出力です。
+
 ## 基本操作
 
 1. 透過画像やテキストを含むレイヤーに適用します。外側へ広げる場合は、周囲に透明な余白のあるプリコンポーズを使用してください。
