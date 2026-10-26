@@ -37,6 +37,7 @@
         { name: "Image Scaler", aod: "AOD_ImageScaler", slug: "image-scaler", category: "P", comp: "15 Image Scaler" },
         { name: "Image Transform", aod: "AOD_ImageTransform", slug: "image-transform", category: "P", match: "ImageTransform", fresh: true },
         { name: "Mobius Transform", aod: "AOD_MobiusTransform", slug: "mobius-transform", category: "P", match: "MobiusTransform" },
+        { name: "Panorama Convert", aod: "AOD_PanoramaConvert", slug: "panorama-convert", category: "P", comp: "Panorama Convert Catalog" },
         { name: "Scatter Map", aod: "AOD_ScatterMap", slug: "scatter-map", category: "P", comp: "19 Scatter Map" },
         { name: "Singular Value Decompose", aod: "AOD_SingularValueDecompose", slug: "singular-value-decompose", category: "P", comp: "20 Singular Value Decompose" },
 

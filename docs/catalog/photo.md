@@ -285,3 +285,20 @@ AE標準Transformに近いアフィン変換を、多様な再構成フィルタ
 ### 補足
 
 低いkほど大きな構造だけが残り、圧縮・抽象化された見た目になります。
+
+## AOD_PanoramaConvert
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_PanoramaConvert](assets/previews/panorama-convert.png)
+
+正距円筒図法・キューブマップ・180°魚眼を相互変換します。プリコンポーズを追加せず、コンポジションのサイズとレイヤーのTransformを維持したまま、エフェクトの出力範囲だけを変更します。プレビューは上段が正距円筒の入力、下段が十字キューブマップの出力です。
+
+### パラメーター
+
+- `Input / Output`: Equirectangular、Cubemap 3x2／6x1／Cross 4x3、Fisheye 180を選択します。
+- `Output Width (0 = Input)`: 元解像度での出力幅。0は元レイヤー幅。高さは出力形式から自動計算し、各面が整数ピクセルになるよう幅を丸めます。
+- `Pan / Tilt / Roll`: 球面上の向きを変更します。
+- `Interpolation`、`Antialiasing`: Nearest／Bilinearと1／4／16サンプルを指定します。
+
+8／16／32bpcに対応します。コンポ外の描画は最終出力で切れます。キューブの面順・向き、入力条件、制約は[使い方](../../plugins/panorama-convert/README.md)を参照してください。
