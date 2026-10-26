@@ -285,3 +285,25 @@ AE標準Transformに近いアフィン変換を、多様な再構成フィルタ
 ### 補足
 
 低いkほど大きな構造だけが残り、圧縮・抽象化された見た目になります。
+
+## AOD_PanoramaReframe
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_PanoramaReframe](assets/previews/panorama-reframe.png)
+
+正距円筒・Cube Map・Equiangular Cube Map の360度パノラマを、透視・等距離魚眼・平行・アイソメトリック投影で通常の映像に変換します。プレビューには方位グリッドを持つ手続き生成のパノラマを使用しています。
+
+### パラメーター
+
+- `Input Projection`、`Cube Layout`: 適用レイヤーの入力画像の形式を指定します。パノラマ素材へ直接適用し、前段のエフェクトやマスクも反映します。出力サイズは適用レイヤーの寸法に従います。
+- `Output Projection`、`Field of View`、`Orthographic Width`: 投影方式と画角を指定します。
+- `Rotation Mode`: Euler XYZ／Quaternion WXYZを選択します。UI切り替え時は向きを保持します。
+- `Position X/Y/Z`、`Parallax Distance`: 環境画像を連続変形して疑似移動を作ります。距離を超えて移動しても球体の境界で画像が欠けません。
+- `Depth Map Layer`、`Depth Near/Far Distance`、`Invert Depth`: 深度レイヤーを指定すると、近い領域ほど視差を強めます。Noneで無効になります。カラーと同じ投影形式・配置の深度画像を使用します。実形状や隠れた領域の復元は行いません。
+- `Sphere Scale (%)`: 魚眼・平行・Isometricの球体表示を1〜1000%で拡大縮小します。画角・視差距離とは独立し、紫色のSizeハンドルでも調整できます。
+- `Sync AE Camera`、`Sync AE Position`: AEカメラの向き・Zoom、必要に応じて位置を同期します。
+- `Edges`、`Interpolation`、`Antialiasing`: 継ぎ目処理、補間、1/4/16サンプルのアンチエイリアスを指定します。
+- `Viewport Controls`: Euler／Quaternion共通のリグ。円内部からのドラッグ量に比例して回転し、円の外でも止まりません。円周でロール、水色の右ハンドルで画角、黄色の下ハンドルで視差の基準距離を調整します。回転感度も変更できます。
+
+面配置、座標系、Quaternion補間の制約は[詳細説明](../../plugins/panorama-reframe/README.md)を参照してください。
