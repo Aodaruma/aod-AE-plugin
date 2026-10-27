@@ -46,7 +46,7 @@
         { name: "Contour Generate", aod: "AOD_ContourGenerate", slug: "contour-generate", category: "A", match: "ContourGenerate" },
         { name: "Differential Generate", aod: "AOD_DifferentialGenerate", slug: "differential-generate", category: "A", match: "DifferentialGenerate" },
         { name: "Distance Generate", aod: "AOD_DistanceGenerate", slug: "distance-generate", category: "A", match: "DistanceGenerate" },
-        { name: "Eyedropper Mask", aod: "AOD_EyedropperMask", slug: "eyedropper-mask", category: "A", comp: "08 Eyedropper Mask" },
+        { name: "Eyedropper Mask", aod: "AOD_EyedropperMask", slug: "eyedropper-mask", category: "A", comp: "08 Eyedropper Mask", fresh: true },
         { name: "Image Relight", aod: "AOD_ImageRelight", slug: "image-relight", category: "A", match: "ImageRelight", fresh: true },
         { name: "Light Wrap", aod: "AOD_LightWrap", slug: "light-wrap", category: "A", comp: "16 Light Wrap" },
         { name: "Line Repaint", aod: "AOD_LineRepaint", slug: "line-repaint", category: "A", comp: "17 Line Repaint" },
