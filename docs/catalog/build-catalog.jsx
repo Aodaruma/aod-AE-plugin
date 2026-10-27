@@ -379,6 +379,7 @@
             bevelSource.layers.add(silhouette);
             layer = comp.layers.add(bevelSource);
             var bevelEffect = addEffect(layer, item.match);
+            setProperty(bevelEffect, "Interpolation", 3);
             setProperty(bevelEffect, "Bevel Width (px)", 28);
             setProperty(bevelEffect, "Height (px)", 22);
             setProperty(bevelEffect, "Height Blur (px)", 1.5);

@@ -12,11 +12,12 @@
 
 シルエットから編集可能な断面カーブでベベルを作り、材質とライティングを設定します。
 
-プレビューは[猫の透過シルエット](assets/sources/cat-silhouette.png)を入力に、SDF・内側ベベル・青い材質・左上のライトで生成しています。
+プレビューは[猫の透過シルエット](assets/sources/cat-silhouette.png)を入力に、SDF・Bスプラインの断面・内側ベベル・青い材質・左上のライトで生成しています。
 
 ### パラメーター
 
-- `Profile Curve`: クリックで点を追加、ドラッグで移動、Ctrl/Cmdクリックで削除。滑らかな補間・直線補間と5種類のプリセットを選べます。
+- `Profile Curve`: クリックで点を追加、ドラッグで移動。UIの枠から32px以上外へドラッグして離すか、Ctrl/Cmdクリックで中間点を削除できます。
+- `Interpolation`: 制御点で曲率まで滑らかにつなぐ`Smooth (B-Spline)`、全点を通る従来の`Shape Preserving (Legacy)`、直線の`Linear`。既存プロジェクトの見た目は保持します。5種類の断面プリセットも選べます。
 - `Surface Method`: SDF、Screened Poisson / Neumann、Screened Poisson / Dirichlet。
 - `Direction`、`Bevel Width`、`Contour Offset`、`Silhouette Blur`、`Height`、`Height Blur`: 内側／外側／両側の生成範囲と断面を調整します。
 - `Base Color`、`Diffuse`、`Roughness`、`Specular IOR Level`、`Metallic`、`IOR`、`Emission`: 簡易材質を設定します。

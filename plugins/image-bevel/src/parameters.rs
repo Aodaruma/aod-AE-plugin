@@ -1,4 +1,7 @@
-use crate::{curve::Curve, shading, surface, ui};
+use crate::{
+    curve::{Curve, Interpolation},
+    shading, surface, ui,
+};
 use after_effects::Error;
 use after_effects::pf::*;
 use utils::image::finite_or;
@@ -201,8 +204,8 @@ pub fn setup(params: &mut Parameters<Params>) -> Result<(), Error> {
                 p,
                 Params::Interpolation,
                 "Interpolation",
-                &["Smooth", "Linear"],
-                1,
+                &["Shape Preserving (Legacy)", "Linear", "Smooth (B-Spline)"],
+                3,
             )?;
             let mut arbitrary = ArbitraryDef::new();
             arbitrary.set_default(Curve::default())?;
@@ -381,7 +384,7 @@ impl Settings {
                     .value()
                     .clamp(1, 2000) as usize,
                 elevation: number(Params::Elevation)?.clamp(-2048.0, 2048.0),
-                smooth_curve: pop(Params::Interpolation)? == 1,
+                interpolation: Interpolation::from_popup(pop(Params::Interpolation)?),
                 scale,
                 curve: (*p.get(Params::Profile)?.as_arbitrary()?.value::<Curve>()?).sanitized(),
             },

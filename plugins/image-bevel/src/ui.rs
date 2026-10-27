@@ -1,9 +1,13 @@
-use crate::{Params, curve::Curve};
+use crate::{
+    Params,
+    curve::{Curve, Interpolation},
+};
 use ae::drawbot::{ColorRgba, PointF32, RectF32};
 use after_effects as ae;
 
 pub const WIDTH: u16 = 340;
-pub const HEIGHT: u16 = 224;
+pub const HEIGHT: u16 = 244;
+const DELETE_MARGIN: i32 = 32;
 
 #[derive(Clone, Copy)]
 struct Plot {
@@ -19,7 +23,7 @@ impl Plot {
             left: frame.left as f32 + 20.0,
             top: frame.top as f32 + 14.0,
             width: (frame.width() as f32 - 32.0).max(16.0),
-            height: (frame.height() as f32 - 58.0).max(16.0),
+            height: (frame.height() as f32 - 78.0).max(16.0),
         }
     }
     fn point(self, p: [f32; 2]) -> [f32; 2] {
@@ -33,6 +37,33 @@ impl Plot {
             (p.h as f32 - self.left) / self.width,
             1.0 - (p.v as f32 - self.top) / self.height,
         ]
+    }
+}
+
+fn apply_drag(
+    curve: &mut Curve,
+    k: usize,
+    frame: ae::Rect,
+    mouse: ae::Point,
+    released: bool,
+) -> bool {
+    if k >= curve.len() {
+        return false;
+    }
+    let outside = mouse.h <= frame.left - DELETE_MARGIN
+        || mouse.h >= frame.right + DELETE_MARGIN
+        || mouse.v <= frame.top - DELETE_MARGIN
+        || mouse.v >= frame.bottom + DELETE_MARGIN;
+    if k > 0 && k + 1 < curve.len() && outside {
+        // Keep the point while the mouse is down so returning to the UI cancels deletion.
+        if released {
+            curve.remove(k);
+        }
+        released
+    } else {
+        let [x, y] = Plot::new(frame).value(mouse);
+        curve.move_point(k, x, y);
+        true
     }
 }
 
@@ -92,10 +123,22 @@ pub fn event(
         ae::Event::Drag(_) => {
             let selection = event.continue_refcon(0);
             if selection > 0 {
-                let [x, y] = plot.value(event.screen_point());
-                curve.move_point(selection as usize - 1, x, y);
+                let changed = apply_drag(
+                    &mut curve,
+                    selection as usize - 1,
+                    event.current_frame(),
+                    event.screen_point(),
+                    event.last_time(),
+                );
                 event.set_send_drag(!event.last_time());
-                commit(params, event, curve)?;
+                if event.last_time() {
+                    event.set_continue_refcon(0, 0);
+                }
+                if changed {
+                    commit(params, event, curve)?;
+                } else {
+                    event.set_event_out_flags(ae::EventOutFlags::HANDLED_EVENT);
+                }
             }
         }
         _ => {}
@@ -160,11 +203,25 @@ fn draw(
         grid.line_to(plot.left + plot.width, plot.top + t * plot.height)?;
     }
     surface.stroke_path(&grid_pen, &grid)?;
-    let smooth = params.get(Params::Interpolation)?.as_popup()?.value() == 1;
+    let interpolation =
+        Interpolation::from_popup(params.get(Params::Interpolation)?.as_popup()?.value());
+    if interpolation == Interpolation::BSpline {
+        let mut polygon = supplier.new_path()?;
+        for k in 0..curve.len() {
+            let p = plot.point(curve.points[k]);
+            if k == 0 {
+                polygon.move_to(p[0], p[1])?;
+            } else {
+                polygon.line_to(p[0], p[1])?;
+            }
+        }
+        surface.stroke_path(&supplier.new_pen(&color(0.38, 0.42, 0.47), 1.0)?, &polygon)?;
+    }
+    let sampler = curve.sampler(interpolation);
     let mut path = supplier.new_path()?;
     for i in 0..=256 {
         let x = i as f32 / 256.0;
-        let p = plot.point([x, curve.sample(x, smooth)]);
+        let p = plot.point([x, sampler.sample(x)]);
         if i == 0 {
             path.move_to(p[0], p[1])?;
         } else {
@@ -194,6 +251,11 @@ fn draw(
             plot.left,
             plot.top + plot.height + 33.0,
         ),
+        (
+            "Drag 32 px beyond UI and release: delete",
+            plot.left,
+            plot.top + plot.height + 51.0,
+        ),
     ] {
         surface.draw_string(
             &brush,
@@ -207,4 +269,61 @@ fn draw(
     }
     event.set_event_out_flags(ae::EventOutFlags::HANDLED_EVENT);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame() -> ae::Rect {
+        ae::Rect {
+            left: 100,
+            top: 200,
+            right: 440,
+            bottom: 444,
+        }
+    }
+
+    #[test]
+    fn drag_deletion_requires_release_beyond_the_ui_margin() {
+        for mouse in [
+            ae::Point { h: 68, v: 300 },
+            ae::Point { h: 472, v: 300 },
+            ae::Point { h: 270, v: 168 },
+            ae::Point { h: 270, v: 476 },
+        ] {
+            let mut curve = Curve::default();
+            let original = curve;
+            assert!(!apply_drag(&mut curve, 2, frame(), mouse, false));
+            assert_eq!(curve, original);
+            assert!(apply_drag(&mut curve, 2, frame(), mouse, true));
+            assert_eq!(curve.len(), original.len() - 1);
+            assert!(curve.valid());
+        }
+    }
+
+    #[test]
+    fn returning_inside_cancels_deletion_and_endpoints_are_protected() {
+        let outside = ae::Point { h: 600, v: 600 };
+        let mut curve = Curve::default();
+        let count = curve.len();
+        apply_drag(&mut curve, 2, frame(), outside, false);
+        apply_drag(&mut curve, 2, frame(), ae::Point { h: 280, v: 290 }, true);
+        assert_eq!(curve.len(), count);
+        for k in [0, count - 1] {
+            apply_drag(&mut curve, k, frame(), outside, true);
+            assert_eq!(curve.len(), count);
+            assert!(curve.valid());
+        }
+        for mouse in [
+            ae::Point { h: 69, v: 300 },
+            ae::Point { h: 471, v: 300 },
+            ae::Point { h: 270, v: 169 },
+            ae::Point { h: 270, v: 475 },
+        ] {
+            apply_drag(&mut curve, 2, frame(), mouse, true);
+            assert_eq!(curve.len(), count);
+            assert!(curve.valid());
+        }
+    }
 }

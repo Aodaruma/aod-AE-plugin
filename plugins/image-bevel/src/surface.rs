@@ -1,4 +1,4 @@
-use crate::curve::Curve;
+use crate::curve::{Curve, Interpolation};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
@@ -12,7 +12,7 @@ pub struct Settings {
     pub smooth_radius: f32,
     pub iterations: usize,
     pub elevation: f32,
-    pub smooth_curve: bool,
+    pub interpolation: Interpolation,
     pub scale: [f32; 2],
     pub curve: Curve,
 }
@@ -30,7 +30,7 @@ impl Default for Settings {
             smooth_radius: 8.0,
             iterations: 200,
             elevation: 16.0,
-            smooth_curve: true,
+            interpolation: Interpolation::BSpline,
             scale: [1.0; 2],
             curve: Curve::default(),
         }
@@ -270,15 +270,10 @@ pub fn build<E>(
     } else {
         profile
     };
+    let sampler = s.curve.sampler(s.interpolation);
     let mut height: Vec<f32> = profile
         .iter()
-        .map(|&t| {
-            if has_shape {
-                s.curve.sample(t, s.smooth_curve)
-            } else {
-                0.0
-            }
-        })
+        .map(|&t| if has_shape { sampler.sample(t) } else { 0.0 })
         .collect();
     blur(&mut height, w, h, s.height_blur, s.scale);
     cancel()?;

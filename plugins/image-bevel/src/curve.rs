@@ -3,6 +3,113 @@ use serde::{Deserialize, Serialize};
 pub const MAX_POINTS: usize = 16;
 const GAP: f32 = 0.002;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Interpolation {
+    ShapePreserving,
+    Linear,
+    BSpline,
+}
+
+impl Interpolation {
+    pub fn from_popup(value: i32) -> Self {
+        // Keep the original popup IDs so saved projects retain their appearance.
+        match value {
+            2 => Self::Linear,
+            3 => Self::BSpline,
+            _ => Self::ShapePreserving,
+        }
+    }
+}
+
+pub struct Sampler<'a> {
+    curve: &'a Curve,
+    interpolation: Interpolation,
+    segments: Vec<CubicSegment>,
+}
+
+#[derive(Clone, Copy)]
+struct CubicSegment {
+    coefficients: [[f64; 4]; 2],
+}
+
+impl CubicSegment {
+    fn value(&self, axis: usize, t: f64) -> f64 {
+        let [a, b, c, d] = self.coefficients[axis];
+        ((a * t + b) * t + c) * t + d
+    }
+
+    fn derivative(&self, axis: usize, t: f64) -> f64 {
+        let [a, b, c, _] = self.coefficients[axis];
+        (3.0 * a * t + 2.0 * b) * t + c
+    }
+}
+
+impl Sampler<'_> {
+    pub fn sample(&self, x: f32) -> f32 {
+        if self.interpolation != Interpolation::BSpline {
+            return self
+                .curve
+                .sample(x, self.interpolation == Interpolation::ShapePreserving);
+        }
+        let x = if x.is_finite() {
+            x.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        if x == 0.0 {
+            return self.curve.points[0][1];
+        }
+        if x == 1.0 {
+            return self.curve.points[self.curve.len() - 1][1];
+        }
+        let x = f64::from(x);
+        let segment = self
+            .segments
+            .iter()
+            .find(|s| x <= s.value(0, 1.0))
+            .unwrap_or_else(|| self.segments.last().unwrap());
+        let mut lo = 0.0;
+        let mut hi = 1.0;
+        let mut t = (x - segment.value(0, 0.0)) / (segment.value(0, 1.0) - segment.value(0, 0.0));
+        // Ordered control-point X values make x(t) strictly increasing. Invert it
+        // with safeguarded Newton steps, without a piecewise-linear lookup table.
+        for _ in 0..32 {
+            let error = segment.value(0, t) - x;
+            if error.abs() < 1e-12 {
+                break;
+            }
+            if error < 0.0 {
+                lo = t;
+            } else {
+                hi = t;
+            }
+            let next = t - error / segment.derivative(0, t);
+            t = if next > lo && next < hi {
+                next
+            } else {
+                (lo + hi) * 0.5
+            };
+        }
+        segment.value(1, t).clamp(0.0, 1.0) as f32
+    }
+}
+
+fn spline_point(curve: &Curve, knots: &[f64], degree: usize, span: usize, u: f64) -> [f64; 2] {
+    let mut d = [[0.0; 2]; 4];
+    for (j, point) in d.iter_mut().enumerate().take(degree + 1) {
+        *point = curve.points[span - degree + j].map(f64::from);
+    }
+    // de Boor evaluation of a clamped B-spline (equivalently, unit-weight NURBS).
+    for r in 1..=degree {
+        for j in (r..=degree).rev() {
+            let i = span - degree + j;
+            let alpha = (u - knots[i]) / (knots[i + degree + 1 - r] - knots[i]);
+            d[j] = std::array::from_fn(|axis| (1.0 - alpha) * d[j - 1][axis] + alpha * d[j][axis]);
+        }
+    }
+    d[degree]
+}
+
 // Fixed storage keeps AE handles self-contained. The version is part of the saved format.
 #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct Curve {
@@ -81,6 +188,51 @@ impl Curve {
 
     pub fn len(&self) -> usize {
         self.count as usize
+    }
+
+    pub fn sampler(&self, interpolation: Interpolation) -> Sampler<'_> {
+        let mut segments = Vec::new();
+        if interpolation == Interpolation::BSpline {
+            let n = self.len();
+            let degree = (n - 1).min(3);
+            let spans = n - degree;
+            let mut knots = [0.0; MAX_POINTS + 4];
+            for (i, knot) in knots.iter_mut().enumerate().take(n + degree + 1) {
+                *knot = if i >= n {
+                    1.0
+                } else {
+                    i.saturating_sub(degree) as f64 / spans as f64
+                };
+            }
+            for k in 0..spans {
+                let samples: [[f64; 2]; 4] = std::array::from_fn(|j| {
+                    spline_point(
+                        self,
+                        &knots,
+                        degree,
+                        k + degree,
+                        (k as f64 + j as f64 / 3.0) / spans as f64,
+                    )
+                });
+                // Each knot span is a polynomial of degree <= 3. Compile it once
+                // for both the editor and rendering, preserving C2 continuity.
+                let coefficients = std::array::from_fn(|axis| {
+                    let [p0, p1, p2, p3] = samples.map(|p| p[axis]);
+                    [
+                        4.5 * (p3 - 3.0 * p2 + 3.0 * p1 - p0),
+                        4.5 * (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3),
+                        (-11.0 * p0 + 18.0 * p1 - 9.0 * p2 + 2.0 * p3) * 0.5,
+                        p0,
+                    ]
+                });
+                segments.push(CubicSegment { coefficients });
+            }
+        }
+        Sampler {
+            curve: self,
+            interpolation,
+            segments,
+        }
     }
 
     pub fn sample(&self, x: f32, smooth: bool) -> f32 {
@@ -245,5 +397,92 @@ mod tests {
         a.remove(i);
         assert_eq!(a, Curve::preset(1));
         assert!(a.interpolate(&Curve::preset(4), 0.5).valid());
+    }
+
+    #[test]
+    fn spline_matches_linear_quadratic_and_cubic_bezier_cases() {
+        let line = Curve::preset(1);
+        let sampler = line.sampler(Interpolation::BSpline);
+        assert!((sampler.sample(0.37) - 0.37).abs() < 1e-6);
+        let mut quadratic = line;
+        quadratic.points[1][1] = 0.0;
+        quadratic.insert(0.5, 1.0).unwrap();
+        let sampler = quadratic.sampler(Interpolation::BSpline);
+        assert_eq!(sampler.sample(0.0), 0.0);
+        assert_eq!(sampler.sample(1.0), 0.0);
+        assert!((sampler.sample(0.5) - 0.5).abs() < 1e-6);
+        let mut cubic = line;
+        cubic.insert(1.0 / 3.0, 1.0).unwrap();
+        cubic.insert(2.0 / 3.0, 0.0).unwrap();
+        let sampler = cubic.sampler(Interpolation::BSpline);
+        for i in 0..=100 {
+            let x = i as f32 / 100.0;
+            let expected = 3.0 * x - 6.0 * x * x + 4.0 * x * x * x;
+            assert!((sampler.sample(x) - expected).abs() < 1e-6);
+        }
+        assert_eq!(sampler.sample(f32::NAN), 0.0);
+    }
+
+    #[test]
+    fn spline_has_continuous_slope_and_curvature_at_internal_knots() {
+        let mut curve = Curve::preset(4);
+        curve.move_point(1, 0.08, 0.7);
+        curve.move_point(2, 0.25, 0.2);
+        let sampler = curve.sampler(Interpolation::BSpline);
+        let derivatives = |s: &CubicSegment, t: f64| {
+            let dx = s.derivative(0, t);
+            let dy = s.derivative(1, t);
+            let ddx = 6.0 * s.coefficients[0][0] * t + 2.0 * s.coefficients[0][1];
+            let ddy = 6.0 * s.coefficients[1][0] * t + 2.0 * s.coefficients[1][1];
+            [dy / dx, (ddy * dx - dy * ddx) / dx.powi(3)]
+        };
+        for pair in sampler.segments.windows(2) {
+            assert!((pair[0].value(1, 1.0) - pair[1].value(1, 0.0)).abs() < 1e-10);
+            for (left, right) in derivatives(&pair[0], 1.0)
+                .into_iter()
+                .zip(derivatives(&pair[1], 0.0))
+            {
+                assert!((left - right).abs() < 1e-8);
+            }
+        }
+    }
+
+    #[test]
+    fn spline_inverts_uneven_control_points_without_overshoot() {
+        for count in 2..=MAX_POINTS {
+            let mut curve = Curve::preset(1);
+            for i in 1..count - 1 {
+                curve
+                    .insert(i as f32 * 0.0021, (i % 3) as f32 * 0.5)
+                    .unwrap();
+            }
+            let sampler = curve.sampler(Interpolation::BSpline);
+            for segment in &sampler.segments {
+                for i in 0..=32 {
+                    let t = i as f64 / 32.0;
+                    let x = segment.value(0, t) as f32;
+                    let expected = segment.value(1, t) as f32;
+                    assert!((sampler.sample(x) - expected).abs() < 2e-6);
+                }
+            }
+            for i in 0..=1000 {
+                assert!((0.0..=1.0).contains(&sampler.sample(i as f32 / 1000.0)));
+            }
+            assert_eq!(sampler.sample(0.0), curve.points[0][1]);
+            assert_eq!(sampler.sample(1.0), curve.points[count - 1][1]);
+        }
+    }
+
+    #[test]
+    fn saved_interpolation_ids_keep_the_original_rendering() {
+        let curve = Curve::preset(4);
+        for (id, smooth) in [(1, true), (2, false)] {
+            let sampler = curve.sampler(Interpolation::from_popup(id));
+            for i in 0..=1000 {
+                let x = i as f32 / 1000.0;
+                assert_eq!(sampler.sample(x), curve.sample(x, smooth));
+            }
+        }
+        assert_eq!(Interpolation::from_popup(3), Interpolation::BSpline);
     }
 }

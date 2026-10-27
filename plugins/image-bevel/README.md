@@ -6,7 +6,7 @@ Creates curve-shaped bevels from silhouettes with configurable materials and lig
 
 ![プレビュー](../../docs/catalog/assets/previews/image-bevel.png)
 
-プレビューは[猫の透過シルエット](../../docs/catalog/assets/sources/cat-silhouette.png)からSDFでベベルを作り、青い材質と左上のライトを適用したAEの出力です。
+プレビューは[猫の透過シルエット](../../docs/catalog/assets/sources/cat-silhouette.png)からSDFとBスプラインの断面でベベルを作り、青い材質と左上のライトを適用したAEの出力です。
 
 ## 基本操作
 
@@ -19,10 +19,19 @@ Creates curve-shaped bevels from silhouettes with configurable materials and lig
 ## カーブUI
 
 - 空白をクリックして点を追加、点をドラッグして移動します。最大16点です。
-- Ctrl（macOSではCmd）を押しながら中間点をクリックすると削除します。両端点は縦方向のみ移動できます。
-- `Interpolation`: 極値をはみ出さない滑らかな補間／直線補間。
+- 中間点をカスタムUIの枠から32px以上外へドラッグして離すと削除します。離す前に枠内へ戻せば削除されません。Ctrl（macOSではCmd）を押しながらクリックする操作でも削除できます。
+- 両端点は削除できず、縦方向のみ移動できます。
+- `Interpolation`: 下表の3方式を選べます。新規適用時は`Smooth (B-Spline)`です。
 - `Profile Preset`: Linear、Round、Concave、Ring、Steps。選択後に `Apply` を押すとカーブへ反映します。
 - カーブはAEのArbitraryパラメーターとして保存され、Undo・プロジェクト保存・キーフレーム補間に対応します。点数が異なるキーフレーム間は16点に再サンプリングして補間します。正確な形状補間には同じ点数を推奨します。
+
+| Interpolation | 動作 |
+|---|---|
+| Smooth (B-Spline) | 両端を通る3次Bスプライン。中間点は曲線を引っ張る制御点で、必ずしも通過しません。灰色の線が制御点の並び、青い線が実際の断面です。内部のつなぎ目で傾き・曲率が連続します。3点なら2次、2点なら直線になります。 |
+| Shape Preserving (Legacy) | 旧Smoothと同じ補間。全点を通り、山・谷の高さやゼロの平坦部を保持します。傾きは連続ですが、つなぎ目の曲率は連続とは限りません。 |
+| Linear | 全点を直線でつなぎます。 |
+
+Bスプラインは全制御点の重みを1にしたNURBSと同等です。重みやBezierハンドルの個別編集はありません。既存プロジェクトの旧Smooth／Linearは同じ描画を保持します。新方式を試す場合は`Interpolation`を`Smooth (B-Spline)`へ切り替えてください。ゼロの平坦部を厳密に残したい断面では`Shape Preserving (Legacy)`または`Linear`を使用します。
 
 ## シルエットと高さ
 
@@ -94,4 +103,4 @@ python plugins/image-bevel/tests/verify_windows_pipl.py target/release/AOD_Image
 
 画像検証にはNumPyとPillowを使用します。32bpcの`saveFrameToPng`には保存時の変換が入るため、数値比較は`sampleImage`から取得したRGBA走査線も使います。個別プレビューは16bpcです。WindowsのPiPLはバイナリファイルとして埋め込み、日本語RCコンパイラによるフラグ値の文字コード変換を回避しています。
 
-2026-10-14にWindows／After Effects 25.6.6で確認しました。Rust単体テスト12件、fmt、Clippy、PiPLの全13プロパティ、AEの19描画条件（8/16/32bpc・アルファ3方式・内外方向・境界条件・法線・発光・HDR・屈折）が通過しています。カーブUIの追加・ドラッグ・Undo・プリセット適用を操作し、編集後の保存／再読込では出力PNGの完全一致も確認しました。Ctrl/Cmdクリックによる削除とカーブのキーフレーム補間は単体テストのみ確認済みです。macOS／他のAEバージョンは未検証です。
+2026-10-27にWindows／After Effects 25.6.6で確認しました。Rust単体テスト18件、fmt、Clippy、PiPLの全13プロパティ、新しいBスプラインでのAEの19描画条件（8/16/32bpc・アルファ3方式・内外方向・境界条件・法線・発光・HDR・屈折）が通過しています。旧Smoothは更新前後のPNGが完全一致しています。BスプラインUIで領域外ドラッグによる中間点削除、端点の削除防止、Undoを操作し、Undo後と保存／再読込後の出力PNGの完全一致も確認しました。離す前に枠内へ戻す取消、Ctrl/Cmdクリックによる削除、キーフレーム補間は単体テストのみ確認済みです。macOS／他のAEバージョンは未検証です。
