@@ -4,6 +4,26 @@
 
 [![P分類の概要グリッド](assets/overview/photo.png)](assets/overview/photo.png)
 
+## AOD_CodecMap
+
+- **分類:** P：一般写真・連続階調画像
+- **プレビュー:** 左半分は黒マップで保持、右半分は白マップで強く圧縮。MPEG-4 Part 2、Quantizer=20、Map Isolated。
+
+![AOD_CodecMap](assets/previews/codec-map.png)
+
+H.264・VP9・MPEG-4 Part 2の圧縮と適用範囲をマップで制御します。未来参照は初期OFF。キーフレーム可能なI/Bフレーム除去でデータモッシュも作れます。
+
+### パラメーター
+
+- `Style`: Compression / Blocks / Datamoshから質感を選びます。
+- `Compression`: 共通の0〜100で圧縮の強さを調整。0は原画を保持します。
+- `Datamosh`: キーフレーム可能なIフレーム除去。
+- `Area` / `Map Layer`: 全体またはマップで適用範囲を指定します。
+- `Mix`: 原画との合成量。
+- `Advanced`: Codec、Motion、Map、Diagnostics。固有の品質値、未来参照、Bフレーム除去、メモリ上限などをまとめています。
+
+v0.3では入力状態によるキャッシュ、連続フレームの圧縮セッション再利用、GOP=1の保持画像経路で再計算を削減します。軽量プレビューにはAEの1/2・1/4解像度を使用します。
+
 ## AOD_ColorAjust
 
 - **分類:** P：一般写真・連続階調画像

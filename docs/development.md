@@ -30,6 +30,8 @@ cargo new-plugin --name example-effect --values-file values.toml --silent
 
 ## ビルドとインストール
 
+`AOD_CodecMap`の実装・依存ランタイム・検証方法は[プラグインREADME](../plugins/codec-map/README.md)、時間依存とROIの方針は[設計書](design/codec-map.md)を参照してください。
+
 Rust / cargo、cargo-generate、just を使用します。全体は `just build` / `just release`、単体は `just -f plugins/<name>/Justfile build` です。
 これらは既定で Adobe Common Plug-ins フォルダーへインストールします。ビルド検証だけの場合は次のようにインストールを無効にします。
 
