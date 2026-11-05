@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MPL-2.0
+// Resolve leaves recursively: v0.3 uses nested groups and stable disk IDs.
+function codecParam(effect, legacyName) {
+    var aliases = {"Drop I-Frames":"Datamosh", "GOP Length":"Refresh Interval", "Temporal Mode":"Frame Mode", "Map Source":"Area", "Compression Map":"Map Layer", "Map Channel":"Channel", "Invert Map":"Invert", "Map Gamma":"Gamma", "Black QP Offset":"Dark Area Bias", "White QP Offset":"Light Area Bias", "Output":"Map Behavior", "Preview":"Display", "Replay Memory (MiB)":"Working Memory (MiB)"};
+    var quality = {"Base CRF":0,"VP9 CQ":1,"MPEG-4 Quantizer":2};
+    var name = aliases[legacyName] || legacyName;
+    var nth = 0;
+    if (quality.hasOwnProperty(legacyName)) {name="Codec Quality";nth=quality[legacyName];}
+    var found=[];
+    function visit(group) {
+        for(var i=1;i<=group.numProperties;i++) {
+            var p=group.property(i);
+            if(p.propertyType===PropertyType.PROPERTY) {if(p.propertyValueType!==PropertyValueType.NO_VALUE && p.name===name)found.push(p);}
+            else {visit(p);}
+        }
+    }
+    visit(effect);
+    if(!found[nth])throw new Error("CodecMap control missing: "+legacyName);
+    return found[nth];
+}

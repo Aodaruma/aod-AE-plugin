@@ -3,6 +3,7 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
 $output = Join-Path $root 'target/codec-map-codecs'
+if ((Get-Content -LiteralPath (Join-Path $output 'host-report.txt') -Raw) -notmatch 'Completed\.') { throw 'AE codec test did not complete' }
 Add-Type -AssemblyName System.Drawing
 $report = [Collections.Generic.List[string]]::new()
 function Compare-Images([string]$Reference, [string]$Result, [string]$Rule) {

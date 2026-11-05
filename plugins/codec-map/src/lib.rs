@@ -6,7 +6,9 @@ mod codec;
 mod compute_ffi;
 mod core;
 mod render_error;
+mod stream;
 mod temporal;
+mod ui;
 
 use after_effects as ae;
 use core::{MapSettings, Rgba};
@@ -37,6 +39,19 @@ enum Params {
     DropI,
     DropB,
     ReplayMemory,
+    Style,
+    Strength,
+    QualityMode,
+    AdvancedStart,
+    AdvancedEnd,
+    CodecStart,
+    CodecEnd,
+    MotionStart,
+    MotionEnd,
+    MapStart,
+    MapEnd,
+    DiagnosticsStart,
+    DiagnosticsEnd,
 }
 
 #[derive(Default)]
@@ -52,7 +67,11 @@ const PLUGIN_DESCRIPTION: &str =
 struct Plan {
     times: Vec<i32>,
     maps: Vec<MapSettings>,
+    frame_keys: Vec<[u8; 16]>,
+    current_map_settings: MapSettings,
+    roi: bool,
     map_enabled: bool,
+    current_needs_map: bool,
     codec: codec::Codec,
     quality: f64,
     use_b: bool,
@@ -99,153 +118,7 @@ impl AdobePluginGlobal for Plugin {
         _: InData,
         _: OutData,
     ) -> Result<(), Error> {
-        use ae::{ParamFlag as F, ParamUIFlags as U};
-        let fixed = || F::CANNOT_TIME_VARY | F::CANNOT_INTERP;
-        params.add_with_flags(
-            Params::Crf,
-            "Base CRF",
-            slider(28.0, 1.0, 51.0),
-            fixed(),
-            U::NONE,
-        )?;
-        params.add_with_flags(
-            Params::Mode,
-            "Temporal Mode",
-            popup(&["Past Only", "Independent"]),
-            fixed() | F::SUPERVISE,
-            U::NONE,
-        )?;
-        params.add_with_flags(
-            Params::Gop,
-            "GOP Length",
-            ae::SliderDef::setup(|p| {
-                p.set_default(12)
-                    .set_value(12)
-                    .set_valid_min(1)
-                    .set_valid_max(60)
-                    .set_slider_min(1)
-                    .set_slider_max(60);
-            }),
-            fixed() | F::SUPERVISE,
-            U::NONE,
-        )?;
-        params.add_with_flags(
-            Params::MapSource,
-            "Map Source",
-            popup(&["Uniform", "Layer"]),
-            fixed() | F::SUPERVISE,
-            U::NONE,
-        )?;
-        params.add(Params::MapLayer, "Compression Map", ae::LayerDef::new())?;
-        params.add(
-            Params::Channel,
-            "Map Channel",
-            popup(&["Luma", "Red", "Green", "Blue", "Alpha"]),
-        )?;
-        params.add(
-            Params::Invert,
-            "Invert Map",
-            ae::CheckBoxDef::setup(|p| {
-                p.set_default(false).set_value(false);
-            }),
-        )?;
-        params.add(Params::Gamma, "Map Gamma", slider(1.0, 0.1, 10.0))?;
-        params.add(Params::Black, "Black QP Offset", slider(0.0, -24.0, 24.0))?;
-        params.add(Params::White, "White QP Offset", slider(12.0, -24.0, 24.0))?;
-        params.add(
-            Params::Output,
-            "Output",
-            popup(&["Map Isolated", "Codec Result"]),
-        )?;
-        params.add(Params::Mix, "Mix", slider(100.0, 0.0, 100.0))?;
-        params.add(
-            Params::Preview,
-            "Preview",
-            popup(&["Result", "Map", "Requested QP Offset", "Difference"]),
-        )?;
-        params.add_with_flags(
-            Params::Reset,
-            "Cache",
-            ae::ButtonDef::setup(|p| {
-                p.set_label("Reset Cache");
-            }),
-            fixed() | F::SUPERVISE,
-            U::NONE,
-        )?;
-        params.add_with_flags(
-            Params::Generation,
-            "Cache Generation",
-            ae::SliderDef::setup(|p| {
-                p.set_default(0)
-                    .set_value(0)
-                    .set_valid_min(0)
-                    .set_valid_max(i32::MAX)
-                    .set_slider_min(0)
-                    .set_slider_max(i32::MAX);
-            }),
-            fixed(),
-            U::INVISIBLE,
-        )?;
-        // Append IDs to preserve existing AE projects and expressions.
-        params.add_with_flags(
-            Params::Codec,
-            "Codec",
-            popup(&["H.264 (libx264)", "VP9 (libvpx)", "MPEG-4 Part 2"]),
-            fixed() | F::SUPERVISE,
-            U::NONE,
-        )?;
-        params.add_with_flags(
-            Params::Vp9Quality,
-            "VP9 CQ",
-            slider(35.0, 0.0, 63.0),
-            fixed(),
-            U::NONE,
-        )?;
-        params.add_with_flags(
-            Params::Mpeg4Quality,
-            "MPEG-4 Quantizer",
-            slider(8.0, 1.0, 31.0),
-            fixed(),
-            U::NONE,
-        )?;
-        params.add_with_flags(
-            Params::Future,
-            "Allow Future Frames",
-            ae::CheckBoxDef::setup(|p| {
-                p.set_default(false).set_value(false);
-            }),
-            fixed() | F::SUPERVISE,
-            U::NONE,
-        )?;
-        params.add(
-            Params::DropI,
-            "Drop I-Frames",
-            ae::CheckBoxDef::setup(|p| {
-                p.set_default(false).set_value(false);
-            }),
-        )?;
-        params.add(
-            Params::DropB,
-            "Drop B-Frames",
-            ae::CheckBoxDef::setup(|p| {
-                p.set_default(false).set_value(false);
-            }),
-        )?;
-        params.add_with_flags(
-            Params::ReplayMemory,
-            "Replay Memory (MiB)",
-            ae::SliderDef::setup(|p| {
-                p.set_default(1024)
-                    .set_value(1024)
-                    .set_valid_min(64)
-                    .set_valid_max(8192)
-                    .set_slider_min(64)
-                    .set_slider_max(8192);
-            }),
-            fixed(),
-            U::NONE,
-        )?;
-        Ok(())
+        ui::setup(params)
     }
 
     fn handle_command(
@@ -268,12 +141,15 @@ impl AdobePluginGlobal for Plugin {
                 output.set_out_flag2(OutFlags2::SupportsSmartRender, true);
                 output.set_out_flag2(OutFlags2::FloatColorAware, true);
                 output.set_out_flag2(OutFlags2::AutomaticWideTimeInput, true);
+                output.set_out_flag2(OutFlags2::ParamGroupStartCollapsedFlag, true);
                 self.cache_registered = cache::register(input)?;
                 if let Ok(suite) = ae::aegp::suites::Utility::new() {
                     self.aegp_id = suite.register_with_aegp("AOD_CodecMap").ok();
                 }
             }
             ae::Command::GlobalSetdown => {
+                stream::clear();
+                codec::unload_runtimes();
                 if self.cache_registered {
                     cache::unregister(input);
                     self.cache_registered = false;
@@ -282,12 +158,14 @@ impl AdobePluginGlobal for Plugin {
             ae::Command::UpdateParamsUi => update_ui(input, self.aegp_id, params)?,
             ae::Command::UserChangedParam { param_index } => {
                 if Some(param_index) == params.index(Params::Reset) {
+                    stream::clear();
                     let mut generation = params.get_mut(Params::Generation)?;
                     let value = generation.as_slider()?.value().wrapping_add(1) & i32::MAX;
                     generation.as_slider_mut()?.set_value(value);
                     generation.set_value_changed();
                     output.set_out_flag(OutFlags::RefreshUi, true);
                 }
+                ui::changed(param_index, params)?;
                 update_ui(input, self.aegp_id, params)?;
             }
             ae::Command::SmartPreRender { mut extra } => {
@@ -344,6 +222,8 @@ fn update_ui(
             (Params::Crf, codec != codec::Codec::H264),
             (Params::Vp9Quality, codec != codec::Codec::Vp9),
             (Params::Mpeg4Quality, codec != codec::Codec::Mpeg4),
+            (Params::MapLayer, choice(params, Params::MapSource)? != 2),
+            (Params::DropI, independent),
         ] {
             if let Some(index) = params.index(id)
                 && let Ok(stream) = effect.new_stream_by_index(plugin_id, index as i32)
@@ -358,6 +238,16 @@ fn update_ui(
     }
     let map_enabled = choice(params, Params::MapSource)? == 2;
     for (id, disabled) in [
+        (Params::Strength, choice(params, Params::QualityMode)? == 2),
+        (Params::Crf, choice(params, Params::QualityMode)? != 2),
+        (
+            Params::Vp9Quality,
+            choice(params, Params::QualityMode)? != 2,
+        ),
+        (
+            Params::Mpeg4Quality,
+            choice(params, Params::QualityMode)? != 2,
+        ),
         (Params::Gop, independent),
         (Params::MapLayer, !map_enabled),
         (Params::Channel, !map_enabled),
@@ -378,6 +268,30 @@ fn update_ui(
     Ok(())
 }
 
+fn map_settings(
+    params: &Parameters<Params>,
+    time: i32,
+    input: InData,
+) -> Result<MapSettings, Error> {
+    let at = |id| {
+        params.checkout_at(
+            id,
+            Some(time),
+            Some(input.time_step()),
+            Some(input.time_scale()),
+        )
+    };
+    Ok(MapSettings {
+        channel: (at(Params::Channel)?.as_popup()?.value() - 1) as usize,
+        invert: at(Params::Invert)?.as_checkbox()?.value(),
+        gamma: at(Params::Gamma)?.as_float_slider()?.value() as f32,
+        black: at(Params::Black)?.as_float_slider()?.value() as f32,
+        white: at(Params::White)?.as_float_slider()?.value() as f32,
+    })
+}
+fn digest(h: &blake3::Hasher) -> [u8; 16] {
+    h.finalize().as_bytes()[..16].try_into().unwrap()
+}
 fn pre_render(
     input: InData,
     params: &Parameters<Params>,
@@ -390,10 +304,16 @@ fn pre_render(
         && !independent
         && gop >= 3
         && params.get(Params::Future)?.as_checkbox()?.value();
-    let mix = (float(params, Params::Mix)? / 100.0) as f32;
+    let simple = choice(params, Params::QualityMode)? == 1;
+    let strength = float(params, Params::Strength)?;
+    let mix = if simple && strength == 0.0 {
+        0.0
+    } else {
+        (float(params, Params::Mix)? / 100.0) as f32
+    };
     let preview = choice(params, Params::Preview)?;
     let decode = preview != 2 && preview != 3 && mix != 0.0;
-    let replay = temporal::plan(
+    let mut replay = temporal::plan(
         input.current_time(),
         input.time_step(),
         gop,
@@ -415,11 +335,25 @@ fn pre_render(
             ))
         },
     )?;
-    let times = replay.times;
+    // All packets after the retained seed are I pictures and will be discarded.
+    if decode && !independent && gop == 1 {
+        replay.times.truncate(1);
+        replay.controls.truncate(1);
+        replay.target = 0;
+    }
     let map_enabled = choice(params, Params::MapSource)? == 2;
+    let isolated = choice(params, Params::Output)? == 1;
+    let roi =
+        codec != codec::Codec::Mpeg4 && (codec != codec::Codec::Vp9 || (!independent && gop > 1));
+    let current_map_settings = map_settings(params, input.current_time(), input)?;
+    let current_needs_map = map_enabled
+        && (preview == 2
+            || preview == 3
+            || (decode
+                && (isolated
+                    || (roi && current_map_settings.black != current_map_settings.white))));
+    let map_index = params.index(Params::MapLayer).ok_or(Error::InvalidParms)? as i32;
     let mut request = extra.output_request();
-    // A codec frame is a full image; AE may ask for a tile or a preview ROI.
-    // Advertise the full result explicitly instead of claiming it fits that ROI.
     extra.set_returns_extra_pixels(true);
     request.channel_mask = ae::sys::PF_ChannelMask_ARGB as _;
     request.rect = ae::sys::PF_LRect {
@@ -429,52 +363,96 @@ fn pre_render(
         bottom: i32::MAX / 2,
     };
     request.preserve_rgb_of_zero_alpha = 1;
-    let mut maps = Vec::with_capacity(times.len());
-    for (i, &time) in times.iter().enumerate() {
-        let result = extra.callbacks().checkout_layer(
+    let result = extra.callbacks().checkout_layer(
+        0,
+        1,
+        &request,
+        input.current_time(),
+        input.time_step(),
+        input.time_scale(),
+    )?;
+    extra.union_result_rect(result.result_rect.into());
+    extra.union_max_result_rect(result.max_result_rect.into());
+    if current_needs_map {
+        extra.callbacks().checkout_layer(
+            map_index,
+            2,
+            &request,
+            input.current_time(),
+            input.time_step(),
+            input.time_scale(),
+        )?;
+    }
+    let mut maps = Vec::with_capacity(replay.times.len());
+    let mut frame_keys = Vec::with_capacity(replay.times.len());
+    for (i, &time) in replay.times.iter().enumerate() {
+        input.interact().abort()?;
+        let settings = map_settings(params, time, input)?;
+        let needs_map = map_enabled && roi && settings.black != settings.white;
+        extra.callbacks().checkout_layer(
             0,
-            (i * 2) as i32,
+            (10 + i * 2) as i32,
             &request,
             time,
             input.time_step(),
             input.time_scale(),
         )?;
-        if i == replay.target {
-            extra.union_result_rect(result.result_rect.into());
-            extra.union_max_result_rect(result.max_result_rect.into());
-        }
-        if map_enabled {
+        if needs_map {
             extra.callbacks().checkout_layer(
-                params.index(Params::MapLayer).ok_or(Error::InvalidParms)? as i32,
-                (i * 2 + 1) as i32,
+                map_index,
+                (11 + i * 2) as i32,
                 &request,
                 time,
                 input.time_step(),
                 input.time_scale(),
             )?;
         }
-        let at = |id| {
-            params.checkout_at(
-                id,
-                Some(time),
-                Some(input.time_step()),
-                Some(input.time_scale()),
-            )
-        };
-        maps.push(MapSettings {
-            channel: (at(Params::Channel)?.as_popup()?.value() - 1) as usize,
-            invert: at(Params::Invert)?.as_checkbox()?.value(),
-            gamma: at(Params::Gamma)?.as_float_slider()?.value() as f32,
-            black: at(Params::Black)?.as_float_slider()?.value() as f32,
-            white: at(Params::White)?.as_float_slider()?.value() as f32,
-        });
+        let mut h = blake3::Hasher::new();
+        h.update(b"codec-map-input-state-v4");
+        h.update(&time.to_le_bytes());
+        // The SDK supplies a 128-bit input-state hash, without rendering pixels.
+        for index in [Some(0), needs_map.then_some(map_index)]
+            .into_iter()
+            .flatten()
+        {
+            let state = input.effect().current_param_state(
+                index,
+                Some(ae::Time {
+                    value: time,
+                    scale: input.time_scale(),
+                }),
+                Some(ae::Time {
+                    value: 1,
+                    scale: input.time_scale(),
+                }),
+            )?;
+            for word in state.reservedAL {
+                h.update(&word.to_le_bytes());
+            }
+        }
+        h.update(&[roi as u8]);
+        if roi {
+            for v in [settings.black, settings.white] {
+                h.update(&v.to_bits().to_le_bytes());
+            }
+            h.update(&[map_enabled as u8]);
+            if needs_map {
+                h.update(&settings.gamma.to_bits().to_le_bytes());
+                h.update(&[settings.channel as u8, settings.invert as u8]);
+            }
+        }
+        let c = replay.controls[i];
+        h.update(&[c.force_i as u8, c.drop_i as u8, c.drop_b as u8]);
+        maps.push(settings);
+        frame_keys.push(digest(&h));
     }
     let start = ae::Time {
-        value: times[0],
+        value: replay.times[0].min(input.current_time()),
         scale: input.time_scale(),
     };
+    let end = (*replay.times.last().unwrap()).max(input.current_time());
     let duration = ae::Time {
-        value: i32::try_from(i64::from(*times.last().unwrap()) - i64::from(times[0]) + 1)
+        value: i32::try_from(i64::from(end) - i64::from(start.value) + 1)
             .map_err(|_| Error::InvalidParms)?,
         scale: input.time_scale(),
     };
@@ -484,25 +462,33 @@ fn pre_render(
         Some(duration),
     )?;
     extra.set_pre_render_data(Plan {
-        times,
+        times: replay.times,
         maps,
+        frame_keys,
+        current_map_settings,
+        roi,
         map_enabled,
+        current_needs_map,
         codec,
-        quality: float(
-            params,
-            match codec {
-                codec::Codec::H264 => Params::Crf,
-                codec::Codec::Vp9 => Params::Vp9Quality,
-                codec::Codec::Mpeg4 => Params::Mpeg4Quality,
-            },
-        )?,
+        quality: if simple {
+            ui::strength_quality(codec, strength)
+        } else {
+            float(
+                params,
+                match codec {
+                    codec::Codec::H264 => Params::Crf,
+                    codec::Codec::Vp9 => Params::Vp9Quality,
+                    codec::Codec::Mpeg4 => Params::Mpeg4Quality,
+                },
+            )?
+        },
         use_b,
         target: replay.target,
         controls: replay.controls,
         decode,
         replay_memory: params.get(Params::ReplayMemory)?.as_slider()?.value(),
         mix,
-        isolated: choice(params, Params::Output)? == 1,
+        isolated,
         preview,
         generation: params.get(Params::Generation)?.as_slider()?.value(),
         state,
@@ -542,7 +528,7 @@ impl Plugin {
     ) -> Result<(), RenderError> {
         let abort = || input.interact().abort().map_err(RenderError::from);
         abort()?;
-        let current = CheckedLayer::new(cb, (plan.target * 2) as u32)?;
+        let current = CheckedLayer::new(cb, 1)?;
         // SmartFX requires an input checkout before the output checkout.
         let Some(mut output) = cb.checkout_output()? else {
             return Ok(());
@@ -561,89 +547,164 @@ impl Plugin {
         };
         let (width, height) = (source.width(), source.height());
         let (pw, ph, _) = core::padded_size(width, height)?;
-        if plan.decode {
-            core::check_replay_memory(width, height, plan.times.len(), plan.replay_memory)?;
-        }
         let canvas = layer_canvas(source);
-        let mut job = codec::Job {
+        if plan.current_needs_map {
+            core::check_buffer_memory(width * height * size_of::<f32>(), plan.replay_memory)?;
+        }
+        let current_map = if plan.current_needs_map {
+            let checked = CheckedLayer::new(cb, 2)?;
+            Some(sample_map(
+                checked.layer.as_ref(),
+                plan.current_map_settings,
+                width,
+                height,
+            )?)
+        } else {
+            None
+        };
+        let current_offsets = offsets(
+            plan.current_map_settings,
+            current_map.as_deref(),
+            plan.codec,
+            pw,
+            ph,
+            width,
+            height,
+        );
+        let black = plan.isolated
+            && current_map
+                .as_ref()
+                .is_some_and(|m| m.iter().all(|v| *v == 0.0));
+        if plan.decode && !black {
+            core::check_buffer_memory(
+                pw * ph * 3 / 2
+                    + current_map
+                        .as_ref()
+                        .map_or(0, |m| m.len() * size_of::<f32>()),
+                plan.replay_memory,
+            )?;
+        }
+        let settings = codec::Settings {
             width: pw,
             height: ph,
             time_scale: i32::try_from(input.time_scale()).map_err(|_| "Time scale overflow")?,
             time_step: input
                 .time_step()
                 .checked_abs()
-                .filter(|v| *v > 0)
+                .filter(|s| *s > 0)
                 .ok_or("Invalid frame duration")?,
             codec: plan.codec,
             quality: plan.quality,
             use_b: plan.use_b,
-            target: plan.target,
-            frames: Vec::with_capacity(plan.times.len()),
         };
-        let mut current_map = Vec::new();
-        for (i, settings) in plan.maps.iter().enumerate() {
-            abort()?;
-            let map = if plan.map_enabled {
-                let checked = CheckedLayer::new(cb, (i * 2 + 1) as u32)?;
-                if let Some(layer) = checked
-                    .layer
-                    .as_ref()
-                    .filter(|s| s.width() > 0 && s.height() > 0)
-                {
-                    core::padded_size(layer.width(), layer.height())?;
-                    let p = (0..layer.height())
-                        .flat_map(|y| (0..layer.width()).map(move |x| pixel(layer, x, y)))
-                        .collect::<Vec<_>>();
-                    settings.sample(&p, layer.width(), layer.height(), width, height)
-                } else {
-                    vec![0.0; width * height]
-                }
-            } else {
-                vec![1.0; width * height]
-            };
-            let offsets = settings
-                .blocks(&map, width, height)
-                .into_iter()
-                .map(|value| plan.codec.roi_offset(value))
-                .collect();
-            let yuv = if !plan.decode {
-                Vec::new()
-            } else if i == plan.target {
-                layer_yuv(canvas, Some(source))?
-            } else {
-                let checked = CheckedLayer::new(cb, (i * 2) as u32)?;
-                layer_yuv(canvas, checked.layer.as_ref())?
-            };
-            job.frames.push(codec::Frame {
-                yuv,
-                offsets,
-                controls: plan.controls[i],
-            });
-            if i == plan.target {
-                current_map = map;
-            }
+        let mut h = blake3::Hasher::new();
+        h.update(b"codec-map-replay-v4");
+        settings.hash(&mut h);
+        h.update(&(width as u64).to_le_bytes());
+        h.update(&(height as u64).to_le_bytes());
+        h.update(&canvas.x.to_le_bytes());
+        h.update(&canvas.y.to_le_bytes());
+        h.update(&source.bit_depth().to_le_bytes());
+        h.update(&plan.generation.to_le_bytes());
+        let mut prefixes = Vec::with_capacity(plan.frame_keys.len());
+        for key in &plan.frame_keys {
+            h.update(key);
+            prefixes.push(digest(&h));
         }
-        let state = input.effect().current_param_state(
-            ae::pf::PARAM_INDEX_CHECK_ALL,
-            Some(plan.start),
-            Some(plan.duration),
-        )?;
-        if !ae::pf::suites::ParamUtils::new()?.are_states_identical(
-            input.effect(),
-            &plan.state,
-            &state,
-        )? {
-            return Err("Inputs changed during render; render again.".into());
-        }
-        let mut salt = plan.generation.to_le_bytes().to_vec();
-        for time in &plan.times {
-            salt.extend_from_slice(&time.to_le_bytes());
-        }
-        let decoded = if !plan.decode {
+        let mut output_key = h.clone();
+        output_key.update(&(plan.target as u64).to_le_bytes());
+        let decoded = if !plan.decode || black {
             Vec::new()
         } else {
-            cache::render(input, self.cache_registered, &job, &salt, abort)?
+            cache::render(input, self.cache_registered, digest(&output_key), || {
+                abort()?;
+                core::check_working_memory(width, height, plan.replay_memory)?;
+                let (image, _) = stream::render(
+                    settings,
+                    &prefixes,
+                    &plan.controls,
+                    plan.target,
+                    |i| {
+                        abort()?;
+                        let mut key = blake3::Hasher::new();
+                        key.update(b"codec-map-converted-v4");
+                        key.update(&plan.frame_keys[i]);
+                        for n in [
+                            width as i64,
+                            height as i64,
+                            pw as i64,
+                            ph as i64,
+                            canvas.x as i64,
+                            canvas.y as i64,
+                            source.bit_depth() as i64,
+                            plan.codec as i64,
+                        ] {
+                            key.update(&n.to_le_bytes());
+                        }
+                        let mut packed =
+                            cache::render(input, self.cache_registered, digest(&key), || {
+                                abort()?;
+                                let mut yuv = if plan.times[i] == input.current_time() {
+                                    layer_yuv(canvas, Some(source))?
+                                } else {
+                                    let checked = CheckedLayer::new(cb, (10 + i * 2) as u32)?;
+                                    layer_yuv(canvas, checked.layer.as_ref())?
+                                };
+                                let map = if plan.map_enabled
+                                    && plan.roi
+                                    && plan.maps[i].black != plan.maps[i].white
+                                {
+                                    if plan.times[i] == input.current_time() {
+                                        current_map.clone()
+                                    } else {
+                                        let checked = CheckedLayer::new(cb, (11 + i * 2) as u32)?;
+                                        Some(sample_map(
+                                            checked.layer.as_ref(),
+                                            plan.maps[i],
+                                            width,
+                                            height,
+                                        )?)
+                                    }
+                                } else {
+                                    None
+                                };
+                                let values = offsets(
+                                    plan.maps[i],
+                                    map.as_deref(),
+                                    plan.codec,
+                                    pw,
+                                    ph,
+                                    width,
+                                    height,
+                                );
+                                for v in values {
+                                    yuv.extend_from_slice(&v.to_le_bytes());
+                                }
+                                validate_state(input, plan)?;
+                                abort()?;
+                                Ok(yuv)
+                            })?;
+                        let size = pw * ph * 3 / 2;
+                        let values = packed[size..]
+                            .chunks_exact(4)
+                            .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
+                            .collect();
+                        packed.truncate(size);
+                        Ok(codec::Frame {
+                            yuv: packed,
+                            offsets: values,
+                            controls: plan.controls[i],
+                        })
+                    },
+                    abort,
+                )?;
+                validate_state(input, plan)?;
+                abort()?;
+                Ok(image)
+            })?
         };
+        validate_state(input, plan)?;
+        abort()?;
         let output_canvas = layer_canvas(&output);
         for y in 0..output.height() {
             abort()?;
@@ -655,7 +716,7 @@ impl Plugin {
                 let index = sy * width + sx;
                 let weight = core::finite_unit(plan.mix)
                     * if plan.isolated {
-                        current_map[index]
+                        current_map.as_ref().map_or(1.0, |m| m[index])
                     } else {
                         1.0
                     };
@@ -673,12 +734,12 @@ impl Plugin {
                 let result = core::composite(original, rgb, weight);
                 let result = match plan.preview {
                     2 => {
-                        let m = current_map[index];
+                        let m = current_map.as_ref().map_or(1.0, |m| m[index]);
                         [m, m, m, 1.0]
                     }
                     3 => {
                         let block = (sy / 16) * pw.div_ceil(16) + sx / 16;
-                        let m = (job.frames[plan.target].offsets[block] + 24.0) / 48.0;
+                        let m = (current_offsets[block] + 24.0) / 48.0;
                         [m, m, m, 1.0]
                     }
                     4 => [
@@ -693,6 +754,72 @@ impl Plugin {
             }
         }
         Ok(())
+    }
+}
+
+fn validate_state(input: InData, plan: &Plan) -> Result<(), RenderError> {
+    let state = input.effect().current_param_state(
+        ae::pf::PARAM_INDEX_CHECK_ALL,
+        Some(plan.start),
+        Some(plan.duration),
+    )?;
+    if !ae::pf::suites::ParamUtils::new()?.are_states_identical(
+        input.effect(),
+        &plan.state,
+        &state,
+    )? {
+        stream::clear();
+        return Err("Inputs changed during render; render again.".into());
+    }
+    Ok(())
+}
+fn sample_map(
+    layer: Option<&Layer>,
+    settings: MapSettings,
+    w: usize,
+    h: usize,
+) -> Result<Vec<f32>, RenderError> {
+    if let Some(layer) = layer.filter(|s| s.width() > 0 && s.height() > 0) {
+        core::padded_size(layer.width(), layer.height())?;
+        Ok(
+            settings.sample_from(layer.width(), layer.height(), w, h, |x, y| {
+                pixel(layer, x, y)
+            }),
+        )
+    } else {
+        Ok(vec![0.0; w * h])
+    }
+}
+fn offsets(
+    settings: MapSettings,
+    map: Option<&[f32]>,
+    codec: codec::Codec,
+    pw: usize,
+    ph: usize,
+    w: usize,
+    h: usize,
+) -> Vec<f32> {
+    if codec == codec::Codec::Mpeg4 {
+        vec![0.0; pw.div_ceil(16) * ph.div_ceil(16)]
+    } else if let Some(map) = map {
+        settings
+            .blocks(map, w, h)
+            .into_iter()
+            .map(|v| codec.roi_offset(v))
+            .collect()
+    } else {
+        (0..h)
+            .step_by(16)
+            .flat_map(|y| {
+                (0..w).step_by(16).map(move |x| {
+                    let count = ((h - y).min(16) * (w - x).min(16)) as f32;
+                    codec.roi_offset(
+                        (settings.black + (settings.white - settings.black) * count / count)
+                            .clamp(-24.0, 24.0),
+                    )
+                })
+            })
+            .collect()
     }
 }
 
@@ -712,20 +839,36 @@ fn layer_canvas(layer: &Layer) -> core::Canvas {
     }
 }
 fn layer_yuv(canvas: core::Canvas, layer: Option<&Layer>) -> Result<Vec<u8>, String> {
-    // All historical frames use the current frame's canvas. Preserve layer
-    // coordinates, clip excess pixels and fill uncovered regions with black.
-    let source = layer.map(layer_canvas);
+    let Some(layer) = layer.filter(|l| l.width() > 0 && l.height() > 0) else {
+        return core::to_yuv_from(canvas.width, canvas.height, |_, _| [0.0; 4]);
+    };
+    let source = layer_canvas(layer);
+    let read = |p: ae::PixelF32| [p.red, p.green, p.blue, p.alpha];
+    match layer.bit_depth() {
+        8 => convert_canvas(canvas, source, |x, y| {
+            read(layer.as_pixel8(x, y).to_pixel32())
+        }),
+        16 => convert_canvas(canvas, source, |x, y| {
+            read(layer.as_pixel16(x, y).to_pixel32())
+        }),
+        _ => convert_canvas(canvas, source, |x, y| read(*layer.as_pixel32(x, y))),
+    }
+}
+fn convert_canvas(
+    canvas: core::Canvas,
+    source: core::Canvas,
+    read: impl Fn(usize, usize) -> Rgba,
+) -> Result<Vec<u8>, String> {
+    if canvas == source {
+        return core::to_yuv_from(canvas.width, canvas.height, read);
+    }
     core::to_yuv_from(canvas.width, canvas.height, |x, y| {
-        if let Some((layer, (sx, sy))) =
-            layer.zip(source.and_then(|s| canvas.source_pixel(s, x, y)))
-        {
-            let p = pixel(layer, sx, sy);
-            [p.red, p.green, p.blue, p.alpha]
-        } else {
-            [0.0; 4]
-        }
+        canvas
+            .source_pixel(source, x, y)
+            .map_or([0.0; 4], |(sx, sy)| read(sx, sy))
     })
 }
+
 fn write_pixel(layer: &mut Layer, x: usize, y: usize, p: Rgba) {
     let p = ae::PixelF32 {
         red: p[0],

@@ -39,7 +39,12 @@ $libraries = Join-Path $package 'CodecMap'
 New-Item -ItemType Directory -Force -Path $libraries | Out-Null
 Copy-Item -LiteralPath $binary -Destination (Join-Path $package 'AOD_CodecMap.aex') -Force
 foreach ($dll in @('avcodec-62.dll', 'avutil-60.dll', 'swresample-6.dll')) {
-    Copy-Item -LiteralPath (Join-Path $runtime "bin/$dll") -Destination $libraries -Force
+    $sourceLibrary = Join-Path $runtime "bin/$dll"
+    $targetLibrary = Join-Path $libraries $dll
+    if (-not (Test-Path -LiteralPath $targetLibrary) -or
+        (Get-FileHash -LiteralPath $sourceLibrary).Hash -ne (Get-FileHash -LiteralPath $targetLibrary).Hash) {
+        Copy-Item -LiteralPath $sourceLibrary -Destination $targetLibrary -Force
+    }
 }
 Copy-Item -LiteralPath (Join-Path $runtime 'LICENSE') -Destination (Join-Path $libraries 'FFmpeg-LICENSE.txt') -Force
 Copy-Item -LiteralPath (Join-Path $runtime 'README.txt') -Destination (Join-Path $libraries 'FFmpeg-README.txt') -Force

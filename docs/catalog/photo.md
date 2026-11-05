@@ -15,17 +15,14 @@ H.264・VP9・MPEG-4 Part 2の圧縮と適用範囲をマップで制御しま�
 
 ### パラメーター
 
-- `Codec`: コーデックを選択し、Base CRF / VP9 CQ / MPEG-4 Quantizerの品質設定を動的に切り替えます。
-- `Drop I-Frames` / `Drop B-Frames`: 符号化後のフレームを破棄。BフレームにはAllow Future FramesのONが必要です。
-- `Temporal Mode` / `GOP Length`: 過去参照またはフレーム単位の独立圧縮と、その区間長。
-- `Replay Memory (MiB)`: 履歴バッファの上限。既定1 GiB、最大8 GiB。入力サイズが時間変化する場合も現在の範囲へ位置合わせして処理します。
-- `Map Source` / `Compression Map`: 全体適用、または圧縮領域を指定するレイヤー。
-- `Map Channel` / `Invert Map` / `Map Gamma`: マップの読み方と濃淡の調整。
-- `Black QP Offset` / `White QP Offset`: H.264・VP9の量子化オフセット。VP9はPフレームのみ。MPEG-4ではマップ合成だけを使います。
-- `Output`: 黒領域を保持するMap Isolated、または復号画像全体を表示するCodec Result。
-- `Mix` / `Preview`: 適用率、マップ・要求offset・差分の確認。
+- `Style`: Compression / Blocks / Datamoshから質感を選びます。
+- `Compression`: 共通の0〜100で圧縮の強さを調整。0は原画を保持します。
+- `Datamosh`: キーフレーム可能なIフレーム除去。
+- `Area` / `Map Layer`: 全体またはマップで適用範囲を指定します。
+- `Mix`: 原画との合成量。
+- `Advanced`: Codec、Motion、Map、Diagnostics。固有の品質値、未来参照、Bフレーム除去、メモリ上限などをまとめています。
 
-コーデック内部は8-bit YUV 4:2:0で、元のalphaは保持します。同梱DLLが必要です。[導入手順・制限](../../plugins/codec-map/README.md)と[検証状況](../../plugins/codec-map/tests/VALIDATION.md)を参照してください。
+v0.3では入力状態によるキャッシュ、連続フレームの圧縮セッション再利用、GOP=1の保持画像経路で再計算を削減します。軽量プレビューにはAEの1/2・1/4解像度を使用します。
 
 ## AOD_ColorAjust
 

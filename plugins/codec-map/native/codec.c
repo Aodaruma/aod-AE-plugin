@@ -61,6 +61,29 @@ typedef struct CmSession {
     int stats[6];
 } CmSession;
 
+/* Keep loader/TLS state alive across short sessions. Rust shares this reference
+   until global teardown, while each session still owns its normal references. */
+typedef struct CmRuntime { Library util, codec; } CmRuntime;
+void cm_release_runtime(CmRuntime *runtime);
+CmRuntime *cm_hold_runtime(CmSession *s) {
+    CmRuntime *runtime = (CmRuntime *)calloc(1, sizeof(*runtime));
+    if (!runtime) return NULL;
+#ifdef _WIN32
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                           (LPCWSTR)s->avutil_version, &runtime->util) ||
+        !GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                           (LPCWSTR)s->avcodec_version, &runtime->codec)) {
+        cm_release_runtime(runtime); return NULL;
+    }
+#else
+    Dl_info info;
+    if (dladdr((void *)s->avutil_version, &info)) runtime->util = dlopen(info.dli_fname, RTLD_NOW | RTLD_LOCAL);
+    if (dladdr((void *)s->avcodec_version, &info)) runtime->codec = dlopen(info.dli_fname, RTLD_NOW | RTLD_LOCAL);
+    if (!runtime->util || !runtime->codec) { cm_release_runtime(runtime); return NULL; }
+#endif
+    return runtime;
+}
+
 static void close_library(Library lib) {
     if (!lib) return;
 #ifdef _WIN32
@@ -68,6 +91,10 @@ static void close_library(Library lib) {
 #else
     dlclose(lib);
 #endif
+}
+void cm_release_runtime(CmRuntime *runtime) {
+    if (!runtime) return;
+    close_library(runtime->codec); close_library(runtime->util); free(runtime);
 }
 
 void cm_destroy(CmSession *s) {
@@ -389,6 +416,18 @@ int cm_push(CmSession *s, const uint8_t *input, size_t input_len,
     result = s->avcodec_send_frame(s->encoder, s->input);
     if (result < 0) return fail(s, result, "Encode", error, cap);
     return receive_packets(s, error, cap);
+}
+
+/* No flush: zero-delay sessions can continue on a later render request. */
+int cm_snapshot(CmSession *s, uint8_t *output, size_t output_len, int *stats,
+                char *error, size_t cap) {
+    if (!s || s->use_b || !output || s->best_pts < 0 ||
+        output_len != (size_t)s->width * s->height * 3 / 2) {
+        snprintf(error, cap, "No immediate decoded frame"); return 0;
+    }
+    memcpy(output, s->best, output_len);
+    if (stats) memcpy(stats, s->stats, sizeof(s->stats));
+    return 1;
 }
 
 int cm_finish(CmSession *s, uint8_t *output, size_t output_len, int *stats,

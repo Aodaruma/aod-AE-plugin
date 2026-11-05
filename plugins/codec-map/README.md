@@ -2,73 +2,74 @@
 
 Applies map-controlled video codec compression with deterministic temporal replay.
 
-マップで圧縮の強さと適用範囲を指定するAfter Effects用エフェクトです。H.264 / libx264、VP9 / libvpx、MPEG-4 Part 2で実際に圧縮・復号した映像を返します。FFmpeg共有ライブラリを同梱してAEプロセス内で呼び出し、外部プロセスや一時動画は使いません。
+マップで適用範囲を指定できる、実コーデックによる圧縮・データモッシュ用After Effectsエフェクトです。H.264 / VP9 / MPEG-4 Part 2に対応。FFmpeg共有ライブラリを同梱してAEプロセス内で使用し、外部FFmpegのインストールや一時動画は不要です。
 
-## 使い方
+## まず使う
 
-1. 入力レイヤーへAodaruma > AOD_CodecMapを適用します。
-2. Codecを選び、表示される品質設定で質感を調整します。
-3. 全体を圧縮する場合はMap Source = Uniform、範囲を指定する場合はLayerにしてCompression Mapを選びます。
-4. Output = Map Isolatedでは黒い場所を元の画素のまま保持し、白い場所へ圧縮結果を適用します。
+1. Aodaruma > AOD_CodecMapを入力レイヤーへ適用します。
+2. Styleから質感を選び、Compressionで圧縮を強めます。0は原画をそのまま返します。
+3. 部分適用にはArea = Map Layerを選び、Map Layerを指定します。黒が原画、白が効果です。
+4. Mixで合成量を調整します。細かい設定はAdvancedを開きます。
 
-マップは入力画像全体に伸縮して合わせます。位置・回転・エフェクトを反映させたい場合はマップをプリコンポーズしてください。Layerで未選択の場合は黒マップです。既存プロジェクトのパラメーターIDを保持するため、新しいコーデック設定はコントロールの末尾にあります。
-
-## パラメーター
-
-| 項目 | 動作・初期値 |
+| Style | 初期設定 |
 |---|---|
-| Codec | H.264 / VP9 / MPEG-4 Part 2。初期値H.264。選択した品質設定だけを表示。 |
-| Base CRF | H.264の品質。初期値28、1〜51。大きいほど低品質。 |
-| VP9 CQ | VP9の品質。初期値35、0〜63。大きいほど低品質。 |
-| MPEG-4 Quantizer | MPEG-4の量子化。初期値8、1〜31。大きいほど低品質。 |
-| Temporal Mode | Past Onlyが初期値。Independentは各フレームを個別に圧縮。 |
-| GOP Length | Iフレームを挿入する間隔。初期値12、1〜60。 |
-| Allow Future Frames | 初期値OFF。H.264 / MPEG-4、Past Only、GOP≧3でONにすると最大2枚先を参照してBフレームを生成。 |
-| Drop I-Frames | 初期値OFF。符号化後のIフレームを捨てる。キーフレーム可。Independentでは無効。 |
-| Drop B-Frames | 初期値OFF。符号化後のBフレームを捨てる。キーフレーム可。Bフレーム生成時だけ有効。VP9では無効。 |
-| Replay Memory (MiB) | 再計算用の履歴バッファ上限。初期値1024（1 GiB）、64〜8192。必要な分だけ確保。 |
-| Map Source / Compression Map | Uniform、または指定レイヤー。Uniformは全白。 |
-| Map Channel | Luma / Red / Green / Blue / Alpha。初期値Luma。 |
-| Invert Map / Map Gamma | マップの反転とガンマ。完全透明な画素は反転しても0。 |
-| Black / White QP Offset | 初期値0 / +12。各−24〜+24。正の値で量子化を強める。 |
-| Output | Map Isolatedはマップに応じて原画と合成。Codec Resultは復号画像全体を使用。 |
-| Mix | 初期値100%。0%は元の画素をそのまま返す。 |
-| Preview | Result / Map / Requested QP Offset / Difference。Offset表示は実測QPではなく要求値。 |
-| Reset Cache | このエフェクトのキャッシュ世代を進める。旧世代はAEのキャッシュ管理で解放。 |
+| Compression | H.264、Compression=54、過去参照、Refresh Interval=12、Datamosh OFF |
+| Blocks | MPEG-4、Compression=80、各フレームを独立して圧縮 |
+| Datamosh | MPEG-4、Compression=50、過去参照、Refresh Interval=12、Datamosh ON |
+| Custom | 現在設定を保持。詳細なコーデック・時間設定の変更時にも切り替わる |
 
-Codec、各品質設定、Temporal Mode、GOP Length、Allow Future Frames、Map Source、Replay Memoryは時間変化不可です。Drop I/B-Framesやマップ調整・Mixはキーフレームを打てます。
+プリセットは選んだ時点で設定を適用します。Compression、マップ、Mix、Datamoshは後から調整できます。新規適用はCompressionプリセット。未来参照はOFFです。
 
-H.264はマップの16×16ブロック平均をQP offsetに変換し、CRFとAQに加えます。VP9は同じ平均値を−24 / −16 / −8 / 0 / 8 / 16 / 24へ丸め、8×8のセグメントへ渡します。VP9のROIはPフレームのみで、GOP=1・Independentではoffset設定が無効になります。MPEG-4は局所QPに未対応のためoffset設定は無効で、マップはMap Isolatedの合成範囲を指定します。
+## 基本操作とAdvanced
 
-これらは絶対QPやビットレートの指定ではありません。Codec Resultでは予測・色差サブサンプリング・フィルターの影響が黒領域にも及びます。黒領域の保持にはMap Isolatedを使ってください。Requested QP OffsetはVP9では丸め後、MPEG-4では0を表示します。
+基本画面はStyle、Compression、Datamosh、Area、Map Layer、Mixです。Map LayerはAreaで選んだ場合、Datamoshは時間依存する設定で表示します。
 
-## データモッシュ
+Compressionは共通の0〜100。正値をH.264のCRF 1〜51、VP9のCQ 0〜63、MPEG-4のquantizer 1〜31へ変換します。同じ数値で同じ質感になることを保証するものではありません。0またはMix=0では元の画素を保持します。
 
-Temporal Mode = Past OnlyでDrop I-FramesをONにすると、その時刻に符号化されたIフレームをデコーダーへ渡さなくなります。以降のPフレームは古い参照画像を使うため映像が崩れます。H.264 / VP9では欠落参照の補正・直前画像の保持になる場合もあり、典型的なデータモッシュにはMPEG-4を試してください。
+| Advancedグループ | 項目 |
+|---|---|
+| Codec | Codec、Quality Control = Compression / Native、Codec Quality。選択した品質だけを表示 |
+| Motion | Frame Mode = Past Frames / Independent Frames、Refresh Interval（1〜60フレーム）、Allow Future Frames、Drop B-Frames |
+| Map | Channel、Invert、Gamma、Dark Area Bias / Light Area Bias（各±24）、Map Behavior |
+| Diagnostics | Display = Result / Map / Compression Bias / Difference、Working Memory (MiB)、Reset Cache |
 
-チェックボックスはキーフレームを打てます。Iフレームの除去はGOP境界で効き、OFFに戻した後の次のGOP境界で復号の土台が更新されます。初期化用の最初のIフレームは必ず保持します。GOP=1ではすべてIフレームなので、除去中は最後に残した画像を保持します。
+Native品質はH.264がCRF 1〜51、VP9がCQ 0〜63、MPEG-4がquantizer 1〜31。大きいほど強い圧縮です。Nativeでは基本画面のCompressionが無効になります。コーデック・品質・時間参照・未来参照・Area・メモリは時間変化不可。Datamosh、Drop B-Frames、マップ調整、Map Behavior、Mixはキーフレーム対応です。
 
-Bフレームを除去するにはAllow Future FramesをONにしてDrop B-Framesを使います。除去された表示時刻には、それ以前の最後に復号できた画像を返します。尺は短縮せず、alphaは現在の入力を保持します。Map Isolatedではモッシュ結果もマップに沿って合成します。
+マップは入力全体へ伸縮します。位置・回転・エフェクトを含めたい場合はプリコンポーズしてください。マップ未指定なら黒として扱います。完全透明なマップ画素はInvert後も0です。
 
-## 時間・キャッシュ
+Dark / Light Area Biasは局所量子化の補正で、正の値で圧縮を強めます。H.264は16×16ブロック平均、VP9は同じ平均を7段階へ丸めたROIを使用します。VP9のROIはPフレームだけに作用し、Interval=1・Independent Framesでは無効です。MPEG-4は局所QP非対応のためBiasは無効で、マップは合成範囲へ使用します。
 
-未来参照は初期値OFFです。OFFではBフレーム、lookahead、MB-treeを使わず、GOP先頭から要求時刻までを昇順に処理します。GOP=12でフレーム17を求める場合、12〜17だけを取得します。Iフレームを除去する場合は最後に保持するGOP先頭まで遡ります。未来ONでは同じGOP内の最大2フレーム先まで取得します。
+Map Behavior = Restrict Effectはマップで原画と合成し、重み0では直接コピーします。Full Codec Frameでは復号画像全体を使用し、予測・色差・フィルターの影響が黒領域にも及びます。Compression Bias表示は実測QPではなく要求値で、MPEG-4では中立値です。
 
-フレーム0は入力レイヤーのソース時刻0です。サブフレームでは要求時刻の位相を保ってサンプリングします。時刻0より前では現在のGOP先頭を保持し、それ以前へモッシュの履歴を延ばしません。
+## モッシュと時間参照
 
-各要求は独立したencoder/decoderを作り、逆再生・ランダムアクセス・並列要求でも過去の描画順序に依存しません。Compute Cacheには対象フレームの完成結果のみを保存し、キーに全入力YUV・全offset・コーデック・品質・I/B除去設定・対象時刻を含めます。過去・未来のマップや除去設定も各時刻で取得します。スイートがないホストでは再計算します。
+Datamoshは符号化後のIフレームを捨てます。初期化用の最初のIフレームは保持します。ON/OFFはキーフレーム対応。OFFへ戻した後の次のRefresh Interval境界で参照画像が更新されます。Interval=1では最後に保持した画像を返します。alphaは現在入力を保持します。
 
-v0.2.1では256 MiB固定の上限をReplay Memoryへ置き換えました。履歴のYUVとROI offsetの合計を制限する値で、AE全体のRAM割り当てではありません。AEの入力画像・キャッシュ・コーデック内部のメモリは別途必要で、同時レンダー中は要求ごとに確保します。上限エラーには必要量も表示します。Mix=0やMap / Requested QP Offset表示では履歴取得・圧縮を省略します。
+通常は未来を参照しません。Allow Future Framesを有効にしたH.264 / MPEG-4、Past Frames、Interval≧3では、同じGOP内の最大2枚先まで取得してBフレームを生成します。Drop B-Framesは符号化後のBを除去します。欠けた表示時刻には最後の復号画像を使い、尺は変えません。VP9はBを生成しません。
 
-## 色・制限
+基準は入力ソース時刻0です。サブフレームでは位相を維持します。負の時刻では現在GOPの先頭を初期画像にし、それ以前へ履歴を延ばしません。欠落参照の補正・画像保持など、崩れ方はコーデックごとに異なります。
 
-- AEの8 / 16 / 32 bpc入力に対応。コーデック内部は8-bit BT.709 limited-range YUV 4:2:0固定で、HDR値は圧縮経路で0〜1へ制限。作業色空間のICC変換は行いません。
-- 元のalphaを保持し、RGBを非乗算にしてから圧縮。Map Isolatedの重み0では元のRGB/alphaを直接コピー。
-- 奇数サイズは右端・下端を複製して偶数へ補い、復号後に戻します。
-- 履歴内で入力のサイズや原点が変わる場合は、現在フレームの範囲へレイヤー座標で位置合わせします。伸縮せず、はみ出しを切り取り、足りない領域は黒で補います。alphaは現在入力を保持します。全時刻で同じ圧縮キャンバスを使いたい場合は固定サイズのプリコンポーズを使用してください。
-- 1辺16384画素、履歴バッファはReplay Memoryまで、モッシュの履歴は6000フレーム未満。上限を超える場合はReplay Memoryを上げる、プレビュー解像度を下げる、直近のGOP境界でDrop I-FramesをOFFにしてIフレームを残す、のいずれかで調整してください。
-- CPU処理です。ハードウェアエンコーダー、H.265、AV1、CBR/VBR、Premiereは未対応。
-- macOS版AE、Intel Mac実機、異なるOS・CPU・FFmpegビルド間のビット一致は未確認。[検証記録](tests/VALIDATION.md)を参照。
+## v0.3の軽量化
+
+- AEの入力状態を使い、画像変換前に完成結果のキャッシュを照合。フレーム単位のYUV・量子化マップも再利用します。
+- 未来参照OFFの連続要求では圧縮セッションを継続し、新しいフレームだけを処理。保持は全体で最大2個です。逆順、過去の変更、範囲変更、競合時は再計算します。
+- 未来参照ONはキャッシュとストリーミング再計算を使用します。描画順に依存した近似は行いません。
+- Interval=1の画像保持は保持画像だけを圧縮。Mix=0、Compression=0、全黒マップの範囲合成では不要な圧縮を省略します。
+- 履歴全体の未圧縮画像をまとめて保持せず、必要なフレームを順次変換。白マップ配列・float RGBAコピー・画素の重複読み込みも削減しました。
+- FFmpegライブラリを共有して保持し、Windowsでロード・解放を大量に繰り返す際のTLS資源枯渇を防ぎます。
+
+プレビューはAEの1/2・1/4解像度を使用し、本番はFullで出力してください。画素数が減るとブロック感やモッシュの見え方も変わります。初回の長い履歴やランダムアクセスには再計算が必要です。
+
+Working Memoryは一時バッファの保守的な見積もり上限で、既定1024 MiB、64〜8192 MiB。全履歴の未圧縮サイズでは判定しません。AEの入力・キャッシュ、FFmpeg内部メモリは別途必要です。メモリ上限を増やすだけで高速化する設定ではありません。
+
+## 互換性・制限
+
+- 旧AEPはCustom＋Native品質で読み込み、保存値・キーフレームから描画します。プリセットは自動適用しません。旧名称・番号による式やスクリプトは修正が必要です。
+- 8 / 16 / 32 bpcに対応。内部は8-bit BT.709 limited-range YUV 4:2:0。HDRは圧縮経路で0〜1へ制限し、ICC変換は行いません。
+- 元のalphaを保持。奇数サイズは端を複製して偶数へ補います。サイズ・原点の変化は現在範囲へ位置合わせし、はみ出しを切り取り、不足は黒で補います。固定キャンバスにはプリコンポーズを使用してください。
+- 1辺16384画素まで、モッシュ履歴は6000フレーム未満。長い区間では近い更新境界でDatamoshをOFFにして参照画像を残してください。
+- CPU処理です。H.265、AV1、CBR/VBR、Premiereは未対応。OS・CPU・FFmpegビルド間のビット一致は保証しません。
+- 実施環境・未確認範囲と性能計測は[検証記録](tests/VALIDATION.md)を参照してください。
 
 ## ビルド・検証用パッケージ
 
@@ -82,7 +83,7 @@ AOD_CodecMap.aexとCodecMapフォルダーを一緒に設置します。スク�
 
 macOS、Xcode Command Line Tools、Rust、Python 3.11以降、NASM、pkg-configを用意し、bash scripts/prepare-codec-map-macos.sh を実行します。FFmpeg 8.1.2、固定x264、libvpx 1.15.2のSHA-256を確認し、3コーデックに必要な構成をビルドします。
 
-生成先はtarget/codec-map-macos/AOD_CodecMap-0.2.1-macos-universal.zip。Apple Silicon・Intel両対応のAOD_CodecMap.pluginを /Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/ へコピーします。共有ライブラリは.plugin内に同梱し、外部FFmpegは不要です。
+生成先はtarget/codec-map-macos/AOD_CodecMap-0.3.0-macos-universal.zip。Apple Silicon・Intel両対応のAOD_CodecMap.pluginを /Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/ へコピーします。共有ライブラリは.plugin内に同梱し、外部FFmpegは不要です。
 
 開発検証用のアドホック署名で、Developer ID署名・Apple公証はありません。両CPU・依存先・署名を検証し、ネイティブCPUで実コーデック試験を行います。専用CIは[CodecMap macOS Preview](../../.github/workflows/codec_map_macos_preview.yml)です。GitHub Releaseは作成しません。
 

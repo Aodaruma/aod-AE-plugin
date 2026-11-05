@@ -1,5 +1,41 @@
 # CodecMap 検証記録
 
+## 0.3.0：軽量化・プリセットUI（2026-11-06）
+
+Windows x64、AE 2025 25.6.6x4、固定FFmpeg 8.1.2で確認。fmt、clippy（all-targets、warningsをエラー扱い）、機能試験17件が成功。性能・メモリ計測用の2エントリーは別途実行した。
+
+- 3コーデックの90フレームで、継続出力が各時刻の従来flush再計算と全画素一致。投入は各90回。逆順・8並列・過去変更・キャンセルも確認した。
+- 既存114画像・61項目を最終ビルドで再実行し成功。入力fixture2枚を含む116 PNGすべてが0.2.1時とSHA-256一致。
+- 旧AEPはCustom＋Native品質で復元され、保存値・キーフレームによる出力も旧PNGと一致。
+- v03.jsxで初期値・3プリセット・時間変化フラグを確認。16画像・8項目の画素比較に成功。Compression=0は8/16/32 bpc・4Kで原画と一致し、Working Memory=64 MiBでも4Kバイパスが動作。
+- 現在時刻を変えずseedの入力だけを編集すると結果が変わり、編集後のwarmとpurge後coldが一致。
+- AE内の連続36フレームをCODECMAP_PROFILEで計測。通常GOP=12は投入36回、GOP=1のI除去は投入1回で72 PNGを生成。集計はtarget/codec-map-v03/ae-profile.json。
+- 短期セッションの大量試験でWindowsのTLS index枯渇を再現し、共有runtime保持へ修正。修正後は全9条件×3回の性能計測を884.64秒実行して完了した。
+
+### 圧縮経路の時間
+
+合成YUVを使い、同じruntime条件で従来の毎回再計算と継続方式を比較。各条件3回の中央値、単位ms、全フレーム順次要求の合計。1080p・90フレームはI除去を継続する条件で、他は通常GOP=12。AEの入力レンダー・色変換・PNG保存時間は含めず、AE全体の速度倍率とは異なる。
+
+| Codec | 解像度・枚数 | 再計算 | 継続 | 比率 |
+|---|---|---:|---:|---:|
+| H264 | 1920×1080・36 | 2042 | 293 | 6.97倍 |
+| Vp9 | 1920×1080・36 | 10740 | 1653 | 6.50倍 |
+| Mpeg4 | 1920×1080・36 | 2653 | 403 | 6.58倍 |
+| H264 | 1920×1080・90 | 62112 | 1407 | 44.14倍 |
+| Vp9 | 1920×1080・90 | 162616 | 3681 | 44.18倍 |
+| Mpeg4 | 1920×1080・90 | 42154 | 980 | 43.01倍 |
+| H264 | 3840×2160・12 | 3712 | 730 | 5.08倍 |
+| Vp9 | 3840×2160・12 | 14201 | 2166 | 6.56倍 |
+| Mpeg4 | 3840×2160・12 | 3484 | 528 | 6.60倍 |
+
+CODECMAP_CODEC_DIRを同梱DLLへ、CODECMAP_BENCH=1を設定し、cargo test -p codec_map benchmark_streaming -- --ignored --nocapture --test-threads=1を実行。結果はtarget/codec-map-v03/native-benchmark-pinned.txt、native-summary.json。
+
+### メモリ
+
+別プロセスでFull HD・90フレームのI除去を実行し、WindowsのPeakWorkingSet64を記録。従来一括保持は338.35 MiB、ストリーミングは68.37 MiB（約80%減）。共通runtime・テストプロセスを含み、AE全体のRAM使用量とは異なる。CODECMAP_MEMORY_CASE=cold / streamでbenchmark_memoryを個別実行し、memory-summary.jsonへ保存した。
+
+macOSのCI・パッケージ結果は完了後に追記する。macOS版AEとIntel Mac実機は未確認。
+
 ## 0.2.1：履歴メモリ・可変入力範囲（2026-10-12）
 
 - Windows x64でfmt、clippy（all-targets、warningsをエラー扱い）、実コーデックを含む13テスト、releaseビルドに成功。

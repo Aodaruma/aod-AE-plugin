@@ -181,10 +181,20 @@
             addMaskedSolid(mapComp, "White", [1, 1, 1], [[256, 0], [512, 0], [512, 512], [256, 512]], 100);
             var mapLayer = comp.layers.add(mapComp);
             mapLayer.enabled = false;
-            setProperty(effect, "Codec", 3);
-            setProperty(effect, "MPEG-4 Quantizer", 20);
-            setProperty(effect, "Map Source", 2);
-            setProperty(effect, "Compression Map", mapLayer.index);
+            function control(name, nth) {
+                var found=[];
+                for(var n=1;n<=effect.numProperties;n++) {
+                    var p=effect.property(n);
+                    if(p.name===name && p.propertyType===PropertyType.PROPERTY && p.propertyValueType!==PropertyValueType.NO_VALUE) found.push(p);
+                }
+                if(!found[nth||0])throw new Error("CodecMap catalog control missing: "+name);
+                return found[nth||0];
+            }
+            control("Quality Control").setValue(2);
+            control("Codec").setValue(3);
+            control("Codec Quality",2).setValue(20);
+            control("Area").setValue(2);
+            control("Map Layer").setValue(mapLayer.index);
         } else if (item.match === "ColorAjust") {
             setProperty(effect, "Color Space", 1);
             setProperty(effect, "Hue Shift (deg)", 42);

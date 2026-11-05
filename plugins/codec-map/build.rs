@@ -78,6 +78,7 @@ fn main() {
             // to this PiPL caused AE 25.6 startup to stall with the pinned SDK crate.
             // This effect stores no sequence data; host rendering is tested separately.
             | OutFlags2::AutomaticWideTimeInput
+            | OutFlags2::ParamGroupStartCollapsedFlag
             | OutFlags2::SupportsSmartRender
             // | OutFlags2::SupportsGpuRenderF32
             ,

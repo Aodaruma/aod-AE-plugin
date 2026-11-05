@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
+use crate::compute_ffi::*;
 use crate::render_error::RenderError;
-use crate::{codec::Job, compute_ffi::*};
 use after_effects as ae;
 use std::{
     ffi::c_void,
     panic::{AssertUnwindSafe, catch_unwind},
 };
 
-const CLASS: &std::ffi::CStr = c"com.aodaruma.codec-map.decoded-frame.v3";
+const CLASS: &std::ffi::CStr = c"com.aodaruma.codec-map.values.v4";
 
 struct Suite {
     input: ae::InData,
@@ -44,8 +44,7 @@ impl Drop for Receipt<'_> {
 }
 struct Options<'a> {
     key: [u8; 16],
-    job: &'a Job,
-    abort: &'a mut dyn FnMut() -> Result<(), RenderError>,
+    compute: &'a mut dyn FnMut() -> Result<Vec<u8>, RenderError>,
     error: Option<RenderError>,
 }
 unsafe extern "C" fn key(options: *mut c_void, output: AEGP_CCComputeKeyP) -> ae::sys::A_Err {
@@ -68,7 +67,7 @@ unsafe extern "C" fn compute(options: *mut c_void, output: *mut *mut c_void) -> 
         *output = std::ptr::null_mut();
     }
     let options = unsafe { &mut *(options as *mut Options<'_>) };
-    match catch_unwind(AssertUnwindSafe(|| options.job.render(&mut options.abort))) {
+    match catch_unwind(AssertUnwindSafe(|| (options.compute)())) {
         Ok(Ok(value)) => {
             unsafe {
                 *output = Box::into_raw(Box::new(value)).cast();
@@ -139,13 +138,11 @@ pub fn unregister(input: ae::InData) {
 pub fn render(
     input: ae::InData,
     registered: bool,
-    job: &Job,
-    salt: &[u8],
-    mut abort: impl FnMut() -> Result<(), RenderError>,
+    key: [u8; 16],
+    mut compute_value: impl FnMut() -> Result<Vec<u8>, RenderError>,
 ) -> Result<Vec<u8>, RenderError> {
-    abort()?;
     if !registered {
-        return job.render(abort);
+        return compute_value();
     }
     let suite = Suite::new(input)?;
     let api = suite.api();
@@ -158,9 +155,8 @@ pub fn render(
     api.AEGP_CheckinComputeReceipt
         .ok_or("Missing cache checkin callback")?;
     let mut options = Options {
-        key: job.key(salt),
-        job,
-        abort: &mut abort,
+        key,
+        compute: &mut compute_value,
         error: None,
     };
     let mut raw = std::ptr::null_mut();
@@ -192,7 +188,6 @@ pub fn render(
     }
     // Never retain a borrowed cache pointer after checking the receipt in.
     let result = unsafe { (&*(value as *const Vec<u8>)).clone() };
-    abort()?;
     Ok(result)
 }
 
@@ -202,30 +197,18 @@ mod tests {
 
     #[test]
     fn compute_keeps_one_shot_cancellation_and_publishes_no_value() {
-        let job = Job {
-            width: 2,
-            height: 2,
-            time_scale: 24,
-            time_step: 1,
-            codec: crate::codec::Codec::H264,
-            quality: 28.0,
-            use_b: false,
-            target: 0,
-            frames: vec![],
-        };
         let mut calls = 0;
-        let mut abort = || {
+        let mut compute_value = || {
             calls += 1;
             if calls == 1 {
                 Err(ae::Error::InterruptCancel.into())
             } else {
-                Ok(())
+                Ok(Vec::new())
             }
         };
         let mut options = Options {
             key: [0; 16],
-            job: &job,
-            abort: &mut abort,
+            compute: &mut compute_value,
             error: None,
         };
         let mut value = std::ptr::dangling_mut::<c_void>();

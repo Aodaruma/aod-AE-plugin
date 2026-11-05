@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // Run in an empty project after smoke.ps1 has generated the source/map fixtures.
 (function () {
+    $.evalFile(new File(File($.fileName).parent.fsName + "/controls.jsxinc"));
     var root = new Folder(File($.fileName).parent.parent.parent.parent.fsName + "/target/codec-map-gop-one");
     root.create();
     var log = new File(root.fsName + "/host-report.txt");
@@ -15,13 +16,15 @@
         var layer = comp.layers.add(source);
         var mapLayer = comp.layers.add(map); mapLayer.enabled = false;
         var fx = layer.property("ADBE Effect Parade").addProperty("CodecMap");
-        fx.property("GOP Length").setValue(1);
-        fx.property("Compression Map").setValue(mapLayer.index);
+        codecParam(fx, "Quality Control").setValue(2);
+        codecParam(fx, "GOP Length").setValue(1);
+        codecParam(fx, "Map Source").setValue(2);
+        codecParam(fx, "Compression Map").setValue(mapLayer.index);
         var order = [0, 5, 2, 1, 11];
         for (var mapped = 1; mapped <= 2; mapped++) {
-            fx.property("Map Source").setValue(mapped);
+            codecParam(fx, "Map Source").setValue(mapped);
             for (var mode = 1; mode <= 2; mode++) {
-                fx.property("Temporal Mode").setValue(mode);
+                codecParam(fx, "Temporal Mode").setValue(mode);
                 for (var pass = 0; pass < 2; pass++) {
                     app.purge(PurgeTarget.ALL_CACHES);
                     for (var i = 0; i < order.length; i++) {
@@ -33,7 +36,7 @@
                 }
             }
         }
-        fx.property("Temporal Mode").setValue(1);
+        codecParam(fx, "Temporal Mode").setValue(1);
         comp.openInViewer();
         app.project.save(new File(root.fsName + "/gop-one.aep"));
         note("Requests completed: AE " + app.version + ". Verify the 40 PNGs externally.");

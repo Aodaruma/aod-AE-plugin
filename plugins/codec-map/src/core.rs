@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
 use after_effects::PixelF32;
-use utils::image::{SampleEdge, sample_bilinear};
 
 pub type Rgba = [f32; 4];
 
@@ -64,13 +63,16 @@ impl MapSettings {
         } else {
             1.0
         };
-        value = value.powf(1.0 / gamma);
+        if gamma != 1.0 {
+            value = value.powf(1.0 / gamma);
+        }
         if self.channel != 4 {
             value *= a;
         }
         value
     }
 
+    #[cfg(test)]
     pub fn sample(
         &self,
         pixels: &[PixelF32],
@@ -79,21 +81,42 @@ impl MapSettings {
         width: usize,
         height: usize,
     ) -> Vec<f32> {
+        self.sample_from(map_w, map_h, width, height, |x, y| pixels[y * map_w + x])
+    }
+
+    pub fn sample_from(
+        &self,
+        map_w: usize,
+        map_h: usize,
+        width: usize,
+        height: usize,
+        pixel: impl Fn(usize, usize) -> PixelF32,
+    ) -> Vec<f32> {
         if map_w == 0 || map_h == 0 {
             return vec![0.0; width * height];
         }
         (0..height)
             .flat_map(|y| {
+                let pixel = &pixel;
                 (0..width).map(move |x| {
                     let sx = (x as f32 + 0.5) * map_w as f32 / width as f32 - 0.5;
                     let sy = (y as f32 + 0.5) * map_h as f32 / height as f32 - 0.5;
-                    self.value(sample_bilinear(
-                        pixels,
-                        map_w,
-                        map_h,
-                        sx,
-                        sy,
-                        SampleEdge::Clamp,
+                    let x0 = sx.floor();
+                    let y0 = sy.floor();
+                    let tx = sx - x0;
+                    let ty = sy - y0;
+                    let at = |x: i64, y: i64| {
+                        pixel(
+                            x.clamp(0, map_w as i64 - 1) as usize,
+                            y.clamp(0, map_h as i64 - 1) as usize,
+                        )
+                    };
+                    let x0 = x0 as i64;
+                    let y0 = y0 as i64;
+                    self.value(utils::image::lerp_pixel(
+                        utils::image::lerp_pixel(at(x0, y0), at(x0 + 1, y0), tx),
+                        utils::image::lerp_pixel(at(x0, y0 + 1), at(x0 + 1, y0 + 1), tx),
+                        ty,
                     ))
                 })
             })
@@ -152,6 +175,37 @@ impl Canvas {
     }
 }
 
+pub fn check_buffer_memory(bytes: usize, limit_mib: i32) -> Result<(), String> {
+    if !(64..=8192).contains(&limit_mib) {
+        return Err("Working Memory must be 64..8192 MiB".into());
+    }
+    if bytes > limit_mib as usize * 1024 * 1024 {
+        return Err(format!(
+            "Working buffers need {} MiB. Increase Working Memory or lower preview resolution.",
+            bytes.div_ceil(1024 * 1024)
+        ));
+    }
+    Ok(())
+}
+pub fn check_working_memory(width: usize, height: usize, limit_mib: i32) -> Result<(), String> {
+    padded_size(width, height)?;
+    if !(64..=8192).contains(&limit_mib) {
+        return Err("Working Memory must be 64..8192 MiB".into());
+    }
+    let bytes = width
+        .checked_mul(height)
+        .and_then(|n| n.checked_mul(32))
+        .ok_or("Working size overflow")?;
+    if bytes > limit_mib as usize * 1024 * 1024 {
+        return Err(format!(
+            "Working buffers need {} MiB. Increase Working Memory or lower preview resolution.",
+            bytes.div_ceil(1024 * 1024)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 pub fn check_replay_memory(
     width: usize,
     height: usize,
@@ -196,6 +250,8 @@ pub fn to_yuv_from(
         let a = finite_unit(p[3]);
         if a == 0.0 {
             [0.0; 3]
+        } else if a == 1.0 {
+            [finite_unit(p[0]), finite_unit(p[1]), finite_unit(p[2])]
         } else {
             [
                 finite_unit(p[0] / a),
@@ -208,14 +264,6 @@ pub fn to_yuv_from(
     out.try_reserve_exact(size)
         .map_err(|_| "Not enough available memory for a codec frame. Lower preview resolution or Replay Memory.")?;
     out.resize(size, 0);
-    for y in 0..h {
-        for x in 0..w {
-            let [r, g, b] = rgb(x, y);
-            out[y * w + x] = (16.0 + 219.0 * (0.2126 * r + 0.7152 * g + 0.0722 * b))
-                .round()
-                .clamp(16.0, 235.0) as u8;
-        }
-    }
     for y in (0..h).step_by(2) {
         for x in (0..w).step_by(2) {
             let mut u = 0.0;
@@ -224,6 +272,8 @@ pub fn to_yuv_from(
                 for dx in 0..2 {
                     let [r, g, b] = rgb(x + dx, y + dy);
                     let l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                    out[(y + dy) * w + x + dx] =
+                        (16.0 + 219.0 * l).round().clamp(16.0, 235.0) as u8;
                     u += (b - l) / 1.8556;
                     v += (r - l) / 1.5748;
                 }
@@ -262,6 +312,46 @@ pub fn composite(original: Rgba, rgb: [f32; 3], weight: f32) -> Rgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn direct_map_sampling_matches_shared_bilinear() {
+        let p = (0..35)
+            .map(|i| PixelF32 {
+                red: i as f32 / 41.0,
+                green: 0.2,
+                blue: 0.7,
+                alpha: if i % 3 == 0 { 0.5 } else { 1.0 },
+            })
+            .collect::<Vec<_>>();
+        let cfg = MapSettings {
+            channel: 0,
+            invert: true,
+            gamma: 1.8,
+            black: -6.0,
+            white: 12.0,
+        };
+        let actual = cfg.sample(&p, 7, 5, 13, 9);
+        for y in 0..9 {
+            for x in 0..13 {
+                let sx = (x as f32 + 0.5) * 7.0 / 13.0 - 0.5;
+                let sy = (y as f32 + 0.5) * 5.0 / 9.0 - 0.5;
+                let expected = cfg.value(utils::image::sample_bilinear(
+                    &p,
+                    7,
+                    5,
+                    sx,
+                    sy,
+                    utils::image::SampleEdge::Clamp,
+                ));
+                assert_eq!(actual[y * 13 + x], expected);
+            }
+        }
+    }
+    #[test]
+    fn working_memory_is_independent_of_history_length() {
+        assert!(check_working_memory(1920, 1080, 64).is_ok());
+        assert!(check_working_memory(3840, 2160, 64).is_err());
+        assert!(check_working_memory(3840, 2160, 256).is_ok());
+    }
     #[test]
     fn replay_budget_includes_roi_and_can_exceed_old_limit() {
         // Ninety full-HD frames require 270 MiB including ROI offsets.

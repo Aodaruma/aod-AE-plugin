@@ -1,6 +1,6 @@
 # AOD_CodecMap 設計
 
-v0.2.1の実装仕様です。導入・UIの操作は[README](../../plugins/codec-map/README.md)、実施済みの確認は[検証記録](../../plugins/codec-map/tests/VALIDATION.md)を参照してください。
+v0.3の実装仕様です。導入・UIの操作は[README](../../plugins/codec-map/README.md)、実施済みの確認は[検証記録](../../plugins/codec-map/tests/VALIDATION.md)を参照してください。
 
 ## 目的・構成
 
@@ -42,21 +42,27 @@ encoderとdecoderの遅延出力をflushしてから、PTS≦要求時刻の最�
 
 I除去OFFへ戻した後の次のGOP境界から新規セッションへ戻ります。GOP=1ではI除去が画像保持になり、Independentでは初期Iを捨てられないためチェックボックスを無効化します。未来参照とDrop BはGOP≧3で使用できます。
 
+## UIと互換性
+
+基本画面はStyle、Compression、Datamosh、Area、Map Layer、Mix。Advancedは初期状態で閉じ、Codec / Motion / Map / Diagnosticsを置きます。プリセットの適用と値変更はUserChangedParamだけで行います。
+
+Compressionは0でバイパス、正値s/100をH.264の1+50s、VP9の63s、MPEG-4の1+30sへ変換します。Native指定では既存の品質値を使用。USE_VALUE_FOR_OLD_PROJECTSで旧AEPにStyle=Custom、Quality Control=Nativeを補います。保存IDを作るenum variant名は維持し、表示名・配列順を変更しました。旧名称・番号による式は互換性の対象外です。
+
 ## SmartFX・キャッシュ
 
-SmartPreRenderで入力とマップの全依存時刻を宣言します。画像は全体を取得し、要求タイルより広い出力を返すことをホストへ通知します。要求フレームの入力をcheckoutしてから出力をcheckoutします。履歴は現在入力のキャンバスへレイヤー座標で合わせます。サイズ・原点が変わっても伸縮せず、はみ出しを切り取り、足りない領域は黒で補います。現在のalphaを保持するため出力範囲は現在入力のままです。キャンバスが時間変化すると圧縮ブロックの基準も変わります。全時刻で固定するにはプリコンポーズを使います。これは各要求内での位置合わせであり、永続的なencoder状態の継続ではありません。
+SmartPreRenderで依存時刻を宣言し、PF_GetCurrentStateによる入力0・必要なマップの状態キーを取得します。画像を読む前にAE Compute Cache（values.v4）を照合。キーはcodec・品質・時間・B設定・除去設定・マップ設定・入力状態・現在キャンバス・bit depth・世代を含み、復号後のMixや表示方法は含めません。
 
-キャッシュクラスはcom.aodaruma.codec-map.decoded-frame.v3。完成した対象フレームのYUVだけをAE Compute Cacheへ格納し、以下をキーに含めます。
+完成YUVとフレーム単位のYUV＋ROIを別ラベルでキャッシュします。miss時だけ画像を取得し、順次変換して圧縮へ渡します。キャッシュ値は不変のVec<u8>で、receiptの借用ポインターを保持しません。変換・最終結果の公開前後に状態を再確認し、途中失敗・キャンセルでは完成値を公開しません。PF_Stateの内容を解釈せず、SDKの128-bit状態値をキーへ混ぜます。
 
-- 実装schema、コーデック、品質、B設定、対象フレーム位置
-- サイズ、時間スケール・間隔、依存時刻列、キャッシュ世代
-- 全フレームの入力YUV・ROI offset・I強制・I/B除去値
+未来OFFでは全入力の累積キーが一致するセッションを、プロセス内で最大2個のpoolから取り出します。単一所有で追加フレームをpushし、flushなしでsnapshotを取得します。C側のcapacityは6003。逆順・不一致・競合ではcold再計算します。未来ONではencoder / decoderをflushして表示対象を選択します。セッションにAEバッファやコールバックを保持しません。
 
-RGB/alphaと合成設定は現在入力へ毎回適用するため、復号キャッシュに含めません。PF_GetCurrentStateとPF_AreStatesIdenticalで依存区間の入力状態を前後比較します。取得したレイヤー・cache receiptはRAIIで返却し、途中失敗で値を公開しません。
+GOP=1のI除去は保持seedだけの計画へ縮約し、現在のalphaとマップは別に取得。負の時刻・サブフレームの規則、入力→出力checkout順を維持します。入力範囲の変化は現在キャンバスへ位置合わせし、伸縮しません。
 
-ホストエラーと独自メッセージをRenderErrorで分離します。PF_Interrupt_CANCELを含むホストエラーは、文字列への変換・再問い合わせ・エラーダイアログ表示をせず、そのまま返します。独自のコーデックエラーだけにDISPLAY_ERROR_MESSAGEを付けます。
+Working Memoryは一時バッファの保守的な見積もりへ適用し、全履歴の合計を要求しません。AEの入力・キャッシュ、FFmpeg内部メモリは別途必要です。各codecは1スレッドとし、AEの並列レンダーに任せます。
 
-再計算用YUVとROI offsetの合計はReplay Memory（既定1024 MiB、64〜8192 MiB）まで。既存IDを保持して末尾に固定スライダーを追加しました。上限は要求ごとに適用し、AEの入力・キャッシュ・コーデック内部メモリは含みません。履歴は6000フレーム未満、1辺16384画素まで。上限超過時は必要MiBを示し、上限・解像度・保持Iフレームで調整します。AE画素から直接YUVへ変換し、一時float RGBAコピーを作りません。Mix=0やマップ・要求QPの表示ではPreRenderから現在時刻だけを宣言し、履歴取得も圧縮も省略します。CPUのcodecスレッドは1で、要求間の並列化はAEへ任せます。
+loader参照をArcで共有し、各セッションにも所有権を持たせます。Windowsで大量のDLLロード・解放によるTLS index枯渇を防ぐため、共有runtimeはGlobalSetdownまで保持。setdownではpoolを破棄した後にruntimeを解放します。
+
+ホストエラーはRenderErrorで分離し、PF_Interrupt_CANCELなどを再問い合わせや独自ダイアログへ変換しません。開発用CODECMAP_PROFILE環境変数を設定したホストでは、stderrへ数値だけの処理回数・時間を出力します。通常UIに実装用の診断項目は追加しません。
 
 ## 参照・依存
 
