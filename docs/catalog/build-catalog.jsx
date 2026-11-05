@@ -192,7 +192,7 @@
             }
             control("Quality Control").setValue(2);
             control("Codec").setValue(3);
-            control("Codec Quality",2).setValue(20);
+            control("MPEG-4 Quality").setValue(20);
             control("Area").setValue(2);
             control("Map Layer").setValue(mapLayer.index);
         } else if (item.match === "ColorAjust") {

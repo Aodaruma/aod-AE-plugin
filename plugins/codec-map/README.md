@@ -28,7 +28,7 @@ Compressionは共通の0〜100。正値をH.264のCRF 1〜51、VP9のCQ 0〜63�
 
 | Advancedグループ | 項目 |
 |---|---|
-| Codec | Codec、Quality Control = Compression / Native、Codec Quality。選択した品質だけを表示 |
+| Codec Settings | Codec、Quality Control = Compression / Native、H.264 / VP9 / MPEG-4 Quality。選択した品質だけを表示 |
 | Motion | Frame Mode = Past Frames / Independent Frames、Refresh Interval（1〜60フレーム）、Allow Future Frames、Drop B-Frames |
 | Map | Channel、Invert、Gamma、Dark Area Bias / Light Area Bias（各±24）、Map Behavior |
 | Diagnostics | Display = Result / Map / Compression Bias / Difference、Working Memory (MiB)、Reset Cache |

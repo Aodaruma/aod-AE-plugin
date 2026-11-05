@@ -44,7 +44,7 @@ I除去OFFへ戻した後の次のGOP境界から新規セッションへ戻り�
 
 ## UIと互換性
 
-基本画面はStyle、Compression、Datamosh、Area、Map Layer、Mix。Advancedは初期状態で閉じ、Codec / Motion / Map / Diagnosticsを置きます。プリセットの適用と値変更はUserChangedParamだけで行います。
+基本画面はStyle、Compression、Datamosh、Area、Map Layer、Mix。Advancedは初期状態で閉じ、Codec Settings / Motion / Map / Diagnosticsを置きます。プリセットの適用と値変更はUserChangedParamだけで行います。
 
 Compressionは0でバイパス、正値s/100をH.264の1+50s、VP9の63s、MPEG-4の1+30sへ変換します。Native指定では既存の品質値を使用。USE_VALUE_FOR_OLD_PROJECTSで旧AEPにStyle=Custom、Quality Control=Nativeを補います。保存IDを作るenum variant名は維持し、表示名・配列順を変更しました。旧名称・番号による式は互換性の対象外です。
 

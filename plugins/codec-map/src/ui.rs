@@ -56,39 +56,39 @@ pub fn setup(params: &mut Parameters<Params>) -> Result<(), Error> {
         "Advanced",
         true,
         |p| {
-            p.add_group(Params::CodecStart, Params::CodecEnd, "Codec", false, |p| {
-                p.add_with_flags(
-                    Params::Codec,
-                    "Codec",
-                    popup(&["H.264", "VP9", "MPEG-4 Part 2"]),
-                    supervised(),
-                    U::NONE,
-                )?;
-                p.add_with_flags(
-                    Params::QualityMode,
-                    "Quality Control",
-                    ae::PopupDef::setup(|p| {
-                        p.set_options(&["Compression", "Native"]);
-                        p.set_default(1).set_value(2);
-                    }),
-                    supervised() | F::USE_VALUE_FOR_OLD_PROJECTS,
-                    U::NONE,
-                )?;
-                for (id, value, min, max) in [
-                    (Params::Crf, 28.0, 1.0, 51.0),
-                    (Params::Vp9Quality, 35.0, 0.0, 63.0),
-                    (Params::Mpeg4Quality, 8.0, 1.0, 31.0),
-                ] {
+            p.add_group(
+                Params::CodecStart,
+                Params::CodecEnd,
+                "Codec Settings",
+                false,
+                |p| {
                     p.add_with_flags(
-                        id,
-                        "Codec Quality",
-                        slider(value, min, max),
+                        Params::Codec,
+                        "Codec",
+                        popup(&["H.264", "VP9", "MPEG-4 Part 2"]),
                         supervised(),
                         U::NONE,
                     )?;
-                }
-                Ok(())
-            })?;
+                    p.add_with_flags(
+                        Params::QualityMode,
+                        "Quality Control",
+                        ae::PopupDef::setup(|p| {
+                            p.set_options(&["Compression", "Native"]);
+                            p.set_default(1).set_value(2);
+                        }),
+                        supervised() | F::USE_VALUE_FOR_OLD_PROJECTS,
+                        U::NONE,
+                    )?;
+                    for (id, name, value, min, max) in [
+                        (Params::Crf, "H.264 Quality", 28.0, 1.0, 51.0),
+                        (Params::Vp9Quality, "VP9 Quality", 35.0, 0.0, 63.0),
+                        (Params::Mpeg4Quality, "MPEG-4 Quality", 8.0, 1.0, 31.0),
+                    ] {
+                        p.add_with_flags(id, name, slider(value, min, max), supervised(), U::NONE)?;
+                    }
+                    Ok(())
+                },
+            )?;
             p.add_group(
                 Params::MotionStart,
                 Params::MotionEnd,
