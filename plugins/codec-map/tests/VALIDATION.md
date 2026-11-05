@@ -11,6 +11,9 @@ Windows x64、AE 2025 25.6.6x4、固定FFmpeg 8.1.2で確認。fmt、clippy（al
 - 現在時刻を変えずseedの入力だけを編集すると結果が変わり、編集後のwarmとpurge後coldが一致。
 - AE内の連続36フレームをCODECMAP_PROFILEで計測。通常GOP=12は投入36回、GOP=1のI除去は投入1回で72 PNGを生成。集計はtarget/codec-map-v03/ae-profile.json。
 - 短期セッションの大量試験でWindowsのTLS index枯渇を再現し、共有runtime保持へ修正。修正後は全9条件×3回の性能計測を884.64秒実行して完了した。
+- パラメーター名の最終整理後もコーデック40画像・21比較とv03の16画像・8比較を再実行し成功。旧AEPのCustom / Native復元、旧PNGとのSHA-256一致も再確認した。
+- MPEG-4の同じフレームでGamma・Mixだけを変更し、3画像で合成結果が変わる一方、CODECMAP_PROFILEの符号化投入が1回だけであることを確認した。
+- カタログAEPを新UIで保存し、個別プレビュー・Photo一覧・全体一覧をAEで再生成。画素は従来と一致し、個別プレビューも目視確認した。
 
 ### 圧縮経路の時間
 
@@ -34,7 +37,18 @@ CODECMAP_CODEC_DIRを同梱DLLへ、CODECMAP_BENCH=1を設定し、cargo test -p
 
 別プロセスでFull HD・90フレームのI除去を実行し、WindowsのPeakWorkingSet64を記録。従来一括保持は338.35 MiB、ストリーミングは68.37 MiB（約80%減）。共通runtime・テストプロセスを含み、AE全体のRAM使用量とは異なる。CODECMAP_MEMORY_CASE=cold / streamでbenchmark_memoryを個別実行し、memory-summary.jsonへ保存した。
 
-macOSのCI・パッケージ結果は完了後に追記する。macOS版AEとIntel Mac実機は未確認。
+### 配布用の検証ZIP
+
+両OSの対象ソースは32e9c8b389c70fd113cece5170d59eb8727a340d。Windows本体のSHA-256はc065930a9c7e5542a576b91e9c90ebd8197fe5cf3d70f15d40e88b55f315911eで、AEに設置した本体と一致する。PE x64、ZIP CRC、各同梱ファイルのハッシュ、ライセンス・ソースの収録を検証した。
+
+macOSは[CI run 42091876592](https://github.com/Aodaruma/aod-AE-plugin/actions/runs/42091876592)で成功。macOS 15.8.2 / arm64、Rust 1.99.1、Apple clang 17.0.0、deployment target 11.0。実ランタイムによる機能試験17件が成功し、性能計測用2エントリーは環境変数未指定のため計測せず終了した。プラグインと2共有ライブラリのarm64 / x86_64、依存先、アドホック署名を検証。取得後も両CPUのMach-Oと署名データ、依存先、ソース・ライセンス、ZIP CRCとCIのSHA-256を照合した。
+
+Downloadsへ配置した0.3.0 ZIPとSHA-256:
+
+- AOD_CodecMap-0.3.0-windows-x64.zip（37,044,094 bytes）: e1dd41546ceab11431bec3eace7372bfdfb745159e84877d67cad44f02c584d2
+- AOD_CodecMap-0.3.0-macos-universal.zip（29,551,272 bytes）: 6327d72684fe115dd5e12c9a0484ca8f80ad38fae4378a85c777e6ba2de4cd05
+
+macOS版AEとIntel Mac実機は未確認。作業用のビルド成果物はcheckout内のtargetへ集約し、外部ドライブの一時フォルダーは使用していない。
 
 ## 0.2.1：履歴メモリ・可変入力範囲（2026-10-12）
 
