@@ -795,12 +795,22 @@ dependencies = [
 
 [[package]]
 name = "eyedropper_mask"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "after-effects",
  "chrono",
  "pipl",
  "seq-macro",
+ "utils",
+]
+
+[[package]]
+name = "fake_blur"
+version = "0.3.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
  "utils",
 ]
 
@@ -1324,6 +1334,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_bevel"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "bincode",
+ "chrono",
+ "pipl",
+ "serde",
+ "utils",
+ "winres",
+]
+
+[[package]]
 name = "image_calculate"
 version = "0.1.0"
 dependencies = [
@@ -1370,6 +1393,16 @@ dependencies = [
  "utils",
  "wgpu",
  "winres",
+]
+
+[[package]]
+name = "image_resize"
+version = "0.3.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
 ]
 
 [[package]]
@@ -2699,7 +2732,7 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "space_convert"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "after-effects",
  "chrono",
@@ -2917,7 +2950,9 @@ dependencies = [
  "futures-intrusive",
  "num-complex",
  "pollster",
+ "rayon",
  "rustfft",
+ "serde",
  "wgpu",
 ]
 

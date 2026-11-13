@@ -181,7 +181,9 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 - `Input B/C`、`Layer B/C`、`Value B/C`: 第2・第3引数を数値またはレイヤーから指定します。
 - `Epsilon`: 除算や比較で使用する微小値です。
 - `Channel`、`Calculation Color Space`: 対象チャンネルと演算空間を選択します。
-- `Clamp Result`、`Use Original Alpha`: 出力範囲とアルファを制御します。
+- `Clamp Mode`: None（既定）、Clamp、Wrap、Pingpongから出力範囲の処理を選びます。Noneは32bpcで範囲外の値を保持し、8／16bpcでは0～1に制限します。
+- `Use Original Alpha`: 入力アルファを保持し、範囲処理後のRGBへ乗算します。Wrap／Pingpongでアルファも処理するのは、ChannelがRGBAまたはAの場合です。
+- `Mix (%)`: 0%で元画像、100%（既定）でエフェクト適用後の画像を出力します。中間値では範囲・アルファ処理後の結果と元画像を混ぜます。
 
 ## AOD_ImageCrypt
 
@@ -203,6 +205,44 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 ### 補足
 
 機密保護用の暗号ではなく、モーショングラフィックスやグリッチ表現向けの可逆変換です。厳密な復元には同一寸法・ビット深度・キー・設定と、途中で未加工のエンコード画像が必要です。Resilient Replicasは論理解像度を下げる代わりに、局所的な画素破損を中央値で復元するlossy方式です。
+
+## AOD_FakeBlur
+
+- **分類:** P：一般写真・連続階調画像（補助入力: D）
+
+![AOD_FakeBlur](assets/previews/fake-blur.png)
+
+Mipmap（既定）、Displacement、縮小画像の再補間によるブラーです。マップの黒を半径0、白を指定半径として空間的に制御します。Displacementはコピーごとにランダムな方向を1つ決め、その方向へ変位させた画像を重ねます。各コピー内では方向を共通にし、変位量をBlur Mapで制御します。
+
+### パラメーター
+
+- `Blur Mode`、`Blur Radius`: 方式と半径。
+- `Blur Map`、`Map Channel`、`Invert Map`: マップ入力、輝度／RGBAチャンネル、反転。
+- `Evolution`、`Samples`: Displacementの方向の組み合わせの回転（度数）、重ねる枚数。
+- `Interpolation`: Nearest／Bilinear／Cubic B-Spline。
+- `Edges`、`Mix`、`Processing`: 境界処理、元画像との混合、CPU／GPU。
+
+[操作方法・制限](../../plugins/fake-blur/README.md)
+
+## AOD_ImageResize
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_ImageResize](assets/previews/image-resize.png)
+
+画像の上下左右をピクセル数または%で拡張・クリッピングし、回転や指定幅・高さでの出力も行えます。画像の拡大縮小は行いません。
+
+### パラメーター
+
+- `Mode`: Pixels／Percent／Output Sizeから選択します。
+- `Top`、`Bottom`、`Left`、`Right`: 展開済みのEdgesグループ内に配置し、Pixels／Percentに合わせて(px)／(%)を表示します。正値でクリップ、負値で拡張。%は元の辺が0%、反対の辺が100%です。
+- `All %`: 全4辺の調整量に掛ける係数。0%で無効、100%で指定値どおり、300%で3倍。負値ではクリップ／拡張の方向を反転します。
+- `Extend`: None（透明）／Mirror（鏡像反復）／Tile（画像全体の繰り返し）／Repeat（端の画素を引き伸ばす、旧Clamp）を選びます。
+- `Angle`: 元のレイヤー中心を軸に時計回りに回転します。初期値0°で、All %から独立しています。
+- `Interpolation`: 回転時のみ表示し、Nearest／Bilinearを選びます。
+- `Output Width (px)`、`Output Height (px)`: Mode＝Output Sizeでのみ、展開済みのOutput Sizeグループに表示します。画像の倍率を保って指定寸法でクリップ／拡張します。寸法はこちらを優先し、Center Adjustmentグループの%単位の上下左右・All %・Angleから枠の中心を求めます。All %＝0%でも指定サイズは有効です。
+
+プレビューは12°回転した画像を800×430pxの枠にクリップ／拡張し、画像外をMirrorで埋めた例です。詳しい計算例は[プラグインの説明](../../plugins/image-resize/README.md)を参照してください。
 
 ## AOD_ImageScaler
 
