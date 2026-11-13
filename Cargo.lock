@@ -1324,6 +1324,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_bevel"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "bincode",
+ "chrono",
+ "pipl",
+ "serde",
+ "utils",
+ "winres",
+]
+
+[[package]]
 name = "image_calculate"
 version = "0.1.0"
 dependencies = [
