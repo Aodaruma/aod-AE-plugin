@@ -107,9 +107,16 @@ Canny法で色や明度の境界を検出し、輪郭線画像を生成します
 ### パラメーター
 
 - `Color Threshold`、`Alpha Threshold`、`Region Min Alpha`: 領域探索の色・透明度条件を設定します。
-- `Alpha Workflow`: プリマルチ／ストレートの処理方式を選択します。
+- `Selection Source`: 素材の原画像／上流のマスク・エフェクト適用後から領域を判定します。
+- `Color Interpretation`: プリマルチ／ストレートRGBでの色比較を選択します。
+- `Stabilize Reduced Resolution`: 縮小プレビュー内の小さな穴を通じて選択領域が広がるのを抑えます。処理はプレビュー解像度で完結します。近似による制約と検証状況は[プラグインREADME](../../plugins/eyedropper-mask/README.md)を参照してください。
+- `Preview Gap Radius (px)`: 穴の保護半径を0〜3プレビューピクセルで指定します。既定は1、0は保護なしです。Fullには影響しません。
 - `Connectivity`: 4近傍／8近傍の連結条件を選択します。
 - `Add/Remove Point`と各Point: スポイト位置、対象色、適用不透明度を管理します。
+
+AE 26.3でのFull／Quarter比較です。OFFでは縮小によって境界の一部に開いた穴から隣接領域まで透明になりますが、ONではその広がりを抑えます。境界全体が消失した場合は復元できません。
+
+![Eyedropper Maskの解像度比較](assets/previews/eyedropper-mask-resolution.png)
 
 ## AOD_ImageRelight
 

@@ -53,6 +53,8 @@ After Effects 2025で[`catalog/ae2025-plugin-catalog/aod-plugin-catalog-ae2025.a
 
 生成先は`docs/catalog/assets/`です。素材プロジェクトに`Cat Crop 512x512`がない場合は、比較用の手続きテスト素材を自動生成します。
 
+Eyedropper Maskの解像度比較画像は、[実機テスト](../../plugins/eyedropper-mask/README.md#検証)の出力から `plugins/eyedropper-mask/tests/render-comparison.ps1` で生成します。2026-10-27の近似処理版（v0.2.2）と最適化版（v0.2.3）の更新ではAE 26.3から個別プレビュー・アニメ分類・全体一覧を再出力し、Full表示の3画像は既存画像とSHA-256が一致することを確認しました。解像度による違いは追加の比較画像に収録しています。
+
 個別エフェクトだけを更新する場合は、`AOD_CATALOG_PHASE`を`update-preview`、`AOD_CATALOG_SLUG`を対象ディレクトリ名（例：`image-resize`）に設定して`build-catalog.jsx`を実行します。対象のコンポジションとPNGを作成し、保存済みの各プレビューPNGから該当分類・全体一覧を再生成します。他のエフェクトの個別プレビューは変更しません。
 
 大きな一覧で`saveFrameToPng`がファイルを生成しない場合は、PNG出力モジュールテンプレートを使ってレンダーキューから1フレームを書き出します。既存のキュー項目は実行せず、有効状態を復元します。一時出力は`target/catalog-export/`に置き、正常に生成できたPNGだけでカタログ画像を更新します。
