@@ -91,12 +91,15 @@
 
 ### パラメーター
 
-- `Path Source`: マスク／シェイプの自動判定、全マスク、指定マスク、シェイプパスを選択します。シェイプはBezier・長方形・楕円と2D変形に対応します。
-- `Texture Layer`、`Texture Time`: ブラシ画像とCurrent／Fixed Frame／Along Stroke／Random Per Stampの取得時間を選択します。None時も時間設定を表示し、選択するまでグレーアウトします。
+- `Path Source`: マスク／シェイプの自動判定、全マスク、指定マスク、シェイプパスを選択します。シェイプはBezier・長方形・楕円と2D変形に対応します。コラップスしたプリコンポに適用すると内部のシェイプを、調整レイヤーに適用するとその下のシェイプとコラップスしたプリコンポを取得します。
+- `Texture Layer`、`Texture Time`: ブラシ画像とCurrent／Fixed Frame／Along Stroke／Random Still (Layer Range)の取得時間を選択します。Randomは参照レイヤーの有効範囲からスタンプごとに固定フレームを割り当てます。None時も時間設定を表示し、選択するまでグレーアウトします。
 - `Stroke Width`、`Stroke Opacity`、`Stroke Blend Mode`: ブラシの基本幅、不透明度、合成方法を設定します。
 - `Stamp Order`: パスの始点から終点、または終点から始点の順にブラシを重ねます。各スタンプの位置やランダム値は維持します。
 - `Size`、`Spacing`、`Rotation`、`Opacity`: 大きさ、間隔、回転、不透明度の変化と乱数を調整します。テクスチャ未指定時は末尾の`Fallback Brush`で円／四角と柔らかさを設定します。
 - `Mask Feather`: マスクのぼかし幅をストローク幅として使用できます。
+- `Path / Map Dynamics`: サイズ・配置密度・回転・不透明度ごとに、曲率／周囲の別パスの密集度／各パスの長さ／画像マップの輝度・アルファを入力として選択し、カーブで応答を調整します。画像はコンポジションの絶対座標で参照し、2D変形・親子付けに追従します。
 - `Output`: 前面合成（初期値）、ストロークのみ、背面合成を選択します。
 
-Trim Paths・Repeater・Merge Pathsなどのシェイプ演算後の輪郭と3D投影には未対応です。PolystarはBezierへ変換してください。Side Color／Stroke Sideは削除されています。
+入れ子のコラップス、親子の2D変形、開始時間・タイムストレッチ・タイムリマップにも対応します。プレビューはコラップスしたプリコンポ内のパスを回転・縮小し、曲率によってブラシサイズを変えたものです。
+
+Trim Paths・Repeater・Merge Pathsなどのシェイプ演算後の輪郭と3D投影には未対応です。入れ子のプリコンポもコラップスを有効にしてください。子レイヤーのマスク・マット・不透明度・塗り／線のスタイルはブラシへ転写せず、エフェクト側の設定を使用します。PolystarはBezierへ変換してください。Side Color／Stroke Sideは削除されています。
