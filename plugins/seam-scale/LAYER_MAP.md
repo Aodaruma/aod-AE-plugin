@@ -74,3 +74,9 @@ python plugins/seam-scale/tests/verify_layer_map.py target/seam-scale-0.3.0/laye
 ```
 
 8/16/32bpcの各10ケースで、入力マップの参照、未指定、恒等変換、黒白反転時の出力一致、固定画素、負倍率、復元、個別軸、マップOFFの通常処理との一致を比較します。
+
+### dev統合時の再確認（2026-11-13）
+
+`dev`の`b6126ff`を統合し、fmt・workspace clippy・workspaceテストを再実行しました。テストは284成功、失敗0、性能計測4件は除外です。SeamScale/SeamMapのRust実装は上記の実機検証時から変更していません。
+
+専用のAE 2025（25.6.6x4）プロセスでdev側のカタログAEPへ両エフェクトを追加し、個別プレビュー・Photo一覧・全41エフェクト一覧を再生成しました。両個別PNGのヘッダーと展開後データは既存の検証済み画像と完全一致しました。dev側TextureStrokeの3コンポジションのプロパティ、個別プレビュー、Generator一覧が保持されていることも確認しています。生成時の警告はありません。

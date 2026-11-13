@@ -4,11 +4,15 @@ use after_effects as ae;
 use std::env;
 use std::ffi::CString;
 use std::fs::OpenOptions;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 
 use ae::pf::*;
 use utils::ToPixel;
 
+mod curves;
+mod dynamics;
+mod layers;
 mod shapes;
 #[cfg(test)]
 mod tests;
@@ -83,6 +87,31 @@ enum Params {
     FallbackBrushSoftness,
     BrushFallbackGroupEnd,
     BrushGroupEnd,
+    DynamicsStart,
+    DynamicsEnd,
+    SizeDynamicsStart,
+    SizeDynamicsEnd,
+    SizeDynamicsSource,
+    SizeMapLayer,
+    SizeCurve,
+    DensityDynamicsStart,
+    DensityDynamicsEnd,
+    DensityDynamicsSource,
+    DensityMapLayer,
+    DensityCurve,
+    RotationDynamicsStart,
+    RotationDynamicsEnd,
+    RotationDynamicsSource,
+    RotationMapLayer,
+    RotationCurve,
+    OpacityDynamicsStart,
+    OpacityDynamicsEnd,
+    OpacityDynamicsSource,
+    OpacityMapLayer,
+    OpacityCurve,
+    CurvatureRadius,
+    CrowdingRadius,
+    LengthReference,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -139,6 +168,7 @@ enum BlendMode {
 
 #[derive(Clone, Copy)]
 struct Settings {
+    dynamics: dynamics::Dynamics,
     path_source: PathSource,
     output_mode: OutputMode,
     stamp_order: StampOrder,
@@ -256,6 +286,28 @@ struct PreparedStroke {
     stamps: Vec<BrushStamp>,
 }
 
+impl PreparedStroke {
+    fn dependency_hash(&self) -> u64 {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        self.stamps.len().hash(&mut hash);
+        for stamp in &self.stamps {
+            stamp.path_index.hash(&mut hash);
+            stamp.stamp_index.hash(&mut hash);
+            for value in [
+                stamp.x,
+                stamp.y,
+                stamp.along,
+                stamp.size,
+                stamp.opacity,
+                stamp.rotation,
+            ] {
+                value.to_bits().hash(&mut hash);
+            }
+        }
+        hash.finish()
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Canvas {
     width: usize,
@@ -307,7 +359,7 @@ impl AdobePluginGlobal for Plugin {
     fn params_setup(
         &self,
         params: &mut ae::Parameters<Params>,
-        _in_data: InData,
+        in_data: InData,
         _: OutData,
     ) -> Result<(), Error> {
         let supervise_flags = || {
@@ -473,7 +525,7 @@ impl AdobePluginGlobal for Plugin {
                             "Current",
                             "Fixed Frame",
                             "Along Stroke",
-                            "Random Per Stamp",
+                            "Random Still (Layer Range)",
                         ]);
                         d.set_default(1);
                     }),
@@ -804,7 +856,10 @@ impl AdobePluginGlobal for Plugin {
                 Ok(())
             },
         )?;
-
+        dynamics::setup(params)?;
+        in_data
+            .interact()
+            .register_ui(CustomUIInfo::new().events(ae::CustomEventFlags::EFFECT))?;
         Ok(())
     }
 
@@ -827,15 +882,18 @@ impl AdobePluginGlobal for Plugin {
                 );
             }
             ae::Command::GlobalSetup => {
+                out_data.set_out_flag(OutFlags::CustomUi, true);
                 out_data.set_out_flag(OutFlags::SendUpdateParamsUi, true);
                 out_data.set_out_flag(OutFlags::PixIndependent, true);
                 out_data.set_out_flag(OutFlags::UseOutputExtent, true);
                 out_data.set_out_flag(OutFlags::WideTimeInput, true);
+                out_data.set_out_flag(OutFlags::NonParamVary, true);
                 out_data.set_out_flag2(OutFlags2::SupportsSmartRender, true);
                 out_data.set_out_flag2(OutFlags2::FloatColorAware, true);
                 out_data.set_out_flag2(OutFlags2::AutomaticWideTimeInput, true);
                 out_data.set_out_flag2(OutFlags2::DependsOnUnreferencedMasks, true);
                 out_data.set_out_flag2(OutFlags2::RevealsZeroAlpha, true);
+                out_data.set_out_flag2(OutFlags2::IMixGuidDependencies, true);
                 if let Ok(suite) = ae::aegp::suites::Utility::new()
                     && let Ok(plugin_id) = suite.register_with_aegp("AOD_TextureStroke")
                 {
@@ -860,7 +918,13 @@ impl AdobePluginGlobal for Plugin {
                     in_data.time_scale(),
                 )?;
                 let prepared = self.prepare_stroke(in_data, params)?;
-                let texture = build_texture_frames(params, in_data, &prepared.settings)?;
+                // AEGP path/transform reads are outside parameter checkout.
+                // Include the actual geometry in AE's cached-frame identity.
+                extra
+                    .callbacks()
+                    .guid_mix_in_ptr(&prepared.dependency_hash())?;
+                let texture =
+                    build_texture_frames(params, in_data, self.aegp_id, &prepared.settings)?;
                 let scale = render_scale(in_data);
                 let stroke_rect = stroke_bounds(&prepared.stamps, &texture, scale);
                 let mut bounds = stroke_rect;
@@ -892,14 +956,18 @@ impl AdobePluginGlobal for Plugin {
             }
             ae::Command::UserChangedParam { param_index } => {
                 let changed = params.type_at(param_index);
-                if matches!(
-                    changed,
-                    Params::PathSource
-                        | Params::TextureLayer
-                        | Params::TextureTimeMode
-                        | Params::StrokeWidthSource
-                        | Params::RotateWithStroke
-                ) {
+                if dynamics::CHANNELS
+                    .iter()
+                    .any(|c| changed == c.source || changed == c.map)
+                    || matches!(
+                        changed,
+                        Params::PathSource
+                            | Params::TextureLayer
+                            | Params::TextureTimeMode
+                            | Params::StrokeWidthSource
+                            | Params::RotateWithStroke
+                    )
+                {
                     out_data.set_out_flag(OutFlags::RefreshUi, true);
                 }
             }
@@ -907,6 +975,12 @@ impl AdobePluginGlobal for Plugin {
                 let mut params_copy = params.cloned();
                 self.update_params_ui(in_data, &mut params_copy)?;
             }
+            ae::Command::ArbitraryCallback { mut extra } => {
+                for channel in &dynamics::CHANNELS {
+                    extra.dispatch::<curves::Curve, Params>(channel.curve)?;
+                }
+            }
+            ae::Command::Event { mut extra } => curves::event(params, &mut extra)?,
             _ => {}
         }
         Ok(())
@@ -984,7 +1058,7 @@ impl Plugin {
         Self::set_param_enabled(params, Params::FallbackBrushSoftness, !has_texture_layer)?;
 
         let shape_source = path_source == PathSource::ShapePaths
-            || (path_source == PathSource::Auto && shapes::is_shape_layer(in_data)?);
+            || (path_source == PathSource::Auto && shapes::has_shape_source(in_data)?);
         self.set_param_visible(in_data, params, Params::MaskGroupStart, !shape_source)?;
         self.set_param_visible(in_data, params, Params::StrokeWidthSource, !shape_source)?;
         let feather_width_enabled =
@@ -999,11 +1073,7 @@ impl Plugin {
         Self::set_param_enabled(
             params,
             Params::TimeRangeFrames,
-            has_texture_layer
-                && matches!(
-                    time_mode,
-                    TextureTimeMode::AlongStroke | TextureTimeMode::RandomPerStamp
-                ),
+            has_texture_layer && time_mode == TextureTimeMode::AlongStroke,
         )?;
         Self::set_param_enabled(
             params,
@@ -1027,10 +1097,7 @@ impl Plugin {
             (Params::FixedFrame, time_mode == TextureTimeMode::FixedFrame),
             (
                 Params::TimeRangeFrames,
-                matches!(
-                    time_mode,
-                    TextureTimeMode::AlongStroke | TextureTimeMode::RandomPerStamp
-                ),
+                time_mode == TextureTimeMode::AlongStroke,
             ),
             (
                 Params::TimeSamples,
@@ -1045,6 +1112,20 @@ impl Plugin {
             ),
         ] {
             self.set_param_visible(in_data, params, id, visible)?;
+        }
+        let mut sources = Vec::new();
+        for c in &dynamics::CHANNELS {
+            let source = dynamics::Source::popup(params.get(c.source)?.as_popup()?.value());
+            self.set_param_visible(in_data, params, c.map, source.is_map())?;
+            self.set_param_visible(in_data, params, c.curve, source != dynamics::Source::None)?;
+            sources.push(source);
+        }
+        for (id, source) in [
+            (Params::CurvatureRadius, dynamics::Source::Curvature),
+            (Params::CrowdingRadius, dynamics::Source::Crowding),
+            (Params::LengthReference, dynamics::Source::Length),
+        ] {
+            self.set_param_visible(in_data, params, id, sources.contains(&source))?;
         }
         Ok(())
     }
@@ -1155,7 +1236,7 @@ impl Plugin {
         } else {
             vec![transparent(); width * height]
         };
-        let texture = build_texture_frames(params, in_data, &prepared.settings)?;
+        let texture = build_texture_frames(params, in_data, self.aegp_id, &prepared.settings)?;
         let out =
             render_texture_stroke(&src, &prepared.stamps, canvas, &texture, prepared.settings);
         write_layer_rgba(&mut out_layer, &out)
@@ -1167,6 +1248,7 @@ impl Plugin {
         params: &mut Parameters<Params>,
     ) -> Result<PreparedStroke, Error> {
         let settings = read_settings(params)?;
+        let maps = dynamics::Maps::checkout(params, in_data, self.aegp_id, settings.dynamics)?;
         let shape_paths = if matches!(
             settings.path_source,
             PathSource::Auto | PathSource::ShapePaths
@@ -1176,12 +1258,12 @@ impl Plugin {
             None
         };
         let stamps = if let Some(points) = shape_paths {
-            stamps_from_points(&points, settings)
+            stamps_with_maps(&points, settings, &maps)
         } else if settings.path_source == PathSource::ShapePaths {
             Vec::new()
         } else {
             let paths = collect_path_selections(params, in_data, settings.path_source)?;
-            build_brush_stamps(in_data, self.aegp_id, &paths, settings)?
+            build_brush_stamps(in_data, self.aegp_id, &paths, settings, &maps)?
         };
         Ok(PreparedStroke { settings, stamps })
     }
@@ -1189,6 +1271,7 @@ impl Plugin {
 
 fn read_settings(params: &mut Parameters<Params>) -> Result<Settings, Error> {
     Ok(Settings {
+        dynamics: dynamics::Dynamics::read(params)?,
         path_source: path_source_from_popup(params.get(Params::PathSource)?.as_popup()?.value()),
         output_mode: output_mode_from_popup(params.get(Params::OutputMode)?.as_popup()?.value()),
         stamp_order: stamp_order_from_popup(params.get(Params::StampOrder)?.as_popup()?.value()),
@@ -1288,6 +1371,7 @@ fn read_settings(params: &mut Parameters<Params>) -> Result<Settings, Error> {
 fn build_texture_frames(
     params: &mut Parameters<Params>,
     in_data: InData,
+    plugin_id: Option<ae::aegp::PluginId>,
     settings: &Settings,
 ) -> Result<BrushTexture, Error> {
     let sample_count = match settings.texture_time_mode {
@@ -1297,8 +1381,17 @@ fn build_texture_frames(
 
     let mut frames = Vec::with_capacity(sample_count);
     let mut has_texture_layer = false;
+    let span = if settings.texture_time_mode == TextureTimeMode::RandomPerStamp {
+        layers::texture_span(params, in_data, plugin_id)?
+    } else {
+        None
+    };
     for sample in 0..sample_count {
-        let time = texture_checkout_time(in_data, settings, sample, sample_count);
+        let time = if let Some(span) = span {
+            span.checkout_time(sample, sample_count)
+        } else {
+            texture_checkout_time(in_data, settings, sample, sample_count)
+        };
         let checkout = params.checkout_at(Params::TextureLayer, Some(time), None, None)?;
         let texture_layer = checkout.as_layer()?.value();
 
@@ -1403,6 +1496,7 @@ fn build_brush_stamps(
     plugin_id: Option<ae::aegp::PluginId>,
     paths: &[PathSelection],
     settings: Settings,
+    maps: &dynamics::Maps,
 ) -> Result<Vec<BrushStamp>, Error> {
     let feather_profiles = if matches!(settings.stroke_width_source, StrokeWidthSource::StrokeWidth)
     {
@@ -1419,18 +1513,30 @@ fn build_brush_stamps(
         return Ok(Vec::new());
     }
 
-    Ok(stamps_from_points(&points, settings))
+    Ok(stamps_with_maps(&points, settings, maps))
 }
 
+#[cfg(test)]
 fn stamps_from_points(points: &[PathPoint], settings: Settings) -> Vec<BrushStamp> {
+    stamps_with_maps(points, settings, &dynamics::Maps::default())
+}
+
+fn stamps_with_maps(
+    points: &[PathPoint],
+    settings: Settings,
+    maps: &dynamics::Maps,
+) -> Vec<BrushStamp> {
     let mut stamps = Vec::new();
+    let inputs = dynamics::Inputs::new(points, settings.dynamics, maps);
+    let mut probes = 0;
     // Restart spacing for each independent path. A long final gap in one path
     // must never suppress the beginning (or entirety) of the next path.
     for path in points.chunk_by(|a, b| a.path_index == b.path_index) {
         let mut next_along = path[0].along;
         let end = path.last().unwrap().along;
         let mut index = 0;
-        while next_along <= end && stamps.len() < MAX_BRUSH_STAMPS {
+        while next_along <= end && probes < MAX_BRUSH_STAMPS {
+            probes += 1;
             while index + 1 < path.len() && path[index + 1].along < next_along {
                 index += 1;
             }
@@ -1456,8 +1562,11 @@ fn stamps_from_points(points: &[PathPoint], settings: Settings) -> Vec<BrushStam
                 ..a
             };
             let stamp_index = stamps.len() as u32;
-            let size = stamp_size(settings, point, stamp_index);
-            if point.stroke_width > 0.0 {
+            let values =
+                inputs.values(point, dynamics::curvature(path, index), end - path[0].along);
+            let base_size = stamp_size(settings, point, stamp_index);
+            let size = base_size * values[dynamics::SIZE];
+            if point.stroke_width > 0.0 && size > 0.0 && values[dynamics::DENSITY] > 0.0 {
                 stamps.push(BrushStamp {
                     path_index: point.path_index,
                     x: point.x,
@@ -1466,11 +1575,26 @@ fn stamps_from_points(points: &[PathPoint], settings: Settings) -> Vec<BrushStam
                     along: point.along,
                     stamp_index,
                     size,
-                    opacity: stamp_opacity(settings, point.along, stamp_index),
-                    rotation: stamp_rotation(settings, point, stamp_index),
+                    opacity: (stamp_opacity(settings, point.along, stamp_index)
+                        * values[dynamics::OPACITY])
+                        .clamp(0.0, 1.0),
+                    rotation: stamp_rotation(settings, point, stamp_index)
+                        + values[dynamics::ROTATION],
                 });
             }
-            next_along += stamp_spacing(settings, size, point.along, stamp_index);
+            let spacing = stamp_spacing(
+                settings,
+                if size > 0.0 { size } else { base_size },
+                point.along,
+                stamp_index,
+            );
+            // Continue probing a zero-density region so a later rising curve
+            // can resume the stroke instead of skipping the rest of the path.
+            next_along += if values[dynamics::DENSITY] > 0.0 {
+                (spacing / values[dynamics::DENSITY]).max(0.5)
+            } else {
+                spacing.min(4.0)
+            };
         }
     }
     stamps

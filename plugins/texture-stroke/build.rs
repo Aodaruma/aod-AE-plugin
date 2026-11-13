@@ -34,7 +34,7 @@ fn main() {
 
     // --------------------------------------------------
     // Build the plugin with PiPL
-    pipl::plugin_build(vec![
+    let properties = || vec![
         Property::Kind(PIPLType::AEEffect),
         Property::Name("AOD_TextureStroke"),
         Property::Category("Aodaruma"),
@@ -63,6 +63,8 @@ fn main() {
             | OutFlags::SendUpdateParamsUI
             | OutFlags::DeepColorAware
             | OutFlags::WideTimeInput
+            | OutFlags::NonParamVary
+            | OutFlags::CustomUI
             ,
         ),
         Property::AE_Effect_Global_OutFlags_2(
@@ -73,11 +75,27 @@ fn main() {
             | OutFlags2::SupportsSmartRender
             | OutFlags2::DependsOnUnreferencedMasks
             | OutFlags2::RevealsZeroAlpha
+            | OutFlags2::IMixGuidDependencies
             // | OutFlags2::SupportsGpuRenderF32
             ,
         ),
         Property::AE_Effect_Match_Name("TextureStroke"),
         Property::AE_Reserved_Info(8),
         Property::AE_Effect_Support_URL("https://github.com/Aodaruma/aodaruma-ae-plugin"),
-    ])
+    ];
+    pipl::plugin_build(properties());
+
+    // The pinned pipl crate emits binary bytes inside an RC string. On a
+    // Japanese Windows host, RC converts 0x84 (CUSTOM_UI in our flags) to
+    // 0x81,0x45 and shifts the rest of the PiPL. Embed a binary file instead.
+    // Keep plugin_build's env/cfg output, replacing its resource.lib in OUT_DIR.
+    #[cfg(windows)]
+    {
+        let path = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("texture_stroke.pipl");
+        std::fs::write(&path, pipl::build_pipl(properties()).unwrap()).unwrap();
+        let filename = path.to_str().unwrap().replace('\\', "/");
+        let mut resource = winres::WindowsResource::new();
+        resource.append_rc_content(&format!("16000 PiPL DISCARDABLE \"{filename}\""));
+        resource.compile().unwrap();
+    }
 }
