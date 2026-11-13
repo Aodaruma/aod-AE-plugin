@@ -1,5 +1,13 @@
 # CodecMap 検証記録
 
+## dev同期・カタログ競合解消（2026-11-13）
+
+dev b6126ffを統合。CodecMapのRust/C実装とutilsには変更がなく、競合は共有カタログAEPと全体一覧PNGの2ファイル。fmt、clippy（all-targets、warningsをエラー扱い）、機能試験17件が成功した。計測用2エントリーは環境変数未指定で終了した。
+
+AE 2025 25.6.6x4の専用プロセスでdev側AEPを開き、TextureStroke 0.5の設定を保持してCodecMap 0.3を追加・保存した。CodecMap個別画像とPhoto一覧は元ブランチとバイト一致。全体一覧のPNG保存はプロセス終了前に完了しなかったため、元の40カード一覧へdevのTextureStrokeカードを移し、残る39カードは元ブランチ、TextureStrokeのカードはdevと画素一致することを検証した。カタログの再構築スクリプトは両プラグインの設定を保持している。
+
+#61・#60・#58・#57の担当と実装の独立性を確認し、統合順の依存はないと合意。記録と検証出力はtarget/codec-map-mergeへ集約した。
+
 ## 0.3.0：軽量化・プリセットUI（2026-11-06）
 
 Windows x64、AE 2025 25.6.6x4、固定FFmpeg 8.1.2で確認。fmt、clippy（all-targets、warningsをエラー扱い）、機能試験17件が成功。性能・メモリ計測用の2エントリーは別途実行した。
