@@ -22,6 +22,7 @@
     }
 
     var catalog = [
+        { name: "Codec Map", aod: "AOD_CodecMap", slug: "codec-map", category: "P", match: "CodecMap", fresh: true },
         { name: "Color Ajust", aod: "AOD_ColorAjust", slug: "color-ajust", category: "P", match: "ColorAjust" },
         { name: "Color Composite", aod: "AOD_ColorComposite", slug: "color-composite", category: "P", comp: "03 Color Composite" },
         { name: "Color Convert", aod: "AOD_ColorConvert", slug: "color-convert", category: "P", match: "ColorConvert" },
@@ -240,7 +241,30 @@
     }
 
     function configureOldEffect(item, comp, layer, effect) {
-        if (item.match === "PanoramaReframe") {
+        if (item.match === "CodecMap") {
+            var mapComp = findComp("CATPREVIEW - Codec Map Mask");
+            if (!mapComp) {
+                mapComp = app.project.items.addComp("CATPREVIEW - Codec Map Mask", 512, 512, 1, 1, 30);
+                mapComp.layers.addSolid([0, 0, 0], "Black", 512, 512, 1, 1);
+                addMaskedSolid(mapComp, "White", [1, 1, 1], [[256, 0], [512, 0], [512, 512], [256, 512]], 100);
+            }
+            var mapLayer = comp.layers.add(mapComp);
+            mapLayer.enabled = false;
+            function control(name, nth) {
+                var found = [];
+                for (var n = 1; n <= effect.numProperties; n++) {
+                    var property = effect.property(n);
+                    if (property.name === name && property.propertyType === PropertyType.PROPERTY && property.propertyValueType !== PropertyValueType.NO_VALUE) found.push(property);
+                }
+                if (!found[nth || 0]) throw new Error("CodecMap catalog control missing: " + name);
+                return found[nth || 0];
+            }
+            control("Quality Control").setValue(2);
+            control("Codec").setValue(3);
+            control("MPEG-4 Quality").setValue(20);
+            control("Area").setValue(2);
+            control("Map Layer").setValue(mapLayer.index);
+        } else if (item.match === "PanoramaReframe") {
             setProperty(effect, "Position X", 2000);
             setProperty(effect, "Sphere Scale (%)", 85);
             setProperty(effect, "Position Z", 1500);
@@ -692,7 +716,7 @@
         } else {
             warnings.push("Seed project not found: " + seedProjectPath);
         }
-    } else if (phase !== "build" && projectFile.exists) {
+    } else if (phase !== "build" && projectFile.exists && (!app.project.file || app.project.file.fsName !== projectFile.fsName)) {
         app.open(projectFile);
     }
 
@@ -744,7 +768,11 @@
             var oldPreview = findComp(selected.comp);
             if (oldPreview) { oldPreview.remove(); }
             var updatedPreview = createOldPreview(selected);
-            saveCatalogFrame(updatedPreview, Math.min(7 / 30, updatedPreview.duration / 2), new File(previewRoot.fsName + "/" + selected.slug + ".png"));
+            var selectedFile = new File(previewRoot.fsName + "/" + selected.slug + ".png");
+            var preserveSelected = $.getenv("AOD_CATALOG_PRESERVE_PREVIEW") === "1";
+            if (preserveSelected && !selectedFile.exists) { throw new Error("Existing preview not found: " + selectedFile.fsName); }
+            if (preserveSelected) { log.push("KEPT " + selectedFile.fsName); }
+            else { saveCatalogFrame(updatedPreview, Math.min(7 / 30, updatedPreview.duration / 2), selectedFile); }
             var selectedCategories = [selected.category, "ALL"];
             var selectedNames = { P: "photo", A: "anime", D: "map-data", G: "generator", ALL: "all-effects" };
             for (var selectedCategoryIndex = 0; selectedCategoryIndex < selectedCategories.length; selectedCategoryIndex++) {

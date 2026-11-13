@@ -1,10 +1,10 @@
 # AOD After Effects Plugin Catalog
 
-用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる45プラグインを4分類に整理しています。
+用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる46プラグインを4分類に整理しています。
 
 | 分類 | 適した素材 | 収録数 | 詳細 |
 |---|---|---:|---|
-| P | Photo：一般写真・連続階調画像 | 22 | [Photo / 一般画像](photo.md) |
+| P | Photo：一般写真・連続階調画像 | 23 | [Photo / 一般画像](photo.md) |
 | A | Anime：アニメ素材（セル塗り・線画・透過キャラクター） | 14 | [Anime / アニメ素材](anime.md) |
 | D | Data & Map：データ・マップ画像 | 4 | [Data & Map / データ・マップ](map-data.md) |
 | G | Generator：生成用キャンバス | 5 | [Generator / 生成系](generator.md) |
@@ -60,6 +60,6 @@ PanoramaConvertの個別画像は、[検証手順](../../plugins/panorama-conver
 既存の個別PNGから一覧だけを組み直す場合は、Pillowを導入済みのPythonで `python docs/catalog/rebuild-overviews.py` を実行できます。再描画はせず、現在のPNGを使ってPhoto分類と全体一覧を更新します。
 Eyedropper Maskの解像度比較画像は、[実機テスト](../../plugins/eyedropper-mask/README.md#検証)の出力から `plugins/eyedropper-mask/tests/render-comparison.ps1` で生成します。2026-10-27の近似処理版（v0.2.2）と最適化版（v0.2.3）の更新ではAE 26.3から個別プレビュー・アニメ分類・全体一覧を再出力し、Full表示の3画像は既存画像とSHA-256が一致することを確認しました。解像度による違いは追加の比較画像に収録しています。
 
-個別エフェクトだけを更新する場合は、`AOD_CATALOG_PHASE`を`update-preview`、`AOD_CATALOG_SLUG`を対象ディレクトリ名（例：`image-resize`）に設定して`build-catalog.jsx`を実行します。対象のコンポジションとPNGを作成し、保存済みの各プレビューPNGから該当分類・全体一覧を再生成します。他のエフェクトの個別プレビューは変更しません。
+個別エフェクトだけを更新する場合は、`AOD_CATALOG_PHASE`を`update-preview`、`AOD_CATALOG_SLUG`を対象ディレクトリ名（例：`image-resize`、`codec-map`）に設定して`build-catalog.jsx`を実行します。対象のコンポジションとPNGを作成し、保存済みの各プレビューPNGから該当分類・全体一覧を再生成します。他のエフェクトの個別プレビューは変更しません。`AOD_CATALOG_PRESERVE_PREVIEW=1`では既存の個別PNGを保持します。
 
 大きな一覧で`saveFrameToPng`がファイルを生成しない場合は、PNG出力モジュールテンプレートを使ってレンダーキューから1フレームを書き出します。既存のキュー項目は実行せず、有効状態を復元します。一時出力は`target/catalog-export/`に置き、正常に生成できたPNGだけでカタログ画像を更新します。
