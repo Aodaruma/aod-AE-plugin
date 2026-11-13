@@ -1,21 +1,19 @@
 # AOD After Effects Plugin Catalog
 
-用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる41プラグインを4分類に整理しています。
+用途に合う入力素材からエフェクトを探せるよう、現在のリポジトリに含まれる48プラグインを4分類に整理しています。
 
 | 分類 | 適した素材 | 収録数 | 詳細 |
 |---|---|---:|---|
-| P | Photo：一般写真・連続階調画像 | 19 | [Photo / 一般画像](photo.md) |
-| A | Anime：アニメ素材（セル塗り・線画・透過キャラクター） | 13 | [Anime / アニメ素材](anime.md) |
+| P | Photo：一般写真・連続階調画像 | 25 | [Photo / 一般画像](photo.md) |
+| A | Anime：アニメ素材（セル塗り・線画・透過キャラクター） | 14 | [Anime / アニメ素材](anime.md) |
 | D | Data & Map：データ・マップ画像 | 4 | [Data & Map / データ・マップ](map-data.md) |
 | G | Generator：生成用キャンバス | 5 | [Generator / 生成系](generator.md) |
 
 分類は「最も分かりやすく効果を確認できる主入力」を示します。たとえば `AOD_ScatterMap` はP分類ですが、Amount Mapなどの補助入力としてD分類の画像を併用できます。
 
-プレビューは効果の違いを見分けやすくするための強調設定で、デフォルト設定とは限りません。写真素材にはEmre Gencer氏のUnsplash写真を加工して使用しています。
+プレビューは効果の違いを見分けやすくするための強調設定で、デフォルト設定とは限りません。写真素材にはEmre Gencer氏のUnsplash写真を加工して使用しています。ImagePatternは形状と反復が分かる手続きテスト素材を使用しています。
 
-AOD_SeamScale・AOD_SeamMapを含む41プラグインを掲載しています。SeamScale・SeamMapの個別プレビュー、Photo一覧、全体一覧はAE 2025の実出力で更新しています。
-
-入力マップの新規利用にはSeamScale v0.3.0の`Use Map Layer`を使用します。独立したSeamMapは旧プロジェクト互換用として掲載しています。
+入力マップの新規利用にはSeamScale v0.3.0の `Use Map Layer` を使用します。独立したSeamMapは旧プロジェクト互換用として掲載しています。
 
 ## Overview
 
@@ -57,4 +55,15 @@ After Effects 2025で[`catalog/ae2025-plugin-catalog/aod-plugin-catalog-ae2025.a
 
 生成先は`docs/catalog/assets/`です。素材プロジェクトに`Cat Crop 512x512`がない場合は、比較用の手続きテスト素材を自動生成します。
 
-生成型プレビューを1件だけ更新する場合は、`AOD_CATALOG_PHASE = "update-effect"`、`AOD_CATALOG_SLUG = "seam-scale"`のように設定して`build-catalog.jsx`を実行します。指定エフェクトと対応分類・全体の一覧を更新し、他エフェクトの既存PNGを一覧に使用します。処理完了後、PNGの書き出しが終わるまで別のプロジェクトを開かないでください。
+PanoramaConvertの個別画像は、[検証手順](../../plugins/panorama-convert/README.md#ビルドと確認)の描画テスト後に `plugins/panorama-convert/tests/extra-smoke.jsx` を空の別プロセスのAEで実行し、`target/panorama-smoke/catalog.png` を `assets/previews/panorama-convert.png` へコピーして更新します。色はXYZ方向をRGBへ符号化した手続き素材で、上段が入力、下段がAEによる変換結果です。
+
+累積カタログでPanoramaConvertの編集可能なコンポジションと個別・Photo・全体プレビューを更新する場合は、AEで `run-panorama-convert-preview.jsx` を実行します。既存の個別PNGを維持して一覧だけを更新する場合は、実行前に環境変数 `AOD_CATALOG_PRESERVE_PREVIEW=1` を指定します。
+
+既存の個別PNGから一覧だけを組み直す場合は、Pillowを導入済みのPythonで `python docs/catalog/rebuild-overviews.py` を実行できます。再描画はせず、現在のPNGを使ってPhoto分類と全体一覧を更新します。
+Eyedropper Maskの解像度比較画像は、[実機テスト](../../plugins/eyedropper-mask/README.md#検証)の出力から `plugins/eyedropper-mask/tests/render-comparison.ps1` で生成します。2026-10-27の近似処理版（v0.2.2）と最適化版（v0.2.3）の更新ではAE 26.3から個別プレビュー・アニメ分類・全体一覧を再出力し、Full表示の3画像は既存画像とSHA-256が一致することを確認しました。解像度による違いは追加の比較画像に収録しています。
+
+個別エフェクトだけを更新する場合は、`AOD_CATALOG_PHASE`を`update-preview`、`AOD_CATALOG_SLUG`を対象ディレクトリ名（例：`image-resize`、`codec-map`）に設定して`build-catalog.jsx`を実行します。対象のコンポジションとPNGを作成し、保存済みの各プレビューPNGから該当分類・全体一覧を再生成します。他のエフェクトの個別プレビューは変更しません。`AOD_CATALOG_PRESERVE_PREVIEW=1`では既存の個別PNGを保持します。
+
+SeamScale／SeamMapの生成型プレビューは `AOD_CATALOG_SLUG` に `seam-scale`／`seam-map` を指定して更新します。制御用の横方向グラデーションもコンポジションに含まれます。
+
+大きな一覧で`saveFrameToPng`がファイルを生成しない場合は、PNG出力モジュールテンプレートを使ってレンダーキューから1フレームを書き出します。既存のキュー項目は実行せず、有効状態を復元します。一時出力は`target/catalog-export/`に置き、正常に生成できたPNGだけでカタログ画像を更新します。

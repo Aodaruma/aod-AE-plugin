@@ -1,6 +1,7 @@
 #![allow(clippy::drop_non_drop, clippy::question_mark)]
 
 use after_effects as ae;
+mod curve;
 use std::env;
 use std::f32::consts::{FRAC_PI_4, PI, TAU};
 
@@ -10,7 +11,7 @@ use utils::image::{
     SampleEdge, TRANSPARENT, luma, read_layer, sample_bilinear, sample_nearest, sanitize_pixel,
 };
 
-const PLUGIN_DESCRIPTION: &str = "Converts images between Cartesian, polar, spiral, elliptic, parabolic, bipolar, Radon, and line Hough representations.";
+const PLUGIN_DESCRIPTION: &str = "Converts images between Cartesian, mask-path, curvilinear coordinate, Radon, and channel-aware line Hough representations.";
 const MAX_INTEGRAL_SAMPLE_EVALUATIONS: usize = 12_000_000;
 
 #[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
@@ -59,6 +60,18 @@ enum Params {
     PostSkew,
     PostSkewAxis,
     PostTransformEnd,
+    // Keep all existing parameter IDs and popup values stable.
+    CurveStart,
+    CurvePath,
+    CurveLoop,
+    CurveFit,
+    CurveWidth,
+    CurveOffset,
+    CurveNormalOffset,
+    CurveReverse,
+    CurveFlipNormal,
+    CurveQuality,
+    CurveEnd,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,6 +85,7 @@ enum Space {
     Elliptic,
     Parabolic,
     Bipolar,
+    CurveAlonged,
 }
 
 impl Space {
@@ -85,6 +99,7 @@ impl Space {
             7 => Self::Elliptic,
             8 => Self::Parabolic,
             9 => Self::Bipolar,
+            10 => Self::CurveAlonged,
             _ => Self::Polar,
         }
     }
@@ -280,6 +295,7 @@ struct Settings {
     coordinate_extent: f32,
     hough_channels: HoughChannels,
     post_transform: PostTransform,
+    curve: curve::CurveSettings,
 }
 
 #[derive(Default)]
@@ -367,6 +383,7 @@ impl AdobePluginGlobal for Plugin {
                             "Elliptic Coordinates",
                             "Parabolic Coordinates",
                             "Bipolar Coordinates",
+                            "CurveAlonged",
                         ]);
                         d.set_default(1);
                     }),
@@ -677,6 +694,7 @@ impl AdobePluginGlobal for Plugin {
                 Ok(())
             },
         )?;
+        curve::params_setup(params)?;
         Ok(())
     }
 
@@ -787,9 +805,16 @@ impl Plugin {
         let integral = space.is_integral();
         let hough_forward = space == Space::LineHough && direction == Direction::Forward;
         let radon_inverse = space == Space::Radon && direction == Direction::Inverse;
+        let curve = space == Space::CurveAlonged;
 
-        self.set_param_visible(in_data, params, Params::Center, custom_center)?;
-        self.set_param_visible(in_data, params, Params::Radius, custom_radius)?;
+        for id in [Params::CenterMode, Params::RadiusMode, Params::AngleOffset] {
+            self.set_param_visible(in_data, params, id, !curve)?;
+        }
+        self.set_param_visible(in_data, params, Params::Center, custom_center && !curve)?;
+        self.set_param_visible(in_data, params, Params::Radius, custom_radius && !curve)?;
+        for id in curve::PARAMS {
+            self.set_param_visible(in_data, params, id, curve)?;
+        }
         self.set_param_visible(
             in_data,
             params,
@@ -921,7 +946,23 @@ impl Plugin {
             point_in_checkout_world(settings.post_transform.position, out_layer.origin());
 
         let source = read_layer(&in_layer);
-        let output = if settings.space.is_integral() {
+        let output = if settings.space == Space::CurveAlonged {
+            let path = curve::checkout_path(in_data, params, settings)?;
+            curve::render(
+                &source,
+                (src_width, src_height),
+                (out_width, out_height),
+                in_layer.origin(),
+                out_layer.origin(),
+                (
+                    (in_data.width() - 1).max(1) as f32
+                        * rational_or_one(in_data.pixel_aspect_ratio()),
+                    (in_data.height() - 1).max(1) as f32,
+                ),
+                path.as_ref(),
+                settings,
+            )
+        } else if settings.space.is_integral() {
             render_integral(
                 &source, src_width, src_height, out_width, out_height, settings,
             )
@@ -1067,6 +1108,7 @@ fn read_settings(params: &Parameters<Params>, in_data: InData) -> Result<Setting
         focus_ratio: slider(Params::FocusRatio)?.clamp(0.001, 0.999),
         coordinate_extent: slider(Params::CoordinateExtent)?.clamp(0.05, 20.0),
         hough_channels: HoughChannels::from_popup(popup(Params::HoughChannels)?),
+        curve: curve::read_settings(params)?,
         post_transform: PostTransform {
             anchor: point(Params::PostAnchorPoint)?,
             position: point(Params::PostPosition)?,
@@ -2791,7 +2833,7 @@ mod tests {
         result
     }
 
-    fn test_settings(space: Space) -> Settings {
+    pub(super) fn test_settings(space: Space) -> Settings {
         Settings {
             space,
             direction: Direction::Forward,
@@ -2817,6 +2859,7 @@ mod tests {
             focus_ratio: 0.5,
             coordinate_extent: 3.0,
             hough_channels: HoughChannels::Luminance,
+            curve: curve::CurveSettings::default(),
             post_transform: PostTransform {
                 anchor: (4.0, 3.0),
                 position: (4.0, 3.0),

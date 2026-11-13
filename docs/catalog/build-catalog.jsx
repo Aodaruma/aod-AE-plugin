@@ -2,8 +2,6 @@
     var environmentPhase = $.getenv("AOD_CATALOG_PHASE");
     var phase = (typeof AOD_CATALOG_PHASE !== "undefined") ? AOD_CATALOG_PHASE : (environmentPhase || "build");
     var headless = $.getenv("AOD_CATALOG_HEADLESS") === "1";
-    var updateSlug = (typeof AOD_CATALOG_SLUG !== "undefined") ? AOD_CATALOG_SLUG : "";
-    var silent = (typeof AOD_CATALOG_SILENT !== "undefined") && AOD_CATALOG_SILENT;
     var repoRoot = new Folder(File($.fileName).parent.parent.parent.fsName);
     var docsRoot = new Folder(repoRoot.fsName + "/docs/catalog");
     var previewRoot = new Folder(docsRoot.fsName + "/assets/previews");
@@ -16,7 +14,7 @@
     var warnings = [];
 
     function notify(message) {
-        if (headless || silent) {
+        if (headless) {
             $.writeln(message);
         } else {
             alert(message);
@@ -24,21 +22,27 @@
     }
 
     var catalog = [
+        { name: "Codec Map", aod: "AOD_CodecMap", slug: "codec-map", category: "P", match: "CodecMap", fresh: true },
         { name: "Color Ajust", aod: "AOD_ColorAjust", slug: "color-ajust", category: "P", match: "ColorAjust" },
         { name: "Color Composite", aod: "AOD_ColorComposite", slug: "color-composite", category: "P", comp: "03 Color Composite" },
         { name: "Color Convert", aod: "AOD_ColorConvert", slug: "color-convert", category: "P", match: "ColorConvert" },
         { name: "Color Quantize", aod: "AOD_ColorQuantize", slug: "color-quantize", category: "P", comp: "04 Color Quantize" },
         { name: "Displace Scatter", aod: "AOD_DisplaceScatter", slug: "displace-scatter", category: "P", comp: "07 Displace Scatter" },
         { name: "FFT", aod: "AOD_FFT", slug: "fft", category: "P", comp: "09 FFT" },
+        { name: "Fake Blur", aod: "AOD_FakeBlur", slug: "fake-blur", category: "P", match: "FakeBlur", fresh: true },
         { name: "Fourier Filter", aod: "AOD_FourierFilter", slug: "fourier-filter", category: "P", comp: "10 Fourier Filter" },
         { name: "Gradient Blur", aod: "AOD_GradientBlur", slug: "gradient-blur", category: "P", comp: "12 Gradient Blur" },
         { name: "Gradient Displace", aod: "AOD_GradientDisplace", slug: "gradient-displace", category: "P", comp: "13 Gradient Displace" },
         { name: "Glass Displace", aod: "AOD_GlassDisplace", slug: "glass-displace", category: "P", match: "GlassDisplace", fresh: true },
         { name: "Image Calculate", aod: "AOD_ImageCalculate", slug: "image-calculate", category: "P", match: "ImageCalculate" },
+        { name: "Image Pattern", aod: "AOD_ImagePattern", slug: "image-pattern", category: "P", match: "ImagePattern", fresh: true },
         { name: "Image Crypt", aod: "AOD_ImageCrypt", slug: "image-encrypt-decrypt", category: "P", match: "ImageEncryptDecrypt", fresh: true },
+        { name: "Image Resize", aod: "AOD_ImageResize", slug: "image-resize", category: "P", match: "ImageResize", fresh: true },
         { name: "Image Scaler", aod: "AOD_ImageScaler", slug: "image-scaler", category: "P", comp: "15 Image Scaler" },
         { name: "Image Transform", aod: "AOD_ImageTransform", slug: "image-transform", category: "P", match: "ImageTransform", fresh: true },
+        { name: "Panorama Reframe", aod: "AOD_PanoramaReframe", slug: "panorama-reframe", category: "P", match: "PanoramaReframe", fresh: true },
         { name: "Mobius Transform", aod: "AOD_MobiusTransform", slug: "mobius-transform", category: "P", match: "MobiusTransform" },
+        { name: "Panorama Convert", aod: "AOD_PanoramaConvert", slug: "panorama-convert", category: "P", comp: "Panorama Convert Catalog" },
         { name: "Seam Scale", aod: "AOD_SeamScale", slug: "seam-scale", category: "P", match: "SeamScale", fresh: true },
         { name: "Seam Map", aod: "AOD_SeamMap", slug: "seam-map", category: "P", match: "SeamMap", fresh: true },
         { name: "Scatter Map", aod: "AOD_ScatterMap", slug: "scatter-map", category: "P", comp: "19 Scatter Map" },
@@ -50,7 +54,8 @@
         { name: "Contour Generate", aod: "AOD_ContourGenerate", slug: "contour-generate", category: "A", match: "ContourGenerate" },
         { name: "Differential Generate", aod: "AOD_DifferentialGenerate", slug: "differential-generate", category: "A", match: "DifferentialGenerate" },
         { name: "Distance Generate", aod: "AOD_DistanceGenerate", slug: "distance-generate", category: "A", match: "DistanceGenerate" },
-        { name: "Eyedropper Mask", aod: "AOD_EyedropperMask", slug: "eyedropper-mask", category: "A", comp: "08 Eyedropper Mask" },
+        { name: "Eyedropper Mask", aod: "AOD_EyedropperMask", slug: "eyedropper-mask", category: "A", comp: "08 Eyedropper Mask", fresh: true },
+        { name: "Image Bevel", aod: "AOD_ImageBevel", slug: "image-bevel", category: "A", match: "ImageBevel", fresh: true },
         { name: "Image Relight", aod: "AOD_ImageRelight", slug: "image-relight", category: "A", match: "ImageRelight", fresh: true },
         { name: "Light Wrap", aod: "AOD_LightWrap", slug: "light-wrap", category: "A", comp: "16 Light Wrap" },
         { name: "Line Repaint", aod: "AOD_LineRepaint", slug: "line-repaint", category: "A", comp: "17 Line Repaint" },
@@ -92,6 +97,54 @@
         return null;
     }
 
+    function saveCatalogFrame(comp, time, destination) {
+        var exportRoot = new Folder(repoRoot.fsName + "/target/catalog-export");
+        ensureFolder(new Folder(repoRoot.fsName + "/target"));
+        ensureFolder(exportRoot);
+        var prefix = destination.name.replace(/\.png$/i, "") + "-" + new Date().getTime();
+        var rendered = new File(exportRoot.fsName + "/" + prefix + ".png");
+        comp.saveFrameToPng(time, rendered);
+        // Some AE versions silently skip large overview PNGs. Use the render
+        // queue as a fallback, without rendering or changing other queue items.
+        if (!rendered.exists || rendered.length <= 0) {
+            var queue = app.project.renderQueue;
+            var enabledItems = [];
+            var renderItem = null;
+            try {
+                for (var q = 1; q <= queue.numItems; q++) {
+                    if (queue.item(q).render) {
+                        enabledItems.push(queue.item(q));
+                        queue.item(q).render = false;
+                    }
+                }
+                renderItem = queue.items.add(comp);
+                renderItem.timeSpanStart = time;
+                renderItem.timeSpanDuration = comp.frameDuration;
+                var module = renderItem.outputModule(1);
+                var pngTemplate = null;
+                for (var t = 0; t < module.templates.length; t++) {
+                    if (/PNG/i.test(module.templates[t])) { pngTemplate = module.templates[t]; break; }
+                }
+                if (!pngTemplate) { throw new Error("PNG output-module template required for large overview export."); }
+                module.applyTemplate(pngTemplate);
+                module.file = new File(exportRoot.fsName + "/" + prefix + "-[#####].png");
+                queue.render();
+                if (renderItem.status !== RQItemStatus.DONE) { throw new Error("Catalog render did not complete: " + comp.name); }
+                var frames = exportRoot.getFiles(prefix + "-*.png");
+                if (frames.length !== 1) { throw new Error("Expected exactly one rendered catalog frame: " + comp.name); }
+                rendered = frames[0];
+            } finally {
+                if (renderItem) { renderItem.remove(); }
+                for (var restore = 0; restore < enabledItems.length; restore++) { enabledItems[restore].render = true; }
+            }
+        }
+        if (!rendered.exists || rendered.length <= 0 || !rendered.copy(destination.fsName)) {
+            throw new Error("Could not save catalog PNG: " + destination.fsName);
+        }
+        rendered.remove();
+        log.push("RENDERED " + destination.fsName);
+    }
+
     function removeCompsWithPrefix(prefix) {
         for (var i = app.project.numItems; i >= 1; i--) {
             var item = app.project.item(i);
@@ -101,9 +154,21 @@
         }
     }
 
+    function findEffectProperty(group, name) {
+        for (var i = 1; i <= group.numProperties; i++) {
+            var p = group.property(i);
+            if (p.name === name) { return p; }
+            if (p.numProperties) {
+                var nested = findEffectProperty(p, name);
+                if (nested) { return nested; }
+            }
+        }
+        return null;
+    }
+
     function setProperty(effect, name, value) {
         try {
-            var prop = effect.property(name);
+            var prop = effect.property(name) || findEffectProperty(effect, name);
             if (!prop) {
                 warnings.push(effect.name + ": parameter not found: " + name);
                 return;
@@ -140,8 +205,8 @@
         return layer;
     }
 
-    function createFallbackSourceComp() {
-        var comp = app.project.items.addComp("Cat Crop 512x512", 512, 512, 1, 1, 30);
+    function createFallbackSourceComp(sourceName) {
+        var comp = app.project.items.addComp(sourceName || "Cat Crop 512x512", 512, 512, 1, 1, 30);
         comp.bgColor = [0.025, 0.035, 0.065];
         comp.layers.addSolid([0.025, 0.035, 0.065], "Procedural Background", 512, 512, 1, comp.duration);
         addMaskedSolid(comp, "Warm Diagonal", [0.95, 0.25, 0.08], [[-40, 390], [385, -35], [555, 135], [130, 560]], 82);
@@ -178,7 +243,39 @@
     }
 
     function configureOldEffect(item, comp, layer, effect) {
-        if (item.match === "ColorAjust") {
+        if (item.match === "CodecMap") {
+            var mapComp = findComp("CATPREVIEW - Codec Map Mask");
+            if (!mapComp) {
+                mapComp = app.project.items.addComp("CATPREVIEW - Codec Map Mask", 512, 512, 1, 1, 30);
+                mapComp.layers.addSolid([0, 0, 0], "Black", 512, 512, 1, 1);
+                addMaskedSolid(mapComp, "White", [1, 1, 1], [[256, 0], [512, 0], [512, 512], [256, 512]], 100);
+            }
+            var mapLayer = comp.layers.add(mapComp);
+            mapLayer.enabled = false;
+            function control(name, nth) {
+                var found = [];
+                for (var n = 1; n <= effect.numProperties; n++) {
+                    var property = effect.property(n);
+                    if (property.name === name && property.propertyType === PropertyType.PROPERTY && property.propertyValueType !== PropertyValueType.NO_VALUE) found.push(property);
+                }
+                if (!found[nth || 0]) throw new Error("CodecMap catalog control missing: " + name);
+                return found[nth || 0];
+            }
+            control("Quality Control").setValue(2);
+            control("Codec").setValue(3);
+            control("MPEG-4 Quality").setValue(20);
+            control("Area").setValue(2);
+            control("Map Layer").setValue(mapLayer.index);
+        } else if (item.match === "PanoramaReframe") {
+            setProperty(effect, "Position X", 2000);
+            setProperty(effect, "Sphere Scale (%)", 85);
+            setProperty(effect, "Position Z", 1500);
+            setProperty(effect, "Output Projection", 2);
+            setProperty(effect, "Field of View", 220);
+            setProperty(effect, "Rotation Y", 35);
+            setProperty(effect, "Rotation X", -25);
+            setProperty(effect, "Antialiasing", 2);
+        } else if (item.match === "ColorAjust") {
             setProperty(effect, "Color Space", 1);
             setProperty(effect, "Hue Shift (deg)", 42);
             setProperty(effect, "Chroma Scale", 1.45);
@@ -228,6 +325,8 @@
             setProperty(effect, "Offset", 0.04);
             setProperty(effect, "Label Tolerance", 0.035);
             setProperty(effect, "Use Original Alpha", 0);
+        } else if (item.match === "FakeBlur") {
+            setProperty(effect, "Blur Radius", 12);
         } else if (item.match === "GlassDisplace") {
             setProperty(effect, "Height Source", 1);
             setProperty(effect, "Shape", 7);
@@ -253,8 +352,9 @@
             setProperty(effect, "Operation", 3);
             setProperty(effect, "Input B (Operand)", 1);
             setProperty(effect, "Value B (Operand)", 1.75);
-            setProperty(effect, "Clamp Result 0..1", 1);
+            setProperty(effect, "Clamp Mode", 2);
             setProperty(effect, "Use Original Alpha", 1);
+            setProperty(effect, "Mix (%)", 100.0);
         } else if (item.match === "ImageEncryptDecrypt") {
             setProperty(effect, "Operation", 1);
             setProperty(effect, "Algorithm", 7);
@@ -293,6 +393,28 @@
             setProperty(effect, "Environment Strength", 0.16);
             setProperty(effect, "Exposure (EV)", -0.15);
             setProperty(effect, "Output", 1);
+        } else if (item.match === "ImagePattern") {
+            setProperty(effect, "Pattern Mode", 3);
+            setProperty(effect, "Angle", 8.0);
+            setProperty(effect, "Width (px)", 60.0);
+            setProperty(effect, "Delta Angle", 4.0);
+            setProperty(effect, "Delta Width (px)", 2.0);
+            setProperty(effect, "Delta X (px)", 18.0);
+            setProperty(effect, "Delta Y (px)", -8.0);
+            setProperty(effect, "Clipping", 1);
+            setProperty(effect, "Overlap Order", 1);
+            setProperty(effect, "Copies Each Side", 4);
+            setProperty(effect, "Split Overlaps", 0);
+            setProperty(effect, "Strip Image Affect (%)", 100.0);
+            setProperty(effect, "Edge", 5);
+        } else if (item.match === "ImageResize") {
+            setProperty(effect, "Mode", 3);
+            setProperty(effect, "All %", 100);
+            setProperty(effect, "Output Width (px)", 800);
+            setProperty(effect, "Output Height (px)", 430);
+            setProperty(effect, "Extend", 2);
+            setProperty(effect, "Angle", 12);
+            layer.property("ADBE Transform Group").property("ADBE Scale").setValue([55, 55]);
         } else if (item.match === "ImageTransform") {
             setProperty(effect, "Separate Dimensions", 1);
             setProperty(effect, "Scale X", 136.0);
@@ -385,11 +507,75 @@
         }
     }
 
+    function createPanoramaConvertPreview() {
+        var sourceFile = new File(docsRoot.fsName + "/assets/sources/panorama-convert-input.png");
+        if (!sourceFile.exists) { throw new Error("Missing panorama source: " + sourceFile.fsName); }
+        var source = app.project.importFile(new ImportOptions(sourceFile));
+        source.mainSource.alphaMode = AlphaMode.STRAIGHT;
+        var comp = app.project.items.addComp("Panorama Convert Catalog", 512, 512, 1, 1, 24);
+        comp.layers.addSolid([0.025, 0.035, 0.055], "Background", 512, 512, 1, 1);
+        var top = comp.layers.add(source);
+        top.transform.scale.setValue([160, 160]);
+        top.transform.position.setValue([256, 126]);
+        var bottom = comp.layers.add(source);
+        var effect = addEffect(bottom, "PanoramaConvert");
+        setProperty(effect, "Output", 4);
+        setProperty(effect, "Output Width (0 = Input)", 384);
+        bottom.transform.scale.setValue([75, 75]);
+        bottom.transform.position.setValue([256, 365]);
+        function label(text, y) {
+            var layer = comp.layers.addText(text);
+            var prop = layer.property("ADBE Text Properties").property("ADBE Text Document");
+            var doc = prop.value;
+            doc.fontSize = 16;
+            doc.fillColor = [0.9, 0.94, 1];
+            doc.justification = ParagraphJustification.CENTER_JUSTIFY;
+            prop.setValue(doc);
+            layer.transform.position.setValue([256, y]);
+        }
+        label("EQUIRECTANGULAR", 20);
+        label("CUBEMAP CROSS 4:3", 250);
+        return comp;
+    }
+
     function createOldPreview(item) {
         var name = "CATPREVIEW - " + item.name;
         var comp = app.project.items.addComp(name, 512, 512, 1, 1, 30);
         var layer;
-        if (item.match === "TextureStroke") {
+        if (item.match === "ImageBevel") {
+            comp.layers.addSolid([0.025, 0.035, 0.055], "Background", 512, 512, 1, 1);
+            var bevelSource = app.project.items.addComp("CATPREVIEW - Image Bevel Source", 512, 512, 1, 1, 30);
+            var silhouetteFile = new File(docsRoot.fsName + "/assets/sources/cat-silhouette.png");
+            if (!silhouetteFile.exists) {
+                throw new Error("Missing cat silhouette: " + silhouetteFile.fsName);
+            }
+            var silhouette = app.project.importFile(new ImportOptions(silhouetteFile));
+            bevelSource.layers.add(silhouette);
+            layer = comp.layers.add(bevelSource);
+            var bevelEffect = addEffect(layer, item.match);
+            setProperty(bevelEffect, "Surface Method", 2);
+            setProperty(bevelEffect, "Interpolation", 3);
+            setProperty(bevelEffect, "Bevel Width (px)", 28);
+            setProperty(bevelEffect, "Height (px)", 22);
+            setProperty(bevelEffect, "Height Blur (px)", 1.5);
+            setProperty(bevelEffect, "Base Color", [0.2,0.55,0.9,1]);
+            setProperty(bevelEffect, "Roughness", 0.42);
+            setProperty(bevelEffect, "Metallic", 0.3);
+            setProperty(bevelEffect, "Ambient", 0.3);
+            setProperty(bevelEffect, "Light Position", [95,55]);
+            setProperty(bevelEffect, "Light Height (px)", 300);
+            setProperty(bevelEffect, "Light Intensity", 3);
+            item.comp = comp.name;
+            return comp;
+        } else if (item.match === "ImagePattern") {
+            comp.layers.addSolid([0.035, 0.045, 0.065], "Preview Background", 512, 512, 1, comp.duration);
+            var patternSource = findComp("CATPREVIEW - Image Pattern Source");
+            if (!patternSource) {
+                patternSource = createFallbackSourceComp("CATPREVIEW - Image Pattern Source");
+            }
+            layer = comp.layers.add(patternSource);
+            layer.name = "Photo Cat Source";
+        } else if (item.match === "TextureStroke") {
             comp.layers.addSolid([0.035, 0.045, 0.065], "Preview Background", 512, 512, 1, 1);
             var brush = app.project.items.addComp("CATPREVIEW - Texture Stroke Brush", 64, 64, 1, 1, 30);
             for (var strand = 0; strand < 9; strand++) {
@@ -422,6 +608,9 @@
             setProperty(stroke, "Curvature Radius (px)", 100);
             item.comp = comp.name;
             return comp;
+        } else if (item.match === "PanoramaReframe") {
+            var panorama = app.project.importFile(new ImportOptions(new File(docsRoot.fsName + "/assets/sources/panorama-grid.png")));
+            layer = comp.layers.add(panorama);
         } else if (item.category === "G") {
             layer = comp.layers.addSolid([0.035, 0.045, 0.065], "Generator Canvas", 512, 512, 1, comp.duration);
         } else {
@@ -460,7 +649,7 @@
         }
     }
 
-    function makeGrid(category) {
+    function makeGrid(category, preferAssets) {
         var items = category === "ALL" ? catalog : categoryItems(category);
         var columns = Math.min(4, items.length);
         var rows = Math.ceil(items.length / columns);
@@ -477,8 +666,7 @@
             var card = comp.layers.addSolid([0.035, 0.045, 0.065], "Card - " + items[i].name, 560, 560, 1, comp.duration);
             card.property("ADBE Transform Group").property("ADBE Position").setValue([x, y]);
 
-            var previewSource = phase === "update-effect"
-                ? importExistingPreview(items[i]) : findComp(items[i].comp);
+            var previewSource = preferAssets ? importExistingPreview(items[i]) : findComp(items[i].comp);
             if (!previewSource) {
                 previewSource = importExistingPreview(items[i]);
             }
@@ -548,7 +736,7 @@
         } else {
             warnings.push("Seed project not found: " + seedProjectPath);
         }
-    } else if (phase !== "build" && projectFile.exists) {
+    } else if (phase !== "build" && projectFile.exists && (!app.project.file || app.project.file.fsName !== projectFile.fsName)) {
         app.open(projectFile);
     }
 
@@ -585,36 +773,60 @@
             log.push("SAVED " + projectFile.fsName);
             writeReport("Build complete; run render-previews and render-overviews phases next.");
             notify("AOD catalog project built.\n" + projectFile.fsName);
-        } else if (phase === "update-effect") {
-            // Refresh one effect and its grids while preserving other renders.
+        } else if (phase === "update-preview") {
+            var selectedSlug = (typeof AOD_CATALOG_SLUG !== "undefined") ? AOD_CATALOG_SLUG : $.getenv("AOD_CATALOG_SLUG");
             var selected = null;
-            for (var s = 0; s < catalog.length; s++) {
-                if (catalog[s].slug === updateSlug) { selected = catalog[s]; break; }
+            for (var selectedIndex = 0; selectedIndex < catalog.length; selectedIndex++) {
+                if (catalog[selectedIndex].slug === selectedSlug) {
+                    selected = catalog[selectedIndex];
+                    break;
+                }
             }
             if (!selected || !selected.match) {
-                throw new Error("Unknown generated preview slug: " + updateSlug);
+                throw new Error("AOD_CATALOG_SLUG must name an effect with a preview builder.");
             }
             var oldPreview = findComp(selected.comp);
             if (oldPreview) { oldPreview.remove(); }
             var updatedPreview = createOldPreview(selected);
-            var updatedFile = new File(previewRoot.fsName + "/" + selected.slug + ".png");
-            updatedPreview.saveFrameToPng(0, updatedFile);
-            log.push("RENDERED " + updatedFile.fsName);
-            var updatedCategories = [selected.category, "ALL"];
-            var updatedNames = { P: "photo", A: "anime", D: "map-data", G: "generator", ALL: "all-effects" };
-            for (var u = 0; u < updatedCategories.length; u++) {
-                var oldGrid = findComp("CATGRID - " + updatedCategories[u]);
+            var selectedFile = new File(previewRoot.fsName + "/" + selected.slug + ".png");
+            var preserveSelected = $.getenv("AOD_CATALOG_PRESERVE_PREVIEW") === "1";
+            if (preserveSelected && !selectedFile.exists) { throw new Error("Existing preview not found: " + selectedFile.fsName); }
+            if (preserveSelected) { log.push("KEPT " + selectedFile.fsName); }
+            else { saveCatalogFrame(updatedPreview, Math.min(7 / 30, updatedPreview.duration / 2), selectedFile); }
+            var selectedCategories = [selected.category, "ALL"];
+            var selectedNames = { P: "photo", A: "anime", D: "map-data", G: "generator", ALL: "all-effects" };
+            for (var selectedCategoryIndex = 0; selectedCategoryIndex < selectedCategories.length; selectedCategoryIndex++) {
+                var selectedCategory = selectedCategories[selectedCategoryIndex];
+                var oldGrid = findComp("CATGRID - " + selectedCategory);
                 if (oldGrid) { oldGrid.remove(); }
-                var updatedGrid = makeGrid(updatedCategories[u]);
-                var updatedGridFile = new File(overviewRoot.fsName + "/" + updatedNames[updatedCategories[u]] + ".png");
-                updatedGrid.saveFrameToPng(0, updatedGridFile);
-                log.push("RENDERED " + updatedGridFile.fsName);
+                var updatedGrid = makeGrid(selectedCategory, true);
+                saveCatalogFrame(updatedGrid, 0, new File(overviewRoot.fsName + "/" + selectedNames[selectedCategory] + ".png"));
             }
             app.project.save(projectFile);
-            writeReport("Single effect and related grids updated.");
-            updatedPreview.openInViewer();
-            updatedPreview.layer(1).selected = true;
-            notify("AOD catalog updated: " + selected.aod);
+            log.push("UPDATED " + selected.aod + " and its overview grids using saved preview assets.");
+            writeReport("Selected preview and overview grids updated.");
+            notify("AOD catalog preview updated: " + selected.aod);
+        } else if (phase === "update-panorama-convert") {
+            var panoramaPreview = findComp("Panorama Convert Catalog");
+            if (panoramaPreview) { panoramaPreview.remove(); }
+            panoramaPreview = createPanoramaConvertPreview();
+            var panoramaPng = new File(previewRoot.fsName + "/panorama-convert.png");
+            var preservePanorama = $.getenv("AOD_CATALOG_PRESERVE_PREVIEW") === "1";
+            if (preservePanorama && !panoramaPng.exists) { throw new Error("Existing PanoramaConvert preview not found"); }
+            if (!preservePanorama) { saveCatalogFrame(panoramaPreview, 0, panoramaPng); }
+            var panoramaCategories = ["P", "ALL"];
+            var panoramaNames = { P: "photo", ALL: "all-effects" };
+            for (var pc = 0; pc < panoramaCategories.length; pc++) {
+                var panoramaCategory = panoramaCategories[pc];
+                var panoramaGrid = findComp("CATGRID - " + panoramaCategory);
+                if (panoramaGrid) { panoramaGrid.remove(); }
+                panoramaGrid = makeGrid(panoramaCategory, true);
+                saveCatalogFrame(panoramaGrid, 0, new File(overviewRoot.fsName + "/" + panoramaNames[panoramaCategory] + ".png"));
+            }
+            app.project.save(projectFile);
+            log.push("UPDATED PanoramaConvert composition and overview grids.");
+            writeReport("PanoramaConvert catalog updated.");
+            notify("PanoramaConvert catalog updated.");
         } else if (phase === "render-previews") {
             for (var p = 0; p < catalog.length; p++) {
                 var previewFile = new File(previewRoot.fsName + "/" + catalog[p].slug + ".png");
@@ -631,7 +843,7 @@
                     }
                     continue;
                 }
-                previewComp.saveFrameToPng(Math.min(7 / 30, previewComp.duration / 2), previewFile);
+                saveCatalogFrame(previewComp, Math.min(7 / 30, previewComp.duration / 2), previewFile);
                 log.push("RENDERED " + previewFile.fsName);
             }
             app.project.save(projectFile);
@@ -647,7 +859,7 @@
                     continue;
                 }
                 var gridFile = new File(overviewRoot.fsName + "/" + names[categories[c]] + ".png");
-                grid.saveFrameToPng(Math.min(7 / 30, grid.duration / 2), gridFile);
+                saveCatalogFrame(grid, Math.min(7 / 30, grid.duration / 2), gridFile);
                 log.push("RENDERED " + gridFile.fsName);
             }
             app.project.save(projectFile);

@@ -1,0 +1,32 @@
+# Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
+[package]
+name = "fake_blur"
+description = "Creates map-controlled mipmap, displacement, and interpolated blur effects."
+version = "0.3.0"
+edition = "2024"
+license.workspace = true
+authors.workspace = true
+
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["gpu_wgpu"]
+gpu_wgpu = ["utils/blur_wgpu"]
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+utils = { path = "../../crates/utils", features = ["blur"] }
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true

@@ -4,6 +4,26 @@
 
 [![P分類の概要グリッド](assets/overview/photo.png)](assets/overview/photo.png)
 
+## AOD_CodecMap
+
+- **分類:** P：一般写真・連続階調画像
+- **プレビュー:** 左半分は黒マップで保持、右半分は白マップで強く圧縮。MPEG-4 Part 2、Quantizer=20、Map Isolated。
+
+![AOD_CodecMap](assets/previews/codec-map.png)
+
+H.264・VP9・MPEG-4 Part 2の圧縮と適用範囲をマップで制御します。未来参照は初期OFF。キーフレーム可能なI/Bフレーム除去でデータモッシュも作れます。
+
+### パラメーター
+
+- `Style`: Compression / Blocks / Datamoshから質感を選びます。
+- `Compression`: 共通の0〜100で圧縮の強さを調整。0は原画を保持します。
+- `Datamosh`: キーフレーム可能なIフレーム除去。
+- `Area` / `Map Layer`: 全体またはマップで適用範囲を指定します。
+- `Mix`: 原画との合成量。
+- `Advanced`: Codec、Motion、Map、Diagnostics。固有の品質値、未来参照、Bフレーム除去、メモリ上限などをまとめています。
+
+v0.3では入力状態によるキャッシュ、連続フレームの圧縮セッション再利用、GOP=1の保持画像経路で再計算を削減します。軽量プレビューにはAEの1/2・1/4解像度を使用します。
+
 ## AOD_ColorAjust
 
 - **分類:** P：一般写真・連続階調画像
@@ -181,7 +201,9 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 - `Input B/C`、`Layer B/C`、`Value B/C`: 第2・第3引数を数値またはレイヤーから指定します。
 - `Epsilon`: 除算や比較で使用する微小値です。
 - `Channel`、`Calculation Color Space`: 対象チャンネルと演算空間を選択します。
-- `Clamp Result`、`Use Original Alpha`: 出力範囲とアルファを制御します。
+- `Clamp Mode`: None（既定）、Clamp、Wrap、Pingpongから出力範囲の処理を選びます。Noneは32bpcで範囲外の値を保持し、8／16bpcでは0～1に制限します。
+- `Use Original Alpha`: 入力アルファを保持し、範囲処理後のRGBへ乗算します。Wrap／Pingpongでアルファも処理するのは、ChannelがRGBAまたはAの場合です。
+- `Mix (%)`: 0%で元画像、100%（既定）でエフェクト適用後の画像を出力します。中間値では範囲・アルファ処理後の結果と元画像を混ぜます。
 
 ## AOD_ImageCrypt
 
@@ -203,6 +225,44 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 ### 補足
 
 機密保護用の暗号ではなく、モーショングラフィックスやグリッチ表現向けの可逆変換です。厳密な復元には同一寸法・ビット深度・キー・設定と、途中で未加工のエンコード画像が必要です。Resilient Replicasは論理解像度を下げる代わりに、局所的な画素破損を中央値で復元するlossy方式です。
+
+## AOD_FakeBlur
+
+- **分類:** P：一般写真・連続階調画像（補助入力: D）
+
+![AOD_FakeBlur](assets/previews/fake-blur.png)
+
+Mipmap（既定）、Displacement、縮小画像の再補間によるブラーです。マップの黒を半径0、白を指定半径として空間的に制御します。Displacementはコピーごとにランダムな方向を1つ決め、その方向へ変位させた画像を重ねます。各コピー内では方向を共通にし、変位量をBlur Mapで制御します。
+
+### パラメーター
+
+- `Blur Mode`、`Blur Radius`: 方式と半径。
+- `Blur Map`、`Map Channel`、`Invert Map`: マップ入力、輝度／RGBAチャンネル、反転。
+- `Evolution`、`Samples`: Displacementの方向の組み合わせの回転（度数）、重ねる枚数。
+- `Interpolation`: Nearest／Bilinear／Cubic B-Spline。
+- `Edges`、`Mix`、`Processing`: 境界処理、元画像との混合、CPU／GPU。
+
+[操作方法・制限](../../plugins/fake-blur/README.md)
+
+## AOD_ImageResize
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_ImageResize](assets/previews/image-resize.png)
+
+画像の上下左右をピクセル数または%で拡張・クリッピングし、回転や指定幅・高さでの出力も行えます。画像の拡大縮小は行いません。
+
+### パラメーター
+
+- `Mode`: Pixels／Percent／Output Sizeから選択します。
+- `Top`、`Bottom`、`Left`、`Right`: 展開済みのEdgesグループ内に配置し、Pixels／Percentに合わせて(px)／(%)を表示します。正値でクリップ、負値で拡張。%は元の辺が0%、反対の辺が100%です。
+- `All %`: 全4辺の調整量に掛ける係数。0%で無効、100%で指定値どおり、300%で3倍。負値ではクリップ／拡張の方向を反転します。
+- `Extend`: None（透明）／Mirror（鏡像反復）／Tile（画像全体の繰り返し）／Repeat（端の画素を引き伸ばす、旧Clamp）を選びます。
+- `Angle`: 元のレイヤー中心を軸に時計回りに回転します。初期値0°で、All %から独立しています。
+- `Interpolation`: 回転時のみ表示し、Nearest／Bilinearを選びます。
+- `Output Width (px)`、`Output Height (px)`: Mode＝Output Sizeでのみ、展開済みのOutput Sizeグループに表示します。画像の倍率を保って指定寸法でクリップ／拡張します。寸法はこちらを優先し、Center Adjustmentグループの%単位の上下左右・All %・Angleから枠の中心を求めます。All %＝0%でも指定サイズは有効です。
+
+プレビューは12°回転した画像を800×430pxの枠にクリップ／拡張し、画像外をMirrorで埋めた例です。詳しい計算例は[プラグインの説明](../../plugins/image-resize/README.md)を参照してください。
 
 ## AOD_ImageScaler
 
@@ -321,6 +381,42 @@ AE標準のディスプレイスメントマップへ接続する場合は32bpc�
 - `Seam Channel` / `Restore Original Size`: シーム判定チャンネルと、元サイズへの復元を指定します。
 
 複数の固定点の間では位置補正によって実効的な局所倍率が変わります。高解像度では処理負荷が大きい試作版です。[仕様・検証結果](../../plugins/seam-map/README.md)を参照してください。
+## AOD_ImagePattern
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_ImagePattern](assets/previews/image-pattern.png)
+
+フィードバック、万華鏡、帯状リピート、隙間のない多角形タイルで画像パターンを作り、コピーごとに参照時刻をずらします。
+
+### パラメーター
+
+- `Pattern Mode`: Feedback／Polar Kaleidoscope／Strip Repeat／Polygon Tileを選択します。
+- `Center`: 初期値はレイヤーの幅・高さの半分です。座標入力、ポイント選択、キーフレーム、エクスプレッションで直接指定できます。
+- Feedbackの`Decay`: 既定値1.0。`Opacity (%)`、`Iterations`、回転・拡縮・移動、合成順序を調整できます。
+- Stripの`Angle`、`Width (px)`、`Repeat`: 中心を通る帯を切り取り、法線方向へTile／Mirrorで繰り返します。Angle 0°は水平の帯です。
+- Stripの`Clipping`: 両側（Both Edges、初期値）／負側のみ（Negative Edge Only）／正側のみ（Positive Edge Only）／なし（None）。Angle 0°では負側が上、正側が下です。開いた側には画像の続きを描画します。
+- Stripの`Overlap Order`: クリッピング解除時の重なり順です。Overは反復番号の大きいスリットが手前、Underは小さいスリットが手前になり、元画像の透明度で合成します。
+- Stripの`Strip Rotation`、`Strip Scale X/Y (%)`、`Strip Skew (deg)`、`Strip Skew Axis`: 帯の配置を回転・拡縮・せん断します。
+- `Delta Angle`、`Delta Width (px)`、`Delta Mode`: 隣の帯と共有する境界線の角度と、Centerの法線上での境界間隔を変えます。Forward／Reverse／Outward／Ping Pong／Randomを選び、Cycle / RangeとSeedで折り返しや乱数を調整します。
+- `Delta X (px)`、`Delta Y (px)`: 境界を維持したまま、帯ごとの内部画像をソース画像のX/Y座標でずらします。初期値0。ずらし量はDelta Modeに従い、Centerの帯が基準です。Time Originを動かしても位置ずれの基準は変わりません。
+- Stripの`Split Overlaps`: オン（既定値）は交差した境界でも領域を分割します。オフはCenter側の領域へ戻ってくる境界を省き、重なった部分の追加分割を抑えます。省かれた反復の番号はMirrorとTime Deltaでも維持します。
+- `Copies Each Side`: Delta Angle／Width使用時、またはクリッピング解除時の反復数です。1なら中心を含め3枚を描画します。Both Edgesでは境界間に幾何学的な隙間や重なりがなく、外側は透明です。Both EdgesかつAngle／WidthのDeltaが両方0なら、X/YのDeltaを使っていても無制限に反復します。
+- Polygonの`Shape`、`Tile Width/Height (px)`: 三角形・四角形・六角形を隙間なく敷き詰めます。
+- Polygonの`Repeat`、`Rotation`、`Scale X/Y (%)`、`Skew (deg)`、`Skew Axis`: Tile／Mirrorと格子全体の変形を調整します。
+- `Image Affect (%)`／`Strip Image Affect (%)`: 0%はマスクのみ、100%は画像も変形します。途中の影響率にも調節できます。
+- `Mix (%)`、`Sampling`、`Edge`: 原画像との混合、補間、画像外の扱いです。EdgeはNone (Transparent)／Extend／Tile／Mirror／Blackを選べます。None（既定）は画像外を透明に、Blackは不透明な黒にします。Blackでも画像内の透明部分は保持し、Time Deltaの参照画像にも適用します。
+- Stripの`Edge Direction`: Along Stripは帯の方向に沿ってExtend／Tile／Mirrorを適用し、Image Axesは通常の画像端処理です。
+- `Time Delta (frames)`、`Time Origin (i = 0)`、`Time Index Offset`: 基準から1段ごとの参照時刻差です。時間差の基準点はCenterと独立しています。Feedbackでは反復番号とIndex Offsetを使います。
+- `Tile Time Direction`: Polygonの時間差を基準タイルからの段数／X方向／Y方向で選びます。`Time Edge`は範囲外の時刻をTransparent／Extend／Loop／Ping Pongで扱います。
+
+### 補足
+
+Polygon Tileの幾何学的な隙間はありません。入力の透明部分や画像外のサンプリングは元の透明度とEdge設定に従います。StripのDelta Angleは共有境界の間に画像を配置し、Image Affect 100%では画像の両端を境界に合わせます。Split Overlapsがオンの場合、境界が交差した箇所は法線方向の順序で領域を割り当てます。プレビューはSplit Overlapsオフ、両側クリップ、EdgeをBlackに設定しています。Blackはクリッピング解除時に他のコピーを覆うことがあります。三角形のCenterは重心です。
+
+Time Delta使用時は境界の並び順と直近の参照画像を再利用します。改善幅と測定条件は[ImagePatternの説明](../../plugins/image-pattern/README.md)の「Time Deltaの処理速度」を参照してください。
+
+PatternTransformからの改名に伴いWave Lattice／Complex Mapを削除しています。旧インスタンスはImagePatternを追加して設定を移してください。詳細は[ImagePatternの説明](../../plugins/image-pattern/README.md)を参照してください。
 
 ## AOD_SingularValueDecompose
 
@@ -339,3 +435,42 @@ AE標準のディスプレイスメントマップへ接続する場合は32bpc�
 ### 補足
 
 低いkほど大きな構造だけが残り、圧縮・抽象化された見た目になります。
+
+## AOD_PanoramaConvert
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_PanoramaConvert](assets/previews/panorama-convert.png)
+
+正距円筒図法・キューブマップ・180°魚眼を相互変換します。プリコンポーズを追加せず、コンポジションのサイズとレイヤーのTransformを維持したまま、エフェクトの出力範囲だけを変更します。プレビューは上段が正距円筒の入力、下段が十字キューブマップの出力です。
+
+### パラメーター
+
+- `Input / Output`: Equirectangular、Cubemap 3x2／6x1／Cross 4x3、Fisheye 180を選択します。
+- `Output Width (0 = Input)`: 元解像度での出力幅。0は元レイヤー幅。高さは出力形式から自動計算し、各面が整数ピクセルになるよう幅を丸めます。
+- `Pan / Tilt / Roll`: 球面上の向きを変更します。
+- `Interpolation`、`Antialiasing`: Nearest／Bilinearと1／4／16サンプルを指定します。
+
+8／16／32bpcに対応します。コンポ外の描画は最終出力で切れます。キューブの面順・向き、入力条件、制約は[使い方](../../plugins/panorama-convert/README.md)を参照してください。
+
+## AOD_PanoramaReframe
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_PanoramaReframe](assets/previews/panorama-reframe.png)
+
+正距円筒・Cube Map・Equiangular Cube Map の360度パノラマを、透視・等距離魚眼・平行・アイソメトリック投影で通常の映像に変換します。プレビューには方位グリッドを持つ手続き生成のパノラマを使用しています。
+
+### パラメーター
+
+- `Input Projection`、`Cube Layout`: 適用レイヤーの入力画像の形式を指定します。パノラマ素材へ直接適用し、前段のエフェクトやマスクも反映します。出力サイズは適用レイヤーの寸法に従います。
+- `Output Projection`、`Field of View`、`Orthographic Width`: 投影方式と画角を指定します。
+- `Rotation Mode`: Euler XYZ／Quaternion WXYZを選択します。UI切り替え時は向きを保持します。
+- `Position X/Y/Z`、`Parallax Distance`: 環境画像を連続変形して疑似移動を作ります。距離を超えて移動しても球体の境界で画像が欠けません。
+- `Depth Map Layer`、`Depth Near/Far Distance`、`Invert Depth`: 深度レイヤーを指定すると、近い領域ほど視差を強めます。Noneで無効になります。カラーと同じ投影形式・配置の深度画像を使用します。実形状や隠れた領域の復元は行いません。
+- `Sphere Scale (%)`: 魚眼・平行・Isometricの球体表示を1〜1000%で拡大縮小します。画角・視差距離とは独立し、紫色のSizeハンドルでも調整できます。
+- `Sync AE Camera`、`Sync AE Position`: AEカメラの向き・Zoom、必要に応じて位置を同期します。
+- `Edges`、`Interpolation`、`Antialiasing`: 継ぎ目処理、補間、1/4/16サンプルのアンチエイリアスを指定します。
+- `Viewport Controls`: Euler／Quaternion共通のリグ。円内部からのドラッグ量に比例して回転し、円の外でも止まりません。円周でロール、水色の右ハンドルで画角、黄色の下ハンドルで視差の基準距離を調整します。回転感度も変更できます。
+
+面配置、座標系、Quaternion補間の制約は[詳細説明](../../plugins/panorama-reframe/README.md)を参照してください。
