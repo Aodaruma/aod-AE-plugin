@@ -1,0 +1,31 @@
+# Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
+[package]
+name = "image_resize"
+description = "Crops or extends image edges or a fixed-size canvas without scaling, with boundary sampling and rotation."
+version = "0.3.0"
+edition = "2024"
+license.workspace = true
+authors.workspace = true
+
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+after-effects = { workspace = true }
+utils = { path = "../../crates/utils" }
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[lints]
+workspace = true

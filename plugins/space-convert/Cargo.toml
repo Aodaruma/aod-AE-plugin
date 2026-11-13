@@ -1,8 +1,8 @@
 [package]
 license.workspace = true
 name = "space_convert"
-description = "Converts images between Cartesian, curvilinear coordinate, Radon, and channel-aware line Hough representations."
-version = "0.3.0"
+description = "Converts images between Cartesian, mask-path, curvilinear coordinate, Radon, and channel-aware line Hough representations."
+version = "0.4.0"
 edition = "2024"
 
 [lib]
