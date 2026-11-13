@@ -34,7 +34,9 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      # The pinned PiPL writes bundle resources relative to the pre-1.100 OUT_DIR layout.
+      # Keep packaging on the last verified toolchain until PiPL supports the new layout.
+      - uses: dtolnay/rust-toolchain@1.99.0
         with:
           targets: x86_64-apple-darwin,aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2
