@@ -37,8 +37,10 @@ jobs:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           submodules: recursive
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+      # The pinned PiPL writes bundle resources relative to the pre-1.100 OUT_DIR layout.
+      # Keep packaging on the last verified toolchain until PiPL supports the new layout.
+      - name: Install Rust (packaging toolchain)
+        uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: rustfmt, clippy
 
