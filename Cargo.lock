@@ -795,7 +795,7 @@ dependencies = [
 
 [[package]]
 name = "eyedropper_mask"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "after-effects",
  "chrono",
@@ -1331,6 +1331,19 @@ checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
 dependencies = [
  "byteorder-lite",
  "quick-error",
+]
+
+[[package]]
+name = "image_bevel"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "bincode",
+ "chrono",
+ "pipl",
+ "serde",
+ "utils",
+ "winres",
 ]
 
 [[package]]

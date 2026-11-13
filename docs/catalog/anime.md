@@ -4,6 +4,30 @@
 
 [![A分類の概要グリッド](assets/overview/anime.png)](assets/overview/anime.png)
 
+## AOD_ImageBevel
+
+- **分類:** A：アニメ素材
+
+![AOD_ImageBevel](assets/previews/image-bevel.png)
+
+シルエットから編集可能な断面カーブでベベルを作り、材質とライティングを設定します。
+
+プレビューは[猫の透過シルエット](assets/sources/cat-silhouette.png)を入力に、Neumann・Bスプラインの断面・内側ベベル・青い材質・左上のライトで生成しています。
+
+### パラメーター
+
+- `Profile Curve`: クリックで点を追加、ドラッグで移動。UIの枠から32px以上外へドラッグして離すか、Ctrl/Cmdクリックで中間点を削除できます。
+- `Interpolation`: 制御点で曲率まで滑らかにつなぐ`Smooth (B-Spline)`、全点を通りハンドルで接線を編集する`Bezier`、直線の`Linear`。BezierはAlt/Optionドラッグで片側を編集、Ctrl/Cmdクリックでハンドルを自動接線へ戻せます。旧Shape Preservingの保存値はBezierとして読み込み、編集前の描画を保持します。5種類の断面プリセットも選べます。
+- `Surface Method`: SDF、Screened Poisson / Neumann、Screened Poisson / Dirichlet。新規適用時はNeumann、既存プロジェクトの選択は維持します。
+- `Direction`、`Bevel Width`、`Contour Offset`、`Silhouette Blur`、`Height`、`Height Blur`: 内側／外側／両側の生成範囲と断面を調整します。
+- `Base Color`、`Diffuse`、`Roughness`、`Specular IOR Level`、`Metallic`、`IOR`、`Emission`: 簡易材質を設定します。
+- `Light Position`、`Light Height`、`Light Color / Intensity`、`Ambient`: ポイントによるライティングを設定します。
+- `Transmission`、`Refraction Layer`、`Refraction Depth`: 参照画像を歪める2D屈折を設定します。
+- `Alpha`: 元アルファ、カーブがゼロの部分を透明化、切り抜きなしの3方式です。
+- `Output`: 材質、白黒の高さ、法線、拡散、反射、屈折を確認できます。
+
+詳細・制限は [Image Bevelの説明](../../plugins/image-bevel/README.md) を参照してください。
+
 ## AOD_ColorChange
 
 - **分類:** A：アニメ素材
@@ -107,9 +131,16 @@ Canny法で色や明度の境界を検出し、輪郭線画像を生成します
 ### パラメーター
 
 - `Color Threshold`、`Alpha Threshold`、`Region Min Alpha`: 領域探索の色・透明度条件を設定します。
-- `Alpha Workflow`: プリマルチ／ストレートの処理方式を選択します。
+- `Selection Source`: 素材の原画像／上流のマスク・エフェクト適用後から領域を判定します。
+- `Color Interpretation`: プリマルチ／ストレートRGBでの色比較を選択します。
+- `Stabilize Reduced Resolution`: 縮小プレビュー内の小さな穴を通じて選択領域が広がるのを抑えます。処理はプレビュー解像度で完結します。近似による制約と検証状況は[プラグインREADME](../../plugins/eyedropper-mask/README.md)を参照してください。
+- `Preview Gap Radius (px)`: 穴の保護半径を0〜3プレビューピクセルで指定します。既定は1、0は保護なしです。Fullには影響しません。
 - `Connectivity`: 4近傍／8近傍の連結条件を選択します。
 - `Add/Remove Point`と各Point: スポイト位置、対象色、適用不透明度を管理します。
+
+AE 26.3でのFull／Quarter比較です。OFFでは縮小によって境界の一部に開いた穴から隣接領域まで透明になりますが、ONではその広がりを抑えます。境界全体が消失した場合は復元できません。
+
+![Eyedropper Maskの解像度比較](assets/previews/eyedropper-mask-resolution.png)
 
 ## AOD_ImageRelight
 

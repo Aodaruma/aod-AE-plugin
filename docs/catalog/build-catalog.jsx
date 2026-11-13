@@ -48,7 +48,8 @@
         { name: "Contour Generate", aod: "AOD_ContourGenerate", slug: "contour-generate", category: "A", match: "ContourGenerate" },
         { name: "Differential Generate", aod: "AOD_DifferentialGenerate", slug: "differential-generate", category: "A", match: "DifferentialGenerate" },
         { name: "Distance Generate", aod: "AOD_DistanceGenerate", slug: "distance-generate", category: "A", match: "DistanceGenerate" },
-        { name: "Eyedropper Mask", aod: "AOD_EyedropperMask", slug: "eyedropper-mask", category: "A", comp: "08 Eyedropper Mask" },
+        { name: "Eyedropper Mask", aod: "AOD_EyedropperMask", slug: "eyedropper-mask", category: "A", comp: "08 Eyedropper Mask", fresh: true },
+        { name: "Image Bevel", aod: "AOD_ImageBevel", slug: "image-bevel", category: "A", match: "ImageBevel", fresh: true },
         { name: "Image Relight", aod: "AOD_ImageRelight", slug: "image-relight", category: "A", match: "ImageRelight", fresh: true },
         { name: "Light Wrap", aod: "AOD_LightWrap", slug: "light-wrap", category: "A", comp: "16 Light Wrap" },
         { name: "Line Repaint", aod: "AOD_LineRepaint", slug: "line-repaint", category: "A", comp: "17 Line Repaint" },
@@ -313,8 +314,9 @@
             setProperty(effect, "Operation", 3);
             setProperty(effect, "Input B (Operand)", 1);
             setProperty(effect, "Value B (Operand)", 1.75);
-            setProperty(effect, "Clamp Result 0..1", 1);
+            setProperty(effect, "Clamp Mode", 2);
             setProperty(effect, "Use Original Alpha", 1);
+            setProperty(effect, "Mix (%)", 100.0);
         } else if (item.match === "ImageEncryptDecrypt") {
             setProperty(effect, "Operation", 1);
             setProperty(effect, "Algorithm", 7);
@@ -439,7 +441,32 @@
         var name = "CATPREVIEW - " + item.name;
         var comp = app.project.items.addComp(name, 512, 512, 1, 1, 30);
         var layer;
-        if (item.match === "TextureStroke") {
+        if (item.match === "ImageBevel") {
+            comp.layers.addSolid([0.025, 0.035, 0.055], "Background", 512, 512, 1, 1);
+            var bevelSource = app.project.items.addComp("CATPREVIEW - Image Bevel Source", 512, 512, 1, 1, 30);
+            var silhouetteFile = new File(docsRoot.fsName + "/assets/sources/cat-silhouette.png");
+            if (!silhouetteFile.exists) {
+                throw new Error("Missing cat silhouette: " + silhouetteFile.fsName);
+            }
+            var silhouette = app.project.importFile(new ImportOptions(silhouetteFile));
+            bevelSource.layers.add(silhouette);
+            layer = comp.layers.add(bevelSource);
+            var bevelEffect = addEffect(layer, item.match);
+            setProperty(bevelEffect, "Surface Method", 2);
+            setProperty(bevelEffect, "Interpolation", 3);
+            setProperty(bevelEffect, "Bevel Width (px)", 28);
+            setProperty(bevelEffect, "Height (px)", 22);
+            setProperty(bevelEffect, "Height Blur (px)", 1.5);
+            setProperty(bevelEffect, "Base Color", [0.2,0.55,0.9,1]);
+            setProperty(bevelEffect, "Roughness", 0.42);
+            setProperty(bevelEffect, "Metallic", 0.3);
+            setProperty(bevelEffect, "Ambient", 0.3);
+            setProperty(bevelEffect, "Light Position", [95,55]);
+            setProperty(bevelEffect, "Light Height (px)", 300);
+            setProperty(bevelEffect, "Light Intensity", 3);
+            item.comp = comp.name;
+            return comp;
+        } else if (item.match === "TextureStroke") {
             comp.layers.addSolid([0.035, 0.045, 0.065], "Preview Background", 512, 512, 1, 1);
             var brush = app.project.items.addComp("CATPREVIEW - Texture Stroke Brush", 64, 64, 1, 1, 30);
             for (var strand = 0; strand < 9; strand++) {
