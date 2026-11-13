@@ -58,8 +58,7 @@ fn main() {
         Property::AE_Effect_Info_Flags(0),
         Property::AE_Effect_Global_OutFlags(
             // set up from https://docs.rs/pipl/latest/pipl/struct.OutFlags.html
-            OutFlags::PixIndependent
-            | OutFlags::UseOutputExtent
+            OutFlags::UseOutputExtent
             | OutFlags::DeepColorAware
             | OutFlags::WideTimeInput
             | OutFlags::SendUpdateParamsUI

@@ -1,0 +1,36 @@
+# Template material: MPL-2.0 with the additional permission in TEMPLATE-LICENSE.txt.
+[package]
+name = "image_bevel"
+description = "Creates curve-shaped bevels from silhouettes with configurable materials and lighting."
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+authors.workspace = true
+
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = []
+catch-panics = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+after-effects = { workspace = true }
+utils = { path = "../../crates/utils" }
+
+
+[dev-dependencies]
+pipl = { workspace = true }
+bincode = { version = "2", features = ["serde"] }
+
+[build-dependencies]
+chrono.workspace = true
+pipl.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1.12"
+
+[lints]
+workspace = true
