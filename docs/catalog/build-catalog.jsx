@@ -34,6 +34,7 @@
         { name: "Gradient Displace", aod: "AOD_GradientDisplace", slug: "gradient-displace", category: "P", comp: "13 Gradient Displace" },
         { name: "Glass Displace", aod: "AOD_GlassDisplace", slug: "glass-displace", category: "P", match: "GlassDisplace", fresh: true },
         { name: "Image Calculate", aod: "AOD_ImageCalculate", slug: "image-calculate", category: "P", match: "ImageCalculate" },
+        { name: "Image Pattern", aod: "AOD_ImagePattern", slug: "image-pattern", category: "P", match: "ImagePattern", fresh: true },
         { name: "Image Crypt", aod: "AOD_ImageCrypt", slug: "image-encrypt-decrypt", category: "P", match: "ImageEncryptDecrypt", fresh: true },
         { name: "Image Resize", aod: "AOD_ImageResize", slug: "image-resize", category: "P", match: "ImageResize", fresh: true },
         { name: "Image Scaler", aod: "AOD_ImageScaler", slug: "image-scaler", category: "P", comp: "15 Image Scaler" },
@@ -199,8 +200,8 @@
         return layer;
     }
 
-    function createFallbackSourceComp() {
-        var comp = app.project.items.addComp("Cat Crop 512x512", 512, 512, 1, 1, 30);
+    function createFallbackSourceComp(sourceName) {
+        var comp = app.project.items.addComp(sourceName || "Cat Crop 512x512", 512, 512, 1, 1, 30);
         comp.bgColor = [0.025, 0.035, 0.065];
         comp.layers.addSolid([0.025, 0.035, 0.065], "Procedural Background", 512, 512, 1, comp.duration);
         addMaskedSolid(comp, "Warm Diagonal", [0.95, 0.25, 0.08], [[-40, 390], [385, -35], [555, 135], [130, 560]], 82);
@@ -355,6 +356,20 @@
             setProperty(effect, "Environment Strength", 0.16);
             setProperty(effect, "Exposure (EV)", -0.15);
             setProperty(effect, "Output", 1);
+        } else if (item.match === "ImagePattern") {
+            setProperty(effect, "Pattern Mode", 3);
+            setProperty(effect, "Angle", 8.0);
+            setProperty(effect, "Width (px)", 60.0);
+            setProperty(effect, "Delta Angle", 4.0);
+            setProperty(effect, "Delta Width (px)", 2.0);
+            setProperty(effect, "Delta X (px)", 18.0);
+            setProperty(effect, "Delta Y (px)", -8.0);
+            setProperty(effect, "Clipping", 1);
+            setProperty(effect, "Overlap Order", 1);
+            setProperty(effect, "Copies Each Side", 4);
+            setProperty(effect, "Split Overlaps", 0);
+            setProperty(effect, "Strip Image Affect (%)", 100.0);
+            setProperty(effect, "Edge", 5);
         } else if (item.match === "ImageResize") {
             setProperty(effect, "Mode", 3);
             setProperty(effect, "All %", 100);
@@ -466,6 +481,14 @@
             setProperty(bevelEffect, "Light Intensity", 3);
             item.comp = comp.name;
             return comp;
+        } else if (item.match === "ImagePattern") {
+            comp.layers.addSolid([0.035, 0.045, 0.065], "Preview Background", 512, 512, 1, comp.duration);
+            var patternSource = findComp("CATPREVIEW - Image Pattern Source");
+            if (!patternSource) {
+                patternSource = createFallbackSourceComp("CATPREVIEW - Image Pattern Source");
+            }
+            layer = comp.layers.add(patternSource);
+            layer.name = "Photo Cat Source";
         } else if (item.match === "TextureStroke") {
             comp.layers.addSolid([0.035, 0.045, 0.065], "Preview Background", 512, 512, 1, 1);
             var brush = app.project.items.addComp("CATPREVIEW - Texture Stroke Brush", 64, 64, 1, 1, 30);
