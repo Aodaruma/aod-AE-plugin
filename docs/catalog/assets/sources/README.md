@@ -10,3 +10,7 @@
 2. `Fill`でRGBを白に統一し、透過アルファを保持。
 
 カタログ再生成時はこのPNGを直接読み込みます。元写真や加工元のプレビューを再度キーイングする必要はありません。
+
+## panorama-convert-input.png
+
+`AOD_PanoramaConvert`のプレビューに使用する256×128の正距円筒画像です。各方向のXYZ成分をRGBに符号化した手続き素材で、`plugins/panorama-convert/tests/make_fixtures.py`で再生成できます。

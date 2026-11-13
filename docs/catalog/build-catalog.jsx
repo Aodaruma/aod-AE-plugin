@@ -41,6 +41,7 @@
         { name: "Image Transform", aod: "AOD_ImageTransform", slug: "image-transform", category: "P", match: "ImageTransform", fresh: true },
         { name: "Panorama Reframe", aod: "AOD_PanoramaReframe", slug: "panorama-reframe", category: "P", match: "PanoramaReframe", fresh: true },
         { name: "Mobius Transform", aod: "AOD_MobiusTransform", slug: "mobius-transform", category: "P", match: "MobiusTransform" },
+        { name: "Panorama Convert", aod: "AOD_PanoramaConvert", slug: "panorama-convert", category: "P", comp: "Panorama Convert Catalog" },
         { name: "Scatter Map", aod: "AOD_ScatterMap", slug: "scatter-map", category: "P", comp: "19 Scatter Map" },
         { name: "Singular Value Decompose", aod: "AOD_SingularValueDecompose", slug: "singular-value-decompose", category: "P", comp: "20 Singular Value Decompose" },
 
@@ -462,6 +463,37 @@
         }
     }
 
+    function createPanoramaConvertPreview() {
+        var sourceFile = new File(docsRoot.fsName + "/assets/sources/panorama-convert-input.png");
+        if (!sourceFile.exists) { throw new Error("Missing panorama source: " + sourceFile.fsName); }
+        var source = app.project.importFile(new ImportOptions(sourceFile));
+        source.mainSource.alphaMode = AlphaMode.STRAIGHT;
+        var comp = app.project.items.addComp("Panorama Convert Catalog", 512, 512, 1, 1, 24);
+        comp.layers.addSolid([0.025, 0.035, 0.055], "Background", 512, 512, 1, 1);
+        var top = comp.layers.add(source);
+        top.transform.scale.setValue([160, 160]);
+        top.transform.position.setValue([256, 126]);
+        var bottom = comp.layers.add(source);
+        var effect = addEffect(bottom, "PanoramaConvert");
+        setProperty(effect, "Output", 4);
+        setProperty(effect, "Output Width (0 = Input)", 384);
+        bottom.transform.scale.setValue([75, 75]);
+        bottom.transform.position.setValue([256, 365]);
+        function label(text, y) {
+            var layer = comp.layers.addText(text);
+            var prop = layer.property("ADBE Text Properties").property("ADBE Text Document");
+            var doc = prop.value;
+            doc.fontSize = 16;
+            doc.fillColor = [0.9, 0.94, 1];
+            doc.justification = ParagraphJustification.CENTER_JUSTIFY;
+            prop.setValue(doc);
+            layer.transform.position.setValue([256, y]);
+        }
+        label("EQUIRECTANGULAR", 20);
+        label("CUBEMAP CROSS 4:3", 250);
+        return comp;
+    }
+
     function createOldPreview(item) {
         var name = "CATPREVIEW - " + item.name;
         var comp = app.project.items.addComp(name, 512, 512, 1, 1, 30);
@@ -726,6 +758,27 @@
             log.push("UPDATED " + selected.aod + " and its overview grids using saved preview assets.");
             writeReport("Selected preview and overview grids updated.");
             notify("AOD catalog preview updated: " + selected.aod);
+        } else if (phase === "update-panorama-convert") {
+            var panoramaPreview = findComp("Panorama Convert Catalog");
+            if (panoramaPreview) { panoramaPreview.remove(); }
+            panoramaPreview = createPanoramaConvertPreview();
+            var panoramaPng = new File(previewRoot.fsName + "/panorama-convert.png");
+            var preservePanorama = $.getenv("AOD_CATALOG_PRESERVE_PREVIEW") === "1";
+            if (preservePanorama && !panoramaPng.exists) { throw new Error("Existing PanoramaConvert preview not found"); }
+            if (!preservePanorama) { saveCatalogFrame(panoramaPreview, 0, panoramaPng); }
+            var panoramaCategories = ["P", "ALL"];
+            var panoramaNames = { P: "photo", ALL: "all-effects" };
+            for (var pc = 0; pc < panoramaCategories.length; pc++) {
+                var panoramaCategory = panoramaCategories[pc];
+                var panoramaGrid = findComp("CATGRID - " + panoramaCategory);
+                if (panoramaGrid) { panoramaGrid.remove(); }
+                panoramaGrid = makeGrid(panoramaCategory, true);
+                saveCatalogFrame(panoramaGrid, 0, new File(overviewRoot.fsName + "/" + panoramaNames[panoramaCategory] + ".png"));
+            }
+            app.project.save(projectFile);
+            log.push("UPDATED PanoramaConvert composition and overview grids.");
+            writeReport("PanoramaConvert catalog updated.");
+            notify("PanoramaConvert catalog updated.");
         } else if (phase === "render-previews") {
             for (var p = 0; p < catalog.length; p++) {
                 var previewFile = new File(previewRoot.fsName + "/" + catalog[p].slug + ".png");
