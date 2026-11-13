@@ -328,6 +328,59 @@ AE標準Transformに近いアフィン変換を、多様な再構成フィルタ
 - `Seed`、`Temporal Mode`、`Edge Mode`: 再現性、フレーム変化、境界処理を指定します。
 - `Blend Opacity`、`Preserve Original Alpha`、`Clamp`: 原画像との合成と出力を制御します。
 
+## AOD_SeamScale
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_SeamScale](assets/previews/seam-scale.png)
+
+プレビューはv0.3.0・AE 2025・16bpcで、入力マップON、横方向グラデーションのR、XのMin50%・Max150%、YのMin/Max100%、アンカー50%、Restore OFF、Seam Channel=RGBAを使用しています。
+
+画像内容に応じたシームを正確な動的計画法で求め、画像を拡大・縮小します。残存画素を保ち、必要に応じて通常のリサイズで元の寸法へ戻せます。
+
+### パラメーター
+
+- `Separate X/Y Scale`: OFFで共通倍率、ONでX/Y個別倍率に切り替えます。
+- `Scale (%)`、`Scale X (%)`、`Scale Y (%)`: 拡縮倍率を−400〜400%で指定します。絶対値でシーム処理し、負の軸を反転します。最小1pxです。
+- `Restore Original Size`: シーム処理後にバイリニア補間で元のサイズに戻します。
+- `Seam Channel`: RGB / RGBA / R / G / B / A / Lightnessから判定成分を選びます。既定RGBAはLightness＋Alphaで、旧版と同じ計算です。画素のRGBAは一緒に移動します。
+- `Output`: Image / Seam Map (Displacement)。Seam Mapは同じシームによる横・縦の参照変位をR/G、有効領域をBへ出力します。
+- `Use Map Layer`: ONで入力マップとMin/Maxを表示、OFFで通常のScaleを表示します。Separate X/Y Scaleと組み合わせ、不要な倍率は非表示になります。
+- `Scale Map Layer` / `Map Channel`: 制御レイヤーと参照成分を選びます。
+- `Min / Max Scale`: アンカーからの明るさの絶対距離で倍率を補間します。アンカー50%なら黒と白は同じMaxです。共通・X/Y個別の設定を切り替えられます。
+- `Anchor Map Value` / `Anchor Tolerance`: 元の位置を固定する明るさと許容幅です。[入力マップの仕様](../../plugins/seam-scale/LAYER_MAP.md)を参照してください。
+
+処理順はX→Y固定です。復元OFF時は元のキャンバス中央へ配置し、縮小時の余白は透明、拡大時のキャンバス外は切れます。動画は毎フレーム計算するため、解像度・変更量によって時間がかかります。
+
+[実装・検証の詳細](../../plugins/seam-scale/README.md)
+
+### Seam Map出力の例
+
+![Seam Map](assets/previews/seam-scale-map.png)
+
+v0.2.0、AE 2025、512×384の合成素材、共通倍率50%、RGBA、元サイズ復元OFF、32bpc。R/Gの0.5が変位なし、Bの白い領域が縮小後の有効範囲です。表示例はAEのレンダーキューから出力した16bit PNGです。
+
+AE標準のディスプレイスメントマップへ接続する場合は32bpcを推奨します。拡大・元サイズ復元では、座標を補間した結果と直接画像を補間した結果に差が出ます。[接続手順・検証結果](../../plugins/seam-scale/SEAM_MAP.md)を参照してください。この出力はUse Map LayerがOFFのときに使用できます。
+
+## AOD_SeamMap（旧独立版）
+
+新規利用では上のAOD_SeamScaleにある`Use Map Layer`を使用してください。この独立版は既存プロジェクトの互換性のために残しています。
+
+- **分類:** P：一般写真・連続階調画像
+
+![AOD_SeamMap](assets/previews/seam-map.png)
+
+入力マップの明るさから黒・白の倍率を直線補間し、指定した明るさの場所を元の位置に固定します。正確なDPで求めたシームの参照座標に位置補正を加える、独立したエフェクトです。
+
+プレビューはAE 2025で、横方向のグラデーション、Xの黒50%・白150%、Y=100%、アンカー50%、Restore OFFを使用しています。
+
+- `Scale Map Layer` / `Map Channel`: 入力マップとLightness / R / G / B / Aを選びます。
+- `Black / White Scale`: 黒・白での倍率。−400〜400%、中間は直線補間します。
+- `Separate X/Y Scale`: OFFで共通倍率、ONでX/Y個別の黒・白倍率を使います。
+- `Anchor Map Value` / `Anchor Tolerance`: 固定する明るさと許容幅。アンカーの指定で倍率の補間は変わりません。
+- `Seam Channel` / `Restore Original Size`: シーム判定チャンネルと、元サイズへの復元を指定します。
+
+複数の固定点の間では位置補正によって実効的な局所倍率が変わります。高解像度では処理負荷が大きい試作版です。[仕様・検証結果](../../plugins/seam-map/README.md)を参照してください。
 ## AOD_ImagePattern
 
 - **分類:** P：一般写真・連続階調画像

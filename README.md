@@ -13,8 +13,10 @@ This repository is a Cargo
 workspace that builds multiple AE effect plugins, plus shared utilities and a plugin
 template.
 
-現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する46種類のエフェクトを収録しています。[AOD_CodecMap](plugins/codec-map/README.md)はH.264・VP9・MPEG-4の圧縮をマップで制御し、I/Bフレームの除去によるデータモッシュに対応します。
-The current catalog contains 46 effects for photo, anime, data/map, and generator workflows.
+現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する48種類のエフェクトを収録しています。[AOD_CodecMap](plugins/codec-map/README.md)はH.264・VP9・MPEG-4の圧縮をマップで制御し、I/Bフレームの除去によるデータモッシュに対応します。
+The current catalog contains 48 effects for photo, anime, data/map, and generator workflows.
+
+[AOD_SeamScale](plugins/seam-scale/README.md)は正確なDPによる画像の拡縮、チャンネル選択、負の倍率による反転、元サイズへの復元に対応します。[入力マップによる拡縮](plugins/seam-scale/LAYER_MAP.md)は `Use Map Layer` で切り替えます。[旧AOD_SeamMap](plugins/seam-map/README.md)は既存プロジェクトとの互換性のために残しています。
 
 ## Effect List / エフェクト一覧
 

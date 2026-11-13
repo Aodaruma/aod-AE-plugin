@@ -1,0 +1,6 @@
+[values]
+description = "Resizes images with exact dynamic-programming seam carving and optional size restoration."
+features = []
+with_deepcolor = true
+with_thrededrender = true
+with_smartrender = true

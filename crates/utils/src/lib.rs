@@ -52,6 +52,7 @@ fn sanitize_channel(value: f32) -> f32 {
 }
 
 pub mod image;
+pub mod seam;
 #[cfg(feature = "spectral")]
 pub mod spectral;
 #[cfg(feature = "spectral_wgpu")]
