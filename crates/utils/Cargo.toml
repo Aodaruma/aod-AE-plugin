@@ -6,6 +6,8 @@ edition = "2024"
 
 [features]
 default = []
+blur = ["dep:rayon", "dep:serde"]
+blur_wgpu = ["blur", "dep:wgpu", "dep:pollster", "dep:bytemuck"]
 spectral = ["dep:rustfft", "dep:num-complex", "dep:anyhow"]
 spectral_wgpu = [
   "dep:wgpu",
@@ -16,6 +18,8 @@ spectral_wgpu = [
 
 [dependencies]
 after-effects.workspace = true
+rayon = { version = "1.11", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
 anyhow = { version = "1", optional = true }
 rustfft = { workspace = true, optional = true }
 num-complex = { workspace = true, optional = true }

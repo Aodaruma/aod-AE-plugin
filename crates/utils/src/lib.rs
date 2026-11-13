@@ -2,6 +2,8 @@ use ae::sys::{PF_Pixel, PF_PixelFloat};
 use ae::{Pixel8, Pixel16, PixelF32};
 use after_effects as ae;
 
+#[cfg(feature = "blur")]
+pub mod blur;
 pub mod image;
 #[cfg(feature = "spectral")]
 pub mod spectral;

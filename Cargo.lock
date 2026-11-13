@@ -805,6 +805,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fake_blur"
+version = "0.3.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2916,7 +2926,9 @@ dependencies = [
  "futures-intrusive",
  "num-complex",
  "pollster",
+ "rayon",
  "rustfft",
+ "serde",
  "wgpu",
 ]
 
