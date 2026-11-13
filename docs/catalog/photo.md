@@ -206,6 +206,24 @@ k-means／g-means系のクラスタリングで画像の色数を減らします
 
 機密保護用の暗号ではなく、モーショングラフィックスやグリッチ表現向けの可逆変換です。厳密な復元には同一寸法・ビット深度・キー・設定と、途中で未加工のエンコード画像が必要です。Resilient Replicasは論理解像度を下げる代わりに、局所的な画素破損を中央値で復元するlossy方式です。
 
+## AOD_FakeBlur
+
+- **分類:** P：一般写真・連続階調画像（補助入力: D）
+
+![AOD_FakeBlur](assets/previews/fake-blur.png)
+
+Mipmap（既定）、Displacement、縮小画像の再補間によるブラーです。マップの黒を半径0、白を指定半径として空間的に制御します。Displacementはコピーごとにランダムな方向を1つ決め、その方向へ変位させた画像を重ねます。各コピー内では方向を共通にし、変位量をBlur Mapで制御します。
+
+### パラメーター
+
+- `Blur Mode`、`Blur Radius`: 方式と半径。
+- `Blur Map`、`Map Channel`、`Invert Map`: マップ入力、輝度／RGBAチャンネル、反転。
+- `Evolution`、`Samples`: Displacementの方向の組み合わせの回転（度数）、重ねる枚数。
+- `Interpolation`: Nearest／Bilinear／Cubic B-Spline。
+- `Edges`、`Mix`、`Processing`: 境界処理、元画像との混合、CPU／GPU。
+
+[操作方法・制限](../../plugins/fake-blur/README.md)
+
 ## AOD_ImageResize
 
 - **分類:** P：一般写真・連続階調画像

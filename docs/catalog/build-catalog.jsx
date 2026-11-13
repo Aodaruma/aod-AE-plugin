@@ -28,6 +28,7 @@
         { name: "Color Quantize", aod: "AOD_ColorQuantize", slug: "color-quantize", category: "P", comp: "04 Color Quantize" },
         { name: "Displace Scatter", aod: "AOD_DisplaceScatter", slug: "displace-scatter", category: "P", comp: "07 Displace Scatter" },
         { name: "FFT", aod: "AOD_FFT", slug: "fft", category: "P", comp: "09 FFT" },
+        { name: "Fake Blur", aod: "AOD_FakeBlur", slug: "fake-blur", category: "P", match: "FakeBlur", fresh: true },
         { name: "Fourier Filter", aod: "AOD_FourierFilter", slug: "fourier-filter", category: "P", comp: "10 Fourier Filter" },
         { name: "Gradient Blur", aod: "AOD_GradientBlur", slug: "gradient-blur", category: "P", comp: "12 Gradient Blur" },
         { name: "Gradient Displace", aod: "AOD_GradientDisplace", slug: "gradient-displace", category: "P", comp: "13 Gradient Displace" },
@@ -286,6 +287,8 @@
             setProperty(effect, "Offset", 0.04);
             setProperty(effect, "Label Tolerance", 0.035);
             setProperty(effect, "Use Original Alpha", 0);
+        } else if (item.match === "FakeBlur") {
+            setProperty(effect, "Blur Radius", 12);
         } else if (item.match === "GlassDisplace") {
             setProperty(effect, "Height Source", 1);
             setProperty(effect, "Shape", 7);

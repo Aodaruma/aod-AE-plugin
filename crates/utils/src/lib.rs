@@ -2,6 +2,9 @@ use ae::sys::{PF_Pixel, PF_PixelFloat};
 use ae::{Pixel8, Pixel16, PixelF32};
 use after_effects as ae;
 
+#[cfg(feature = "blur")]
+pub mod blur;
+
 const ALPHA_EPSILON: f32 = 1.0e-6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
