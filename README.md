@@ -13,7 +13,8 @@ This repository is a Cargo
 workspace that builds multiple AE effect plugins, plus shared utilities and a plugin
 template.
 
-現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する40種類のエフェクトを掲載しています。[AOD_CodecMap](plugins/codec-map/README.md)はH.264・VP9・MPEG-4の圧縮をマップで制御し、I/Bフレームの除去によるデータモッシュに対応します。
+現在のカタログには、写真・アニメ素材・データ画像・生成用途を横断する46種類のエフェクトを収録しています。[AOD_CodecMap](plugins/codec-map/README.md)はH.264・VP9・MPEG-4の圧縮をマップで制御し、I/Bフレームの除去によるデータモッシュに対応します。
+The current catalog contains 46 effects for photo, anime, data/map, and generator workflows.
 
 ## Effect List / エフェクト一覧
 
@@ -25,6 +26,8 @@ template.
 - [D: Data & Map / データ・マップ画像](docs/catalog/map-data.md)
 - [G: Generator / 生成用キャンバス](docs/catalog/generator.md)
 - [Releases / ダウンロード](https://github.com/Aodaruma/aod-AE-plugin/releases)
+
+[AOD_PanoramaConvert](plugins/panorama-convert/README.md) は正距円筒・キューブマップ・180°魚眼を相互変換し、コンポジションサイズを維持したままエフェクトの出力範囲だけを変更します。
 
 ## 1. Issue / バグ報告
 

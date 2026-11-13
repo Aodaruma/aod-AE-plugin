@@ -835,12 +835,22 @@ dependencies = [
 
 [[package]]
 name = "eyedropper_mask"
-version = "0.1.0"
+version = "0.2.3"
 dependencies = [
  "after-effects",
  "chrono",
  "pipl",
  "seq-macro",
+ "utils",
+]
+
+[[package]]
+name = "fake_blur"
+version = "0.3.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
  "utils",
 ]
 
@@ -1364,6 +1374,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_bevel"
+version = "0.1.0"
+dependencies = [
+ "after-effects",
+ "bincode",
+ "chrono",
+ "pipl",
+ "serde",
+ "utils",
+ "winres",
+]
+
+[[package]]
 name = "image_calculate"
 version = "0.1.0"
 dependencies = [
@@ -1387,6 +1410,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "image_pattern"
+version = "0.4.6"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
+ "winres",
+]
+
+[[package]]
 name = "image_relight"
 version = "0.5.0"
 dependencies = [
@@ -1399,6 +1433,16 @@ dependencies = [
  "utils",
  "wgpu",
  "winres",
+]
+
+[[package]]
+name = "image_resize"
+version = "0.3.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
 ]
 
 [[package]]
@@ -2027,6 +2071,27 @@ name = "palette_math"
 version = "0.7.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e6eb142958d64335fb0e345c5b9ead2ecd6fc438c307e9d7d3c4fd428dbaf12"
+
+[[package]]
+name = "panorama_convert"
+version = "0.3.0"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
+]
+
+[[package]]
+name = "panorama_reframe"
+version = "0.1.4"
+dependencies = [
+ "after-effects",
+ "chrono",
+ "pipl",
+ "utils",
+ "winres",
+]
 
 [[package]]
 name = "parking_lot"
@@ -2728,7 +2793,7 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "space_convert"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "after-effects",
  "chrono",
@@ -2946,7 +3011,9 @@ dependencies = [
  "futures-intrusive",
  "num-complex",
  "pollster",
+ "rayon",
  "rustfft",
+ "serde",
  "wgpu",
 ]
 

@@ -30,3 +30,6 @@ __pycache__/
 /catalog/ae2025-plugin-catalog/Adobe After Effects Auto-Save/
 /catalog/ae2025-plugin-catalog/build-report.txt
 /catalog/ae2025-plugin-catalog/aod-plugin-catalog-ae2025.*.*.aep
+
+# Local Panorama Reframe verification outputs
+/.task/
