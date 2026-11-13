@@ -376,7 +376,8 @@
             }
             var texture = comp.layers.add(brush);
             texture.enabled = false;
-            layer = comp.layers.addShape();
+            var paths = app.project.items.addComp("CATPREVIEW - Texture Stroke Paths", 512, 512, 1, 1, 30);
+            layer = paths.layers.addShape();
             layer.name = "Curved shape path";
             var group = layer.property("ADBE Root Vectors Group").addProperty("ADBE Vector Group");
             var path = group.property("ADBE Vectors Group").addProperty("ADBE Vector Shape - Group");
@@ -386,11 +387,17 @@
             shape.outTangents = [[65,-30],[45,-55],[75,20],[0,70],[-75,0],[0,-65],[0,0]];
             shape.closed = false;
             path.property("ADBE Vector Shape").setValue(shape);
+            layer = comp.layers.add(paths);
+            layer.collapseTransformation = true;
+            layer.transform.scale.setValue([92,92]);
+            layer.transform.rotation.setValue(-12);
             var stroke = addEffect(layer, item.match);
             setProperty(stroke, "Texture Layer", texture.index);
             setProperty(stroke, "Output", 2);
             setProperty(stroke, "Stroke Width (px)", 66);
             setProperty(stroke, "Density (%)", 120);
+            setProperty(stroke, "Size Input", 2);
+            setProperty(stroke, "Curvature Radius (px)", 100);
             item.comp = comp.name;
             return comp;
         } else if (item.category === "G") {
