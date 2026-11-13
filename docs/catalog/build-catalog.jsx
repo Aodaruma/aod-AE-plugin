@@ -39,6 +39,7 @@
         { name: "Image Resize", aod: "AOD_ImageResize", slug: "image-resize", category: "P", match: "ImageResize", fresh: true },
         { name: "Image Scaler", aod: "AOD_ImageScaler", slug: "image-scaler", category: "P", comp: "15 Image Scaler" },
         { name: "Image Transform", aod: "AOD_ImageTransform", slug: "image-transform", category: "P", match: "ImageTransform", fresh: true },
+        { name: "Panorama Reframe", aod: "AOD_PanoramaReframe", slug: "panorama-reframe", category: "P", match: "PanoramaReframe", fresh: true },
         { name: "Mobius Transform", aod: "AOD_MobiusTransform", slug: "mobius-transform", category: "P", match: "MobiusTransform" },
         { name: "Scatter Map", aod: "AOD_ScatterMap", slug: "scatter-map", category: "P", comp: "19 Scatter Map" },
         { name: "Singular Value Decompose", aod: "AOD_SingularValueDecompose", slug: "singular-value-decompose", category: "P", comp: "20 Singular Value Decompose" },
@@ -238,7 +239,16 @@
     }
 
     function configureOldEffect(item, comp, layer, effect) {
-        if (item.match === "ColorAjust") {
+        if (item.match === "PanoramaReframe") {
+            setProperty(effect, "Position X", 2000);
+            setProperty(effect, "Sphere Scale (%)", 85);
+            setProperty(effect, "Position Z", 1500);
+            setProperty(effect, "Output Projection", 2);
+            setProperty(effect, "Field of View", 220);
+            setProperty(effect, "Rotation Y", 35);
+            setProperty(effect, "Rotation X", -25);
+            setProperty(effect, "Antialiasing", 2);
+        } else if (item.match === "ColorAjust") {
             setProperty(effect, "Color Space", 1);
             setProperty(effect, "Hue Shift (deg)", 42);
             setProperty(effect, "Chroma Scale", 1.45);
@@ -522,6 +532,9 @@
             setProperty(stroke, "Curvature Radius (px)", 100);
             item.comp = comp.name;
             return comp;
+        } else if (item.match === "PanoramaReframe") {
+            var panorama = app.project.importFile(new ImportOptions(new File(docsRoot.fsName + "/assets/sources/panorama-grid.png")));
+            layer = comp.layers.add(panorama);
         } else if (item.category === "G") {
             layer = comp.layers.addSolid([0.035, 0.045, 0.065], "Generator Canvas", 512, 512, 1, comp.duration);
         } else {
