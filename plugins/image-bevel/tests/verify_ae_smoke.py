@@ -32,6 +32,7 @@ assert 0.3 < read("direction-both")[64, 0] < 0.99
 assert read("offset")[58, 0] > 0.1
 
 assert np.max(np.abs(read("neumann") - read("dirichlet"))) > 0.01
+assert np.array_equal(read("neumann-default"), read("neumann")), "既定のNeumannが明示指定と一致しない"
 normal = read("normal")[128, :3]
 assert np.max(np.abs(normal - [0.5, 0.5, 1.0])) < 0.01
 assert read("emission")[128, 0] > read("emission")[128, 1] > 0

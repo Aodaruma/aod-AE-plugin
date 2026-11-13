@@ -6,7 +6,7 @@ Creates curve-shaped bevels from silhouettes with configurable materials and lig
 
 ![プレビュー](../../docs/catalog/assets/previews/image-bevel.png)
 
-プレビューは[猫の透過シルエット](../../docs/catalog/assets/sources/cat-silhouette.png)からSDFとBスプラインの断面でベベルを作り、青い材質と左上のライトを適用したAEの出力です。
+プレビューは[猫の透過シルエット](../../docs/catalog/assets/sources/cat-silhouette.png)からNeumannとBスプラインの断面でベベルを作り、青い材質と左上のライトを適用したAEの出力です。
 
 ## 基本操作
 
@@ -21,6 +21,7 @@ Creates curve-shaped bevels from silhouettes with configurable materials and lig
 - 空白をクリックして点を追加、点をドラッグして移動します。最大16点です。
 - 中間点をカスタムUIの枠から32px以上外へドラッグして離すと削除します。離す前に枠内へ戻せば削除されません。Ctrl（macOSではCmd）を押しながらクリックする操作でも削除できます。
 - 両端点は削除できず、縦方向のみ移動できます。
+- `Bezier`では水色の四角いハンドルをドラッグして接線の方向・長さを変更します。通常は左右の方向が連動し、Alt（macOSではOption）を押しながら動かすと片側だけ編集できます。Ctrl/Cmdを押しながらハンドルをクリックすると、その点の左右を自動接線に戻します。ハンドルを枠外へドラッグしても点は削除されません。
 - `Interpolation`: 下表の3方式を選べます。新規適用時は`Smooth (B-Spline)`です。
 - `Profile Preset`: Linear、Round、Concave、Ring、Steps。選択後に `Apply` を押すとカーブへ反映します。
 - カーブはAEのArbitraryパラメーターとして保存され、Undo・プロジェクト保存・キーフレーム補間に対応します。点数が異なるキーフレーム間は16点に再サンプリングして補間します。正確な形状補間には同じ点数を推奨します。
@@ -28,10 +29,10 @@ Creates curve-shaped bevels from silhouettes with configurable materials and lig
 | Interpolation | 動作 |
 |---|---|
 | Smooth (B-Spline) | 両端を通る3次Bスプライン。中間点は曲線を引っ張る制御点で、必ずしも通過しません。灰色の線が制御点の並び、青い線が実際の断面です。内部のつなぎ目で傾き・曲率が連続します。3点なら2次、2点なら直線になります。 |
-| Shape Preserving (Legacy) | 旧Smoothと同じ補間。全点を通り、山・谷の高さやゼロの平坦部を保持します。傾きは連続ですが、つなぎ目の曲率は連続とは限りません。 |
+| Bezier | 全点を通る3次Bezier。左右のハンドルで形状を編集できます。ハンドルの横位置は隣接する点の間、縦位置は0～1に制限し、距離に対して高さが一意に定まるようにします。未編集の点では、山・谷やゼロの平坦部を保つ自動接線を使います。 |
 | Linear | 全点を直線でつなぎます。 |
 
-Bスプラインは全制御点の重みを1にしたNURBSと同等です。重みやBezierハンドルの個別編集はありません。既存プロジェクトの旧Smooth／Linearは同じ描画を保持します。新方式を試す場合は`Interpolation`を`Smooth (B-Spline)`へ切り替えてください。ゼロの平坦部を厳密に残したい断面では`Shape Preserving (Legacy)`または`Linear`を使用します。
+Bスプラインは全制御点の重みを1にしたNURBSと同等で、重みの個別編集はありません。従来の`Shape Preserving (Legacy)`は選択肢から削除しました。旧Smooth／Shape Preservingで保存したプロジェクトは`Bezier`として開き、ハンドルを編集するまでは元と同じ描画を保持します。Linear／B-Splineの保存値も維持します。Bezierハンドルは他の補間方式へ切り替えても保持し、プリセット適用でリセットします。ハンドル編集後の保存データにはこの更新版以降のプラグインが必要です。
 
 ## シルエットと高さ
 
@@ -40,7 +41,7 @@ Bスプラインは全制御点の重みを1にしたNURBSと同等です。重�
 | Silhouette | Alpha、またはLuminance × Alphaを輪郭入力にします。RGB色領域の個別分割は行いません。 |
 | Threshold | 入力値がこの値を超える画素を内側にします。 |
 | Silhouette Blur | 二値化前のシルエットをぼかします。分離した3回のBoxフィルターでGaussianを近似します。 |
-| Surface Method | SDF、Screened Poisson / Neumann、Screened Poisson / Dirichlet。 |
+| Surface Method | SDF、Screened Poisson / Neumann、Screened Poisson / Dirichlet。新規適用時はNeumann。既存プロジェクトの選択は変わりません。 |
 | Direction | Inner＝内側、Outer＝外側、Both＝輪郭の両側。 |
 | Bevel Width | カーブ全体の幅。Bothでは内外に半分ずつ配置します。 |
 | Contour Offset | 正の値で外側へ、負の値で内側へ輪郭を移動します。 |
@@ -104,3 +105,5 @@ python plugins/image-bevel/tests/verify_windows_pipl.py target/release/AOD_Image
 画像検証にはNumPyとPillowを使用します。32bpcの`saveFrameToPng`には保存時の変換が入るため、数値比較は`sampleImage`から取得したRGBA走査線も使います。個別プレビューは16bpcです。WindowsのPiPLはバイナリファイルとして埋め込み、日本語RCコンパイラによるフラグ値の文字コード変換を回避しています。
 
 2026-10-27にWindows／After Effects 25.6.6で確認しました。Rust単体テスト18件、fmt、Clippy、PiPLの全13プロパティ、新しいBスプラインでのAEの19描画条件（8/16/32bpc・アルファ3方式・内外方向・境界条件・法線・発光・HDR・屈折）が通過しています。旧Smoothは更新前後のPNGが完全一致しています。BスプラインUIで領域外ドラッグによる中間点削除、端点の削除防止、Undoを操作し、Undo後と保存／再読込後の出力PNGの完全一致も確認しました。離す前に枠内へ戻す取消、Ctrl/Cmdクリックによる削除、キーフレーム補間は単体テストのみ確認済みです。macOS／他のAEバージョンは未検証です。
+
+2026-11-13のBezier追加・Neumann既定化では、Rust単体テスト23件、fmt、Clippy、releaseビルド、PiPL検証、AEの20描画条件（既定Neumannと明示指定の一致を追加）が通過しました。旧Shape Preserving／B-SplineのAEPは更新前とピクセル単位で一致しています。Bezierハンドル入りの検証用AEPXをAEに読み込み、保存データのバイト一致と、AEPへ保存・再読込した出力PNGの完全一致を確認しました。新しいBezierハンドルのマウス操作・Undoは自動検証に含まれていません。既存の点削除UIは維持しています。

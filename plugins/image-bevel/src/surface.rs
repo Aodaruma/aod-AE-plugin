@@ -26,7 +26,7 @@ impl Default for Settings {
             threshold: 0.5,
             silhouette_blur: 0.0,
             height_blur: 0.0,
-            method: 1,
+            method: 2,
             smooth_radius: 8.0,
             iterations: 200,
             elevation: 16.0,
@@ -373,10 +373,8 @@ mod tests {
 
     #[test]
     fn neumann_has_zero_flux_and_dirichlet_loses_edge_height() {
-        let s = Settings {
-            method: 2,
-            ..Settings::default()
-        };
+        let s = Settings::default();
+        assert_eq!(s.method, 2);
         let neumann = smooth_profile(&[1.0; 25], 5, 5, s, &|| Ok::<_, ()>(())).unwrap();
         assert!(neumann.iter().all(|&v| (v - 1.0).abs() < 1e-5));
         let dirichlet = smooth_profile(&[1.0; 25], 5, 5, Settings { method: 3, ..s }, &|| {
@@ -391,6 +389,7 @@ mod tests {
     fn ring_profile_cuts_a_hole_and_empty_input_stays_empty() {
         let s = Settings {
             curve: Curve::preset(4),
+            method: 1,
             width: 5.0,
             ..Settings::default()
         };

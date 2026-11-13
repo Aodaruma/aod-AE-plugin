@@ -110,7 +110,7 @@ pub fn setup(params: &mut Parameters<Params>) -> Result<(), Error> {
                     "Screened Poisson / Neumann",
                     "Screened Poisson / Dirichlet",
                 ],
-                1,
+                2,
             )?;
             popup(
                 p,
@@ -204,7 +204,7 @@ pub fn setup(params: &mut Parameters<Params>) -> Result<(), Error> {
                 p,
                 Params::Interpolation,
                 "Interpolation",
-                &["Shape Preserving (Legacy)", "Linear", "Smooth (B-Spline)"],
+                &["Bezier", "Linear", "Smooth (B-Spline)"],
                 3,
             )?;
             let mut arbitrary = ArbitraryDef::new();

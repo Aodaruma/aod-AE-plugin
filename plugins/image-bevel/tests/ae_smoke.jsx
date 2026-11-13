@@ -1,6 +1,6 @@
 // Run in a fresh, dedicated AE instance. Outputs stay inside this checkout's target directory.
 (function () {
-    app.exitAfterLaunchAndEval = true;
+    app.exitAfterLaunchAndEval = false;
     var root = File($.fileName).parent.parent.parent.parent;
     var out = new Folder(root.fsName + "/target/image-bevel-smoke"); out.create();
     var report = new File(out.fsName + "/report.txt");
@@ -49,6 +49,8 @@
             if (backdrop) backdrop.enabled = false;
             var layer = comp.layers.add(source);
             var effect = layer.property("ADBE Effect Parade").addProperty("ImageBevel");
+            if (find(effect, "Surface Method").value !== 2) throw Error("New effects must default to Neumann");
+            if (name !== "neumann-default") set(effect, "Surface Method", 1);
             set(effect, "Bevel Width (px)", 24);
             for (var i = 0; i < changes.length; i++) set(effect, changes[i][0], changes[i][1]);
             if (backdrop) set(effect, "Refraction Layer", backdrop.index);
@@ -77,6 +79,7 @@
         fixture("direction-both",32,[["Output",2],["Alpha",3],["Direction",3]],false);
         fixture("offset",32,[["Output",2],["Alpha",3],["Contour Offset (px)",12]],false);
         fixture("neumann",32,[["Output",2],["Surface Method",2]],false);
+        fixture("neumann-default",32,[["Output",2]],false);
         fixture("dirichlet",32,[["Output",2],["Surface Method",3]],false);
         fixture("normal",32,[["Output",3]],false);
         fixture("blur",32,[["Output",2],["Silhouette Blur (px)",2],["Height Blur (px)",2]],false);
@@ -104,5 +107,7 @@
         demo.openInViewer(); demoLayer.selected = true; bevel.selected = true;
         app.project.save(new File(out.fsName + "/image-bevel-smoke.aep"));
         log("COMPLETE");
+        // PNG writes are asynchronous; keep this dedicated instance alive until they finish.
+        app.scheduleTask("app.quit()", 30000, false);
     } catch (e) { log("ERROR " + e.toString() + " line " + e.line); }
 }());
