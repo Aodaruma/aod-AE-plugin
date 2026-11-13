@@ -1,0 +1,98 @@
+name: TextureStroke macOS Preview
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/texture-stroke-macos.yml
+      - AdobePlugin.just
+      - Cargo.toml
+      - Cargo.lock
+      - crates/utils/**
+      - plugins/texture-stroke/**
+      - scripts/package_licenses.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: texture-stroke-macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  NO_INSTALL: "1"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@just
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Use GNU awk for the plugin Justfile
+        run: |
+          brew install gawk
+          mkdir -p target/tools
+          ln -s "$(brew --prefix gawk)/bin/gawk" target/tools/awk
+          echo "$GITHUB_WORKSPACE/target/tools" >> "$GITHUB_PATH"
+
+      - name: Build universal plugin
+        run: |
+          cargo build --locked -p texture_stroke --release --target x86_64-apple-darwin
+          cargo build --locked -p texture_stroke --release --target aarch64-apple-darwin
+          NO_CARGO_BUILD=1 just -f plugins/texture-stroke/Justfile release
+
+      - name: Verify bundle and signature
+        run: |
+          bundle=target/release/AOD_TextureStroke.plugin
+          plutil -lint "$bundle/Contents/Info.plist"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$bundle/Contents/Info.plist")
+          test -x "$bundle/Contents/MacOS/$executable"
+          test -s "$bundle/Contents/Resources/AOD_TextureStroke.rsrc"
+          lipo "$bundle/Contents/MacOS/$executable" -verify_arch x86_64 arm64
+          file "$bundle/Contents/MacOS/$executable"
+          codesign --verify --deep --strict --verbose=2 "$bundle"
+          codesign --display --verbose=2 "$bundle"
+
+      - name: Package preview with source and license information
+        run: |
+          version=$(python -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("plugins/texture-stroke/Cargo.toml").read_text())["package"]["version"])')
+          name="AOD_TextureStroke_macos_${version}_$(git rev-parse --short=12 HEAD)"
+          stage="target/preview/$name"
+          mkdir -p "$stage"
+          ditto target/release/AOD_TextureStroke.plugin "$stage/AOD_TextureStroke.plugin"
+          python scripts/package_licenses.py "$stage"
+          cp plugins/texture-stroke/README.md "$stage/TextureStroke-README.md"
+          printf '%s\n' \
+            'TextureStroke macOS preview (Intel + Apple Silicon)' \
+            '' \
+            'Copy AOD_TextureStroke.plugin to:' \
+            '/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/' \
+            'Then restart After Effects.' \
+            '' \
+            'This preview has an ad-hoc code signature and is not notarized.' \
+            'The bundle and both architectures are build-verified; macOS After Effects testing is pending.' \
+            'See SOURCE.txt for the exact source revision.' > "$stage/INSTALL.txt"
+          ditto -c -k --sequesterRsrc --keepParent "$stage" "target/preview/$name.zip"
+          shasum -a 256 "target/preview/$name.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TextureStroke-macos-universal
+          path: target/preview/*.zip
+          if-no-files-found: error
+          retention-days: 30
