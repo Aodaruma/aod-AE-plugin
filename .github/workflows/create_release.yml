@@ -327,5 +327,6 @@ jobs:
           while IFS= read -r tag; do
             [ -z "$tag" ] && continue
             echo "Deleting stale draft: $tag"
-            gh release delete "$tag" --cleanup-tag --yes
+            # A draft can have a tag name without a Git tag reference.
+            gh release delete "$tag" --yes
           done <<< "$stale_tags"
