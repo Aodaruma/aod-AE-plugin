@@ -2,6 +2,7 @@ name: Create Release Plugin
 
 on:
   workflow_run:
+    # workflow_run uses the workflow from the default branch, including for dev releases.
     workflows: ["CI"]
     branches: ["main", "dev"]
     types: [completed]
